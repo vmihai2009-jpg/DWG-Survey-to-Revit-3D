@@ -55,7 +55,7 @@ public class GeometryTests
         var r = WallDetector.Detect(new[] { S(0, 0, 5000, 0), S(0, 250, 5000, 250) });
         var w = Assert.Single(r.Walls);
         Assert.Equal(250, w.MeasuredThickness, 3);
-        Assert.Equal("CONCEPT_250", w.TypeName);
+        Assert.Equal("Concept Wall 250mm", w.TypeName);
         Assert.True(SameLine(w.Centerline, new Vec2(0, 125), new Vec2(5000, 125)));
         Assert.Equal(Confidence.High, w.Confidence);
     }
@@ -89,10 +89,14 @@ public class GeometryTests
     }
 
     [Fact]
-    public void Similar_thicknesses_group_but_different_ones_stay_separate()
+    public void Odd_thicknesses_snap_to_a_few_standard_wall_types()
     {
-        var g = WallDetector.GroupThicknesses(new[] { 298.0, 300.0, 302.0, 100.0, 102.0 }, 10);
-        Assert.Equal(new[] { 100.0, 300.0 }, g.OrderBy(x => x).ToArray());
+        var sizes = Tolerances.Default.WallTypeSizes;
+        Assert.Equal(100, WallDetector.SnapThickness(92, sizes));
+        Assert.Equal(150, WallDetector.SnapThickness(138, sizes));
+        Assert.Equal(500, WallDetector.SnapThickness(523, sizes));
+        Assert.Equal(700, WallDetector.SnapThickness(667, sizes));
+        Assert.Equal(1200, WallDetector.SnapThickness(1180, sizes));
     }
 
     [Fact]
@@ -101,8 +105,8 @@ public class GeometryTests
         var r = WallDetector.Detect(SyntheticPlans.RectangleWithPartition());
 
         Assert.Equal(5, r.Walls.Count);
-        Assert.Equal(4, r.Walls.Count(w => w.TypeName == "CONCEPT_300"));
-        Assert.Equal(1, r.Walls.Count(w => w.TypeName == "CONCEPT_100"));
+        Assert.Equal(4, r.Walls.Count(w => w.TypeName == "Concept Wall 300mm"));
+        Assert.Equal(1, r.Walls.Count(w => w.TypeName == "Concept Wall 100mm"));
 
         // External centre lines form a closed 9700 x 7700 rectangle.
         var ext = r.Walls.Where(w => w.TypeThickness == 300).Select(w => w.Centerline).ToList();
@@ -178,15 +182,5 @@ public class GeometryTests
         var open = new[] { S(0, 0, 5000, 0), S(5000, 0, 5000, 4000), S(5000, 4000, 0, 4000), S(0, 4000, 0, 500) };
         Assert.Null(Polygon2.FromSegments(open, 5, out problem));
         Assert.Contains("open", problem);
-    }
-
-    [Fact]
-    public void Report_lists_wall_types_and_unexplained_lines()
-    {
-        var segs = SyntheticPlans.RectangleWithPartition();
-        var text = Report.Build("test.dwg", segs, 0, WallDetector.Detect(segs), new[] { "Wall height assumed 3000 mm." });
-        Assert.Contains("CONCEPT_300: 4 walls", text);
-        Assert.Contains("CONCEPT_100: 1 walls", text);
-        Assert.Contains("Wall height assumed", text);
     }
 }

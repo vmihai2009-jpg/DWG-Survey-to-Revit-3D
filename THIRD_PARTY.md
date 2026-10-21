@@ -3,6 +3,7 @@
 | Component | Use | Licence | Shipped with add-in? |
 |---|---|---|---|
 | Nice3point.Revit.Api.RevitAPI / RevitAPIUI 2025.4.60 (NuGet) | Revit API reference assemblies for compiling | MIT (package); Autodesk API assemblies are supplied by Revit at run time | No |
+| ACadSharp 3.8.0 (NuGet) | Reads DWG files directly (lines, polylines, text, blocks) | MIT | Yes (ACadSharp.dll) |
 | xunit, Microsoft.NET.Test.Sdk, coverlet (NuGet) | Tests only | Apache-2.0 / MIT | No |
 
 Reference projects reviewed (no code copied):
@@ -13,3 +14,5 @@ Reference projects reviewed (no code copied):
 | HorizunGroup/horizun-revit-mcp | Apache-2.0 | Possible later dev/validation tool |
 | hungpixi/revit-mcp | MIT | Alternative MCP, not used |
 | ParkerCai/Trace-BIM | none found | Raster-plan workflow, not used |
+
+Development only: LibreDWG (GPL-3.0) was used once to inspect the survey files; it is not part of the product.

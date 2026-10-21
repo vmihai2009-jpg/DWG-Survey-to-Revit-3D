@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Developer tool: runs the survey engine on a folder of DWGs outside Revit,
+       printing a report and writing SVG previews of the walls found. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SurveyToRevit.Core\SurveyToRevit.Core.csproj" />
+  </ItemGroup>
+
+</Project>

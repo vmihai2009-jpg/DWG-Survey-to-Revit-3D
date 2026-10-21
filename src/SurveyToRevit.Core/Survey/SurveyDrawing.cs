@@ -1,0 +1,123 @@
+using ACadSharp;
+using ACadSharp.Entities;
+using ACadSharp.IO;
+using ACadSharp.Types.Units;
+
+namespace SurveyToRevit.Core.Survey;
+
+public sealed record SurveyText(Vec2 Position, string Value, string Layer);
+
+/// <summary>
+/// One DWG survey read directly from the file (not through Revit, which cannot
+/// see text such as spot heights). All coordinates are in millimetres in the
+/// drawing's own coordinate system (for surveys: Ordnance Survey grid).
+/// </summary>
+public sealed class SurveyDrawing
+{
+    public required string Path { get; init; }
+    public required DrawingName Name { get; init; }
+    public required double MmPerUnit { get; init; }
+    public required string UnitsNote { get; init; }
+    public required IReadOnlyList<Segment2> WallLines { get; init; }
+    public required IReadOnlyList<Segment2> OpeningLines { get; init; }
+    public required IReadOnlyList<SurveyText> Texts { get; init; }
+    public required IReadOnlyDictionary<string, int> LayerCounts { get; init; }
+
+    /// <summary>Spot heights on level layers, in mm.</summary>
+    public IEnumerable<double> SpotHeightsMm(LayerRules rules) =>
+        Texts.Where(t => rules.Classify(t.Layer) == LayerRole.LevelText)
+             .Select(t => LevelEstimator.ParseMm(t.Value)).OfType<double>();
+
+    public static SurveyDrawing Read(string path, LayerRules? rules = null)
+    {
+        rules ??= LayerRules.Default;
+        var doc = DwgReader.Read(path, (_, _) => { });
+
+        var walls = new List<(string layer, double x1, double y1, double x2, double y2)>();
+        var openings = new List<(string layer, double x1, double y1, double x2, double y2)>();
+        var texts = new List<(double x, double y, string value, string layer)>();
+        var counts = new Dictionary<string, int>();
+
+        void AddSeg(string layer, LayerRole role, double x1, double y1, double x2, double y2)
+        {
+            if (role == LayerRole.Wall) walls.Add((layer, x1, y1, x2, y2));
+            else if (role is LayerRole.Window or LayerRole.Door) openings.Add((layer, x1, y1, x2, y2));
+        }
+
+        void Visit(Entity e, string? inheritedLayer, int depth)
+        {
+            var layer = e.Layer?.Name ?? "";
+            if (layer == "0" && inheritedLayer != null) layer = inheritedLayer;
+            counts[layer] = counts.GetValueOrDefault(layer) + 1;
+            var role = rules.Classify(layer);
+            switch (e)
+            {
+                case Line l:
+                    AddSeg(layer, role, l.StartPoint.X, l.StartPoint.Y, l.EndPoint.X, l.EndPoint.Y);
+                    break;
+                case LwPolyline pl:
+                    var v = pl.Vertices;
+                    int n = pl.IsClosed ? v.Count : v.Count - 1;
+                    for (int i = 0; i < n; i++)
+                    {
+                        // curved (bulged) pieces are skipped for now
+                        if (Math.Abs(v[i].Bulge) > 1e-6) continue;
+                        var a = v[i].Location; var b = v[(i + 1) % v.Count].Location;
+                        AddSeg(layer, role, a.X, a.Y, b.X, b.Y);
+                    }
+                    break;
+                case TextEntity t:
+                    texts.Add((t.InsertPoint.X, t.InsertPoint.Y, t.Value ?? "", layer));
+                    break;
+                case MText mt:
+                    texts.Add((mt.InsertPoint.X, mt.InsertPoint.Y, mt.PlainText ?? "", layer));
+                    break;
+                case Insert ins when depth < 4 && role is LayerRole.Wall or LayerRole.Window or LayerRole.Door:
+                    // Window/door symbols are usually blocks: explode them for opening evidence.
+                    try { foreach (var sub in ins.Explode()) Visit(sub, layer, depth + 1); } catch { /* unusual block: ignore */ }
+                    break;
+            }
+        }
+
+        foreach (var e in doc.Entities) Visit(e, null, 0);
+
+        var (mmPerUnit, note) = Units(doc.Header.InsUnits, walls.Select(w => (w.x1, w.y1, w.x2, w.y2)).ToList());
+        Segment2 Seg((string layer, double x1, double y1, double x2, double y2) s) =>
+            new(new Vec2(s.x1 * mmPerUnit, s.y1 * mmPerUnit), new Vec2(s.x2 * mmPerUnit, s.y2 * mmPerUnit), s.layer, System.IO.Path.GetFileName(path));
+
+        return new SurveyDrawing
+        {
+            Path = path,
+            Name = DrawingName.Parse(path),
+            MmPerUnit = mmPerUnit,
+            UnitsNote = note,
+            WallLines = walls.Select(Seg).ToList(),
+            OpeningLines = openings.Select(Seg).ToList(),
+            Texts = texts.Select(t => new SurveyText(new Vec2(t.x * mmPerUnit, t.y * mmPerUnit), t.value, t.layer)).ToList(),
+            LayerCounts = counts,
+        };
+    }
+
+    /// <summary>
+    /// Drawing units from the file header; when the file says "unitless" (common in
+    /// surveys), they are inferred from the building size: a plan spanning under
+    /// 2000 units is in metres, otherwise millimetres.
+    /// </summary>
+    public static (double mmPerUnit, string note) Units(UnitsType header, IReadOnlyList<(double x1, double y1, double x2, double y2)> lines)
+    {
+        switch (header)
+        {
+            case UnitsType.Millimeters: return (1, "millimetres (from file)");
+            case UnitsType.Centimeters: return (10, "centimetres (from file)");
+            case UnitsType.Meters: return (1000, "metres (from file)");
+            case UnitsType.Inches: return (25.4, "inches (from file)");
+            case UnitsType.Feet: return (304.8, "feet (from file)");
+        }
+        if (lines.Count == 0) return (1000, "unknown: no wall lines, assumed metres");
+        double span = Math.Max(lines.Max(l => Math.Max(l.x1, l.x2)) - lines.Min(l => Math.Min(l.x1, l.x2)),
+                               lines.Max(l => Math.Max(l.y1, l.y2)) - lines.Min(l => Math.Min(l.y1, l.y2)));
+        return span < 2000
+            ? (1000, $"metres (file says unitless; building spans {span:0.#} units)")
+            : (1, $"millimetres (file says unitless; building spans {span:0} units)");
+    }
+}

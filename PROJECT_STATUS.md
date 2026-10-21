@@ -4,61 +4,59 @@ _Last updated: 2026-10-21_
 
 ## Current milestone
 
-**M1 – add-in loads in Revit 2025** and **M2 – reads a DWG and reports geometry**.
-Code for both is written and compiles; neither is yet confirmed inside Revit.
+**M3 – Build from survey (v0.2).** One button: pick survey DWGs → coordinates, true/project north, levels from spot heights, each plan linked to its level, concept walls.
+Code compiles and the engine is tested on the real Swallow Place survey; **nothing has been run inside Revit yet**.
 
-Acceptance:
-- M1: a "Survey to Revit" panel with an "Analyse DWG" button appears on the Barr Gazetas tab in Revit 2025.
-- M2: with a DWG linked, the button reports segment count, layers, extents and wall candidates, and writes a text report. Model unchanged.
+Acceptance (to check in Revit 2025):
+1. *Barr Gazetas → Survey to Revit → Build from Survey*, select all Swallow Place DWGs.
+2. Summary lists 10 floors (Basement … Seventh Floor) with heights.
+3. After *Build model*: shared coordinates at E 528999 N 181190, project north 12.61° from true north; levels at surveyed heights; each GA plan linked into its level's plan view and lining up with the walls; walls typed "Concept Wall NNNmm".
+4. Running it again replaces only the generated walls (no duplicates).
 
-## Architecture (decided)
+## Architecture
 
 | Project | Purpose | Needs Revit? |
 |---|---|---|
-| `src/SurveyToRevit.Core` | Geometry engine in mm: cleaning linework, wall detection, thickness grouping, slab outline validation, report text | No (net8.0) |
-| `src/SurveyToRevit.Revit` | Revit 2025 add-in: ribbon, DWG geometry reading, later element creation | Yes (net8.0-windows) |
-| `tests/SurveyToRevit.Core.Tests` | Automated geometry tests on synthetic plans | No |
+| `src/SurveyToRevit.Core` | Engine (mm): reads DWGs directly with ACadSharp (texts/spot heights included), layer roles, axis snapping, wall detection, levels, coordinate frame, reports | No |
+| `src/SurveyToRevit.Revit` | Revit 2025 add-in: Build from Survey command, `ModelBuilder` (coordinates, levels, links, walls) | Yes |
+| `tests/SurveyToRevit.Core.Tests` | Synthetic tests (no client data in the repo) | No |
+| `tools/SurveyLab` | Runs the engine on a folder of DWGs, writes report + SVG previews | No |
 
-Coordinate rule: Revit gives model coordinates in feet; the reader converts to mm in XY. Core works only in mm. Conversion back to feet happens only when creating Revit elements.
+Key decisions:
+- DWGs are read directly (ACadSharp, MIT) instead of through Revit's CAD import, because Revit's API does not expose DWG text, so spot heights would be lost.
+- Coordinates: internal origin = base point (centre of ground floor walls, rounded to 1 m); project north = main wall direction; grid north = true north; elevations = survey datum (m AOD). Revit's angle convention is verified after setting and flipped if needed; each link's position is checked against the walls (warning if >10 mm off).
+- Links: `Placement = Shared`, current view only, pinned, into that level's floor plan.
+- Thresholds (all in `Tolerances`): 10 mm precision; 2° angle snap to the building's main directions; wall types snapped to 100/150/200/250/300/350/400/450/500/600/700/800/900/1000; façade pieces sharing one face merged; wall pieces joined across doors/windows (up to 3 m) when opening linework is in the gap; text inside a candidate wall rejects it.
+- Regeneration: generated walls carry `SurveyToRevit|<level code>|<confidence>` in Comments; re-run deletes only those for the floors being rebuilt. The whole run is one undo step.
 
-## Working features (with evidence)
+## Results on Swallow Place survey (engine, outside Revit)
 
-| Feature | Compiled | Automated tests | Checked in Revit |
-|---|---|---|---|
-| Linework cleaning (duplicates, fragments, small gaps) | yes | pass | n/a |
-| Wall detection from parallel face pairs, thickness, centrelines | yes | pass | no |
-| Corners and T-junctions joined at centrelines | yes | pass | no |
-| Thickness grouping into `CONCEPT_<mm>` types | yes | pass | no |
-| Slab outline validation (open, self-intersecting, duplicate vertices, units sanity) | yes | pass | n/a |
-| Ribbon panel on Barr Gazetas tab + Analyse DWG command (read-only) | yes | none possible | **no** |
-| DWG geometry reading (lines, polylines, nested blocks, layer names) | yes | none possible | **no** |
+- 35 DWGs: 10 GA floor plans used; fire/area plans (duplicates), elevations, sections and roof sheet skipped with reasons.
+- Units: correctly metres for all plans (most files say "unitless").
+- Base point E 528999 N 181190; rotation 12.61°.
+- Levels (m AOD): B 22.86, G 26.47*, GM 29.50*, 1st 32.36, 2nd 36.78, 3rd 40.60, 4th 43.95, 5th 47.30, 6th 50.21, 7th 54.25* (*flagged: split/unclear level).
+- Walls: 1,094 in 14 types (first pass gave 1,586 walls in up to 44 types per floor).
 
 ## Build and test status
 
-- Built on Linux with .NET SDK 8.0.132: whole solution, Release, 0 warnings, 0 errors.
-- `dotnet test`: 16 passed, 0 failed.
-- Revit API references: NuGet `Nice3point.Revit.Api.RevitAPI/RevitAPIUI` 2025.4.60 (compile-time only, not shipped).
+- Whole solution builds (Release) on Linux, .NET SDK 8.0.132, 0 errors.
+- `dotnet test`: 38 passed, 0 failed.
 
 ## Known issues / limitations
 
-- Arcs (curved walls, door swings) are counted but not used.
-- Wall pairing is O(n²); fine for plans, may need a spatial index for very large drawings.
-- Two parallel lines up to 800 mm apart with nothing between are read as a wall; narrow ducts/shafts may be misread. They show up in the report for review.
-- Door/window gaps in a wall face currently get bridged when joining collinear wall pieces (gap ≤ wall thickness), or leave a split wall when wider. Openings come in a later milestone.
-- DWG units rely on the Revit import settings; the report shows extents so wrong units are obvious.
-
-## Decisions
-
-- Native C# add-in, no MCP, no AI API, no paid services (brief §23).
-- `OdedCas/mytools-pyrevit` has **no licence**, so no code copied; only the general approach (merge collinear lines → pair parallel faces → centrelines → extend to junctions) was used as a reference, re-implemented from scratch.
-- `horizun-revit-mcp` (Apache-2.0) and `hungpixi/revit-mcp` (MIT) are optional later dev tools only (Phase 8). `Trace-BIM` is for raster/scanned plans and has no licence file; not needed while real DWG geometry is available.
+- Many wall lines in this survey are single (one face only, e.g. room outlines without the other side). These are reported as "not explained", not turned into walls; some walls are therefore missing.
+- Some pilasters/projections on façades still give short extra wall pieces.
+- Walls run floor to floor (to the next level); top floor uses 3000 mm. No slabs, windows or roof yet.
+- Ground floor level choice is ambiguous (split level); check in Revit.
+- Curved walls (bulged polylines, arcs) ignored.
+- ACadSharp is loaded into Revit's process; if another add-in loads a different ACadSharp version there could be a conflict.
 
 ## Next single action
 
-Mihai: install on Windows (see README), confirm the tab appears (M1), link a survey DWG and run Analyse DWG (M2). Send back the report text file or any error message.
+Mihai: install v0.2 and run *Build from Survey* on a copy of a project with the Swallow Place DWGs; report what looks wrong (screenshots + the log file).
 
-After that: Milestone 3 – create native walls from the recognised centrelines (with a level/height assumption and tagging for safe regeneration).
+Then: floor slabs from the building outline (M4), windows from the window layer and sill/head texts ("S 0.98 H 5.10").
 
 ## Open cost / dependency decisions
 
-None.
+None. New dependency: ACadSharp 3.8.0 (MIT).

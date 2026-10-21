@@ -15,11 +15,16 @@ Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`
 
 ## Use
 
-1. Open a project, link a DWG survey (*Insert → Link CAD*, units set correctly, *Current view only* off).
-2. *Barr Gazetas* tab → *Survey to Revit* panel → **Analyse DWG**. If several DWGs are linked, select one first or pick it when asked.
-3. Read the summary; *Open report* shows the full text report (also saved in `%TEMP%\SurveyToRevit`).
+1. Open a Revit project (try a copy first).
+2. *Barr Gazetas* tab → *Survey to Revit* panel → **Build from Survey**.
+3. Select the survey DWGs (all of them is fine: elevations, sections and duplicate plans are skipped).
+4. Check the summary (floors, heights, wall count), then choose:
+   - **Build model**: sets project coordinates and north from the survey, creates levels at the surveyed floor heights, links each plan into its level's floor plan view, and creates concept walls ("Concept Wall 150mm" etc.).
+   - **Set up only**: the same without walls.
+   - **Open the report only**: changes nothing.
+5. A log is saved in `%TEMP%\SurveyToRevit`. Levels marked CHECK in the report had unclear heights.
 
-The command is read-only: it never changes the model.
+Running it again replaces only the walls it created before on those floors. Undo reverses the whole run.
 
 ## Developers
 
@@ -31,5 +36,6 @@ dotnet test                 # geometry tests, no Revit needed
 - `src/SurveyToRevit.Core` – Revit-free geometry engine (mm).
 - `src/SurveyToRevit.Revit` – Revit add-in.
 - `tests/SurveyToRevit.Core.Tests` – synthetic-plan tests.
+- `tools/SurveyLab` – `dotnet run --project tools/SurveyLab -- <folder of DWGs> --out <dir>` runs the engine without Revit and writes a report and SVG wall previews.
 
 Third-party components: see [THIRD_PARTY.md](THIRD_PARTY.md).

@@ -6,7 +6,7 @@ public enum Confidence { Low, Medium, High }
 public sealed record WallCandidate(Segment2 Centerline, double MeasuredThickness, double TypeThickness, Confidence Confidence, string FaceA, string FaceB)
 {
     public double Length => Centerline.Length;
-    public string TypeName => $"CONCEPT_{TypeThickness:0}";
+    public string TypeName => WallDetector.TypeNameFor(TypeThickness);
 }
 
 public sealed record WallDetectionResult(
@@ -14,7 +14,8 @@ public sealed record WallDetectionResult(
     IReadOnlyList<Segment2> UnpairedSegments,
     IReadOnlyList<double> ThicknessGroups,
     int InputSegments,
-    int CleanedSegments);
+    int CleanedSegments,
+    IReadOnlyList<double> Axes);
 
 /// <summary>
 /// Finds walls as pairs of parallel face lines a wall-thickness apart.
@@ -24,11 +25,15 @@ public sealed record WallDetectionResult(
 /// </summary>
 public static class WallDetector
 {
-    public static WallDetectionResult Detect(IEnumerable<Segment2> rawSegments, Tolerances? tolerances = null)
+    /// <param name="openings">Door and window linework, used as evidence to join wall pieces across openings.</param>
+    /// <param name="spaceMarkers">Points known to be inside rooms (room names, spot heights). A "wall" containing one is rejected.</param>
+    public static WallDetectionResult Detect(IEnumerable<Segment2> rawSegments, Tolerances? tolerances = null,
+        IReadOnlyList<Segment2>? openings = null, IReadOnlyList<Vec2>? spaceMarkers = null)
     {
         var tol = tolerances ?? Tolerances.Default;
         var raw = rawSegments.ToList();
-        var segs = SegmentCleaner.Clean(raw, tol);
+        var axes = AxisSnapper.FindAxes(raw.Where(r => r.Length >= tol.MinSegmentLength).ToList(), tol.AngleSnapDeg);
+        var segs = SegmentCleaner.Clean(AxisSnapper.Snap(raw, axes, tol.AngleSnapDeg), tol);
         var claims = segs.Select(_ => new List<(double, double)>()).ToArray();
 
         var pairs = new List<(int i, int j, double d)>();
@@ -41,7 +46,7 @@ public static class WallDetector
                     pairs.Add((i, j, d));
             }
 
-        var pieces = new List<(Segment2 center, double thickness, Segment2 a, Segment2 b, double overlapShare)>();
+        var pieces = new List<Piece>();
         foreach (var (i, j, d) in pairs.OrderBy(p => p.d))
         {
             Segment2 a = segs[i], b = segs[j];
@@ -55,65 +60,189 @@ public static class WallDetector
 
             foreach (var (s, e) in free.Where(iv => iv.Item2 - iv.Item1 >= tol.MinWallLength))
             {
+                if (spaceMarkers != null && ContainsMarker(a, b, s, e, spaceMarkers)) continue;
                 claims[i].Add((s, e));
                 claims[j].Add(ToAxis(a, b, (s, e)));
                 var u = a.Direction;
                 var half = u.Perp() * (SegmentCleaner.Offset(a, b.Mid) * 0.5);
                 var center = new Segment2(a.A + u * s + half, a.A + u * e + half, a.Layer, $"{a.Source}|{b.Source}");
                 var shorter = Math.Min(a.Length, b.Length);
-                pieces.Add((center, d, a, b, (e - s) / shorter));
+                pieces.Add(new Piece(center, d, i, j, (e - s) / shorter, a.Source, b.Source));
             }
         }
 
-        var groups = GroupThicknesses(pieces.Select(p => p.thickness), tol.ThicknessGrouping);
+        pieces = ConsolidateFaces(pieces, segs, tol);
+
         var walls = pieces.Select(p =>
         {
-            var type = groups.OrderBy(g => Math.Abs(g - p.thickness)).First();
-            var conf = p.overlapShare >= 0.8 ? Confidence.High : p.overlapShare >= 0.4 ? Confidence.Medium : Confidence.Low;
-            return new WallCandidate(p.center, p.thickness, type, conf, p.a.Source, p.b.Source);
+            var type = SnapThickness(p.Thickness, tol.WallTypeSizes);
+            var conf = p.OverlapShare >= 0.8 ? Confidence.High : p.OverlapShare >= 0.4 ? Confidence.Medium : Confidence.Low;
+            // Keep the face both pieces share in place: shift the centre line if the type is thinner or thicker than measured.
+            var center = p.Center;
+            if (p.FaceB < 0)
+            {
+                var face = segs[p.FaceA];
+                var side = Math.Sign(SegmentCleaner.Offset(face, p.Center.Mid));
+                var shift = face.Direction.Perp() * (side * (type - p.Thickness) / 2);
+                center = center with { A = center.A + shift, B = center.B + shift };
+            }
+            return new WallCandidate(center, p.Thickness, type, conf, p.SourceA, p.SourceB);
         }).ToList();
 
-        walls = JoinCollinearWalls(walls, tol);
+        walls = JoinCollinearWalls(walls, tol, openings ?? Array.Empty<Segment2>());
         walls = ExtendToJunctions(walls, tol);
 
         var unpaired = segs.Where((_, k) => claims[k].Count == 0).ToList();
-        return new WallDetectionResult(walls, unpaired, groups, raw.Count, segs.Count);
+        var groups = walls.Select(w => w.TypeThickness).Distinct().OrderBy(t => t).ToList();
+        return new WallDetectionResult(walls, unpaired, groups, raw.Count, segs.Count, axes);
     }
 
-    /// <summary>Clusters thicknesses within the grouping tolerance; each group value is rounded to 5 mm.</summary>
-    public static List<double> GroupThicknesses(IEnumerable<double> thicknesses, double groupTol)
-    {
-        var groups = new List<List<double>>();
-        foreach (var t in thicknesses.OrderBy(x => x))
-        {
-            if (groups.Count > 0 && t - groups[^1].Average() <= groupTol) groups[^1].Add(t);
-            else groups.Add(new List<double> { t });
-        }
-        return groups.Select(g => Math.Round(g.Average() / 5.0) * 5.0).Distinct().ToList();
-    }
+    sealed record Piece(Segment2 Center, double Thickness, int FaceA, int FaceB, double OverlapShare, string SourceA, string SourceB);
 
-    /// <summary>Joins collinear wall pieces of the same type split by a junction or a door gap.</summary>
-    static List<WallCandidate> JoinCollinearWalls(List<WallCandidate> walls, Tolerances tol)
+    /// <summary>
+    /// Old façades have recesses for windows and piers between them, so one long
+    /// face line pairs with many short lines behind it, giving alternating thick
+    /// and thin pieces. Pieces on the same side of one continuous face, with gaps
+    /// no wider than an opening, become one wall of the most common thickness,
+    /// keeping that face exactly in place. Pieces left inside the new wall are dropped.
+    /// </summary>
+    static List<Piece> ConsolidateFaces(List<Piece> pieces, List<Segment2> segs, Tolerances tol)
     {
-        var result = new List<WallCandidate>();
-        foreach (var byType in walls.GroupBy(w => w.TypeThickness))
+        var used = new HashSet<Piece>();
+        var merged = new List<Piece>();
+        var byFace = pieces
+            .SelectMany(p => new[] { (face: p.FaceA, p), (face: p.FaceB, p) })
+            .GroupBy(x => (x.face, side: Math.Sign(SegmentCleaner.Offset(segs[x.face], x.p.Center.Mid))))
+            .Where(g => g.Count() >= 2)
+            .OrderByDescending(g => segs[g.Key.face].Length);
+
+        foreach (var g in byFace)
         {
-            var list = byType.ToList();
-            var merged = SegmentCleaner.MergeCollinear(list.Select(w => w.Centerline).ToList(),
-                tol.ParallelAngleDeg, tol.CollinearOffset, byType.Key + tol.JoinGap);
-            foreach (var m in merged)
+            var face = segs[g.Key.face];
+            var items = g.Select(x => x.p).Where(p => !used.Contains(p))
+                .Select(p => (p, s: Math.Min(SegmentCleaner.Along(face, p.Center.A), SegmentCleaner.Along(face, p.Center.B)),
+                                  e: Math.Max(SegmentCleaner.Along(face, p.Center.A), SegmentCleaner.Along(face, p.Center.B))))
+                .OrderBy(x => x.s).ToList();
+
+            var cluster = new List<(Piece p, double s, double e)>();
+            void Flush()
             {
-                var parts = list.Where(w => SegmentCleaner.AngleDiffDeg(w.Centerline.AngleDeg, m.AngleDeg) <= tol.ParallelAngleDeg
-                    && Math.Abs(SegmentCleaner.Offset(m, w.Centerline.Mid)) <= tol.CollinearOffset
-                    && SegmentCleaner.Along(m, w.Centerline.Mid) >= -tol.CollinearOffset
-                    && SegmentCleaner.Along(m, w.Centerline.Mid) <= m.Length + tol.CollinearOffset).ToList();
-                var first = parts.Count > 0 ? parts[0] : list[0];
-                var measured = parts.Count > 0 ? parts.Sum(p => p.MeasuredThickness * p.Length) / parts.Sum(p => p.Length) : first.MeasuredThickness;
-                var conf = parts.Count > 0 ? parts.Min(p => p.Confidence) : first.Confidence;
-                result.Add(first with { Centerline = m, MeasuredThickness = measured, Confidence = conf });
+                if (cluster.Count >= 2)
+                {
+                    // most common thickness by length
+                    var t = cluster.GroupBy(c => SnapThickness(c.p.Thickness, tol.WallTypeSizes))
+                                   .OrderByDescending(x => x.Sum(c => c.e - c.s)).First()
+                                   .Select(c => c.p.Thickness).Average();
+                    double s0 = cluster.Min(c => c.s), e0 = cluster.Max(c => c.e);
+                    var u = face.Direction;
+                    var off = u.Perp() * (g.Key.side * t / 2);
+                    var line = new Segment2(face.A + u * s0 + off, face.A + u * e0 + off, face.Layer, face.Source);
+                    var len = cluster.Sum(c => c.e - c.s);
+                    merged.Add(new Piece(line, t, g.Key.face, -1, cluster.Min(c => c.p.OverlapShare), cluster[0].p.SourceA, cluster[0].p.SourceB));
+                    foreach (var c in cluster) used.Add(c.p);
+                }
+                cluster.Clear();
             }
+            foreach (var it in items)
+            {
+                if (cluster.Count > 0 && it.s - cluster.Max(c => c.e) > tol.MaxOpeningWidth) Flush();
+                cluster.Add(it);
+            }
+            Flush();
         }
+
+        var result = new List<Piece>(merged);
+        foreach (var p in pieces.Where(p => !used.Contains(p)))
+            if (!merged.Any(m => Inside(m, p.Center.Mid))) result.Add(p);
         return result;
+    }
+
+    static bool Inside(Piece wall, Vec2 point)
+    {
+        var t = SegmentCleaner.Along(wall.Center, point);
+        return t >= 0 && t <= wall.Center.Length && Math.Abs(SegmentCleaner.Offset(wall.Center, point)) < wall.Thickness / 2;
+    }
+
+    /// <summary>Nearest standard size; beyond the list, the nearest 100 mm.</summary>
+    public static double SnapThickness(double measured, IReadOnlyList<double> sizes)
+    {
+        if (sizes.Count == 0) return Math.Round(measured / 10) * 10;
+        if (measured > sizes[^1]) return Math.Round(measured / 100) * 100;
+        return sizes.OrderBy(x => Math.Abs(x - measured)).ThenBy(x => x).First();
+    }
+
+    // Is any marker point strictly between faces a and b, within [s, e] along a?
+    static bool ContainsMarker(Segment2 a, Segment2 b, double s, double e, IReadOnlyList<Vec2> markers)
+    {
+        var off = SegmentCleaner.Offset(a, b.Mid);
+        double lo = Math.Min(0, off), hi = Math.Max(0, off);
+        foreach (var m in markers)
+        {
+            var t = SegmentCleaner.Along(a, m);
+            if (t <= s || t >= e) continue;
+            var o = SegmentCleaner.Offset(a, m);
+            if (o > lo + 1 && o < hi - 1) return true;
+        }
+        return false;
+    }
+
+    public static string TypeNameFor(double thicknessMm) => $"Concept Wall {thicknessMm:0}mm";
+
+    /// <summary>
+    /// Joins collinear wall pieces of the same type into one wall when the gap
+    /// between them is a junction (up to a wall thickness), or a door or window
+    /// shown by opening linework in the gap.
+    /// </summary>
+    static List<WallCandidate> JoinCollinearWalls(List<WallCandidate> walls, Tolerances tol, IReadOnlyList<Segment2> openings)
+    {
+        var list = walls.ToList();
+        bool merged = true;
+        while (merged)
+        {
+            merged = false;
+            for (int i = 0; i < list.Count && !merged; i++)
+                for (int j = i + 1; j < list.Count && !merged; j++)
+                {
+                    var (w1, w2) = (list[i], list[j]);
+                    if (w1.TypeThickness != w2.TypeThickness) continue;
+                    Segment2 a = w1.Centerline, b = w2.Centerline;
+                    if (SegmentCleaner.AngleDiffDeg(a.AngleDeg, b.AngleDeg) > tol.ParallelAngleDeg) continue;
+                    if (Math.Abs(SegmentCleaner.Offset(a, b.A)) > tol.CollinearOffset || Math.Abs(SegmentCleaner.Offset(a, b.B)) > tol.CollinearOffset) continue;
+                    double b0 = SegmentCleaner.Along(a, b.A), b1 = SegmentCleaner.Along(a, b.B);
+                    double lo = Math.Min(b0, b1), hi = Math.Max(b0, b1);
+                    double gapStart = lo > a.Length ? a.Length : hi, gapEnd = lo > a.Length ? lo : 0;
+                    double gap = gapEnd - gapStart; // <= 0 when touching or overlapping
+                    bool join = gap <= w1.TypeThickness + tol.JoinGap
+                        || (gap <= tol.MaxOpeningWidth && HasOpeningIn(a, gapStart, gapEnd, w1.TypeThickness, openings));
+                    if (!join) continue;
+
+                    var u = a.Direction;
+                    double s = Math.Min(0, lo), e = Math.Max(a.Length, hi);
+                    var line = new Segment2(a.A + u * s, a.A + u * e, a.Layer, a.Source);
+                    double total = w1.Length + w2.Length;
+                    list[i] = w1 with
+                    {
+                        Centerline = line,
+                        MeasuredThickness = (w1.MeasuredThickness * w1.Length + w2.MeasuredThickness * w2.Length) / total,
+                        Confidence = w1.Confidence < w2.Confidence ? w1.Confidence : w2.Confidence,
+                    };
+                    list.RemoveAt(j);
+                    merged = true;
+                }
+        }
+        return list;
+    }
+
+    // Is there door/window linework inside the gap between two wall pieces?
+    static bool HasOpeningIn(Segment2 axis, double gapStart, double gapEnd, double thickness, IReadOnlyList<Segment2> openings)
+    {
+        foreach (var o in openings)
+            foreach (var p in new[] { o.A, o.B, o.Mid })
+            {
+                var t = SegmentCleaner.Along(axis, p);
+                if (t > gapStart && t < gapEnd && Math.Abs(SegmentCleaner.Offset(axis, p)) <= thickness / 2 + 100) return true;
+            }
+        return false;
     }
 
     /// <summary>

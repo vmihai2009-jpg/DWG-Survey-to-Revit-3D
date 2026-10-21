@@ -19,6 +19,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- File picker. Referenced directly (rather than UseWindowsForms) so the add-in also builds on Linux CI. -->
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\SurveyToRevit.Core\SurveyToRevit.Core.csproj" />
   </ItemGroup>
 

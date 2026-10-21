@@ -15,11 +15,11 @@ public class App : IExternalApplication
         catch (Autodesk.Revit.Exceptions.ArgumentException) { /* tab already created by another add-in */ }
 
         var panel = app.CreateRibbonPanel(TabName, "Survey to Revit");
-        var button = new PushButtonData("AnalyseDwg", "Analyse\nDWG", Assembly.GetExecutingAssembly().Location,
-            typeof(AnalyseDwgCommand).FullName)
+        var button = new PushButtonData("BuildFromSurvey", "Build from\nSurvey", Assembly.GetExecutingAssembly().Location,
+            typeof(BuildFromSurveyCommand).FullName)
         {
-            ToolTip = "Reads the linework of a linked or imported DWG and reports the walls it recognises. " +
-                      "Read-only: nothing is created or changed in the model.",
+            ToolTip = "Select survey DWGs. Sets project coordinates and north from the survey, creates levels from the " +
+                      "spot heights, links each plan to its level and creates concept walls. You see a summary before anything changes.",
         };
         panel.AddItem(button);
         return Result.Succeeded;

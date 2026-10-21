@@ -8,5 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>SurveyToRevit.Core</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ACadSharp" Version="3.8.0" />
+  </ItemGroup>
 
 </Project>

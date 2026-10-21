@@ -40,27 +40,42 @@ public sealed record Segment2(Vec2 A, Vec2 B, string Layer = "", string Source =
 }
 
 /// <summary>
-/// Geometric tolerances, in millimetres and degrees. Defaults suit typical
-/// building surveys drawn in mm; all are user-adjustable.
+/// Geometric tolerances, in millimetres and degrees. Fixed units (mm) throughout.
+/// Defaults suit surveys of older buildings: small drawing errors are absorbed
+/// rather than turned into odd sizes, angles or extra wall pieces.
 /// </summary>
 public sealed record Tolerances
 {
-    /// <summary>Lines within this angle count as parallel.</summary>
+    /// <summary>General error threshold: lines this close sideways are the same line, sizes round to this.</summary>
+    public double Precision { get; init; } = 10.0;
+    /// <summary>Lines within this angle of a main building direction are straightened onto it.</summary>
+    public double AngleSnapDeg { get; init; } = 2.0;
+    /// <summary>Lines within this angle count as parallel (after straightening).</summary>
     public double ParallelAngleDeg { get; init; } = 1.0;
-    /// <summary>Parallel lines this close sideways count as the same line.</summary>
-    public double CollinearOffset { get; init; } = 5.0;
     /// <summary>Collinear lines with a gap up to this are joined.</summary>
     public double JoinGap { get; init; } = 10.0;
     /// <summary>Ignore lines shorter than this (hatching, ticks, noise).</summary>
     public double MinSegmentLength { get; init; } = 50.0;
     /// <summary>Thinnest wall to look for.</summary>
     public double MinWallThickness { get; init; } = 50.0;
-    /// <summary>Thickest wall to look for.</summary>
-    public double MaxWallThickness { get; init; } = 800.0;
+    /// <summary>Thickest wall to look for (old masonry can be very thick).</summary>
+    public double MaxWallThickness { get; init; } = 1000.0;
     /// <summary>Shortest wall piece to accept.</summary>
     public double MinWallLength { get; init; } = 200.0;
-    /// <summary>Thicknesses within this are grouped into one wall type.</summary>
-    public double ThicknessGrouping { get; init; } = 10.0;
+    /// <summary>Wall pieces either side of a door or window up to this wide are joined into one wall.</summary>
+    public double MaxOpeningWidth { get; init; } = 3000.0;
+
+    /// <summary>
+    /// Wall type sizes. Each measured thickness becomes the nearest of these, so an
+    /// old building gives a handful of wall types instead of one per odd measurement.
+    /// Thicker walls round to 100 mm.
+    /// </summary>
+    public IReadOnlyList<double> WallTypeSizes { get; init; } = new double[] { 100, 150, 200, 250, 300, 350, 400, 450, 500, 600, 700, 800, 900, 1000 };
+
+    /// <summary>Lines this close sideways count as the same line.</summary>
+    public double CollinearOffset => Precision;
+    /// <summary>Wall thicknesses within this are one wall type; type sizes are multiples of it.</summary>
+    public double ThicknessGrouping => Precision;
 
     public static Tolerances Default { get; } = new();
 }
