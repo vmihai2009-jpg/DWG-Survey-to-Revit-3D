@@ -20,6 +20,8 @@ public sealed class SurveyDrawing
     public required string UnitsNote { get; init; }
     public required IReadOnlyList<Segment2> WallLines { get; init; }
     public required IReadOnlyList<Segment2> OpeningLines { get; init; }
+    /// <summary>Curved lines (arcs, bulged polyline pieces) on wall layers, radius 1 m or more.</summary>
+    public IReadOnlyList<Arc2> WallArcs { get; init; } = Array.Empty<Arc2>();
     public required IReadOnlyList<SurveyText> Texts { get; init; }
     public required IReadOnlyDictionary<string, int> LayerCounts { get; init; }
 
@@ -36,6 +38,7 @@ public sealed class SurveyDrawing
         var walls = new List<(string layer, double x1, double y1, double x2, double y2)>();
         var openings = new List<(string layer, double x1, double y1, double x2, double y2)>();
         var texts = new List<(double x, double y, string value, string layer)>();
+        var arcs = new List<(LayerRole role, Arc2 arc)>(); // in drawing units until the units are known
         var counts = new Dictionary<string, int>();
 
         void AddSeg(string layer, LayerRole role, double x1, double y1, double x2, double y2)
@@ -60,11 +63,18 @@ public sealed class SurveyDrawing
                     int n = pl.IsClosed ? v.Count : v.Count - 1;
                     for (int i = 0; i < n; i++)
                     {
-                        // curved (bulged) pieces are skipped for now
-                        if (Math.Abs(v[i].Bulge) > 1e-6) continue;
                         var a = v[i].Location; var b = v[(i + 1) % v.Count].Location;
+                        if (Math.Abs(v[i].Bulge) > 1e-6)
+                        {
+                            if (role is LayerRole.Wall or LayerRole.Window && (a.X != b.X || a.Y != b.Y))
+                                arcs.Add((role, Arc2.FromBulge(new Vec2(a.X, a.Y), new Vec2(b.X, b.Y), v[i].Bulge, layer)));
+                            continue;
+                        }
                         AddSeg(layer, role, a.X, a.Y, b.X, b.Y);
                     }
+                    break;
+                case Arc arc when role is LayerRole.Wall or LayerRole.Window:
+                    arcs.Add((role, new Arc2(new Vec2(arc.Center.X, arc.Center.Y), arc.Radius, arc.StartAngle, arc.EndAngle, layer)));
                     break;
                 case TextEntity t:
                     texts.Add((t.InsertPoint.X, t.InsertPoint.Y, t.Value ?? "", layer));
@@ -85,14 +95,20 @@ public sealed class SurveyDrawing
         Segment2 Seg((string layer, double x1, double y1, double x2, double y2) s) =>
             new(new Vec2(s.x1 * mmPerUnit, s.y1 * mmPerUnit), new Vec2(s.x2 * mmPerUnit, s.y2 * mmPerUnit), s.layer, System.IO.Path.GetFileName(path));
 
+        Arc2 Scale(Arc2 a) => a with { Center = a.Center * mmPerUnit, Radius = a.Radius * mmPerUnit };
+        var scaled = arcs.Select(a => (a.role, arc: Scale(a.arc))).ToList();
+        // window arcs (curved glazing) count as window linework, in short straight pieces
+        var openingSegs = openings.Select(Seg).Concat(scaled.Where(a => a.role == LayerRole.Window)
+            .SelectMany(a => a.arc.Tessellate(250)).Select(s => s with { Source = System.IO.Path.GetFileName(path) })).ToList();
         return new SurveyDrawing
         {
+            WallArcs = scaled.Where(a => a.role == LayerRole.Wall && a.arc.Radius >= 1000 && a.arc.Length >= 200).Select(a => a.arc with { Layer = a.arc.Layer }).ToList(),
             Path = path,
             Name = DrawingName.Parse(path),
             MmPerUnit = mmPerUnit,
             UnitsNote = note,
             WallLines = walls.Select(Seg).ToList(),
-            OpeningLines = openings.Select(Seg).ToList(),
+            OpeningLines = openingSegs,
             Texts = texts.Select(t => new SurveyText(new Vec2(t.x * mmPerUnit, t.y * mmPerUnit), t.value, t.layer)).ToList(),
             LayerCounts = counts,
         };

@@ -146,4 +146,68 @@ public class PlanReadingTests
         var win = Assert.Single(WindowFinder.Find(new[] { S(4000, 150, 5200, 150, "Window") }, walls, Array.Empty<(Vec2, string)>(), 3500));
         Assert.Equal(0, win.HostIndex);
     }
+
+    [Fact]
+    public void Bulged_polyline_piece_is_the_right_arc()
+    {
+        // quarter circle anticlockwise from (10,0) to (0,10) round the origin: bulge = tan(90°/4)
+        var a = Arc2.FromBulge(new Vec2(10000, 0), new Vec2(0, 10000), Math.Tan(Math.PI / 8));
+        Assert.Equal(0, a.Center.X, 3); Assert.Equal(0, a.Center.Y, 3);
+        Assert.Equal(10000, a.Radius, 3);
+        Assert.Equal(Math.PI / 2, a.Sweep, 6);
+        var cw = Arc2.FromBulge(new Vec2(0, 10000), new Vec2(10000, 0), -Math.Tan(Math.PI / 8));
+        Assert.Equal(0, cw.Center.X, 3); Assert.Equal(Math.PI / 2, cw.Sweep, 6);
+    }
+
+    [Fact]
+    public void Two_arcs_round_one_centre_make_one_curved_wall_replacing_the_chords()
+    {
+        var outer = new Arc2(new Vec2(0, 0), 20450, 0.2, 0.8);
+        var inner = new Arc2(new Vec2(0, 0), 20000, 0.2, 0.8);
+        var chord = W(20225 * Math.Cos(0.3), 20225 * Math.Sin(0.3), 20225 * Math.Cos(0.4), 20225 * Math.Sin(0.4), 450);
+        var walls = CurvedWalls.Add(new List<WallCandidate> { chord }, new[] { outer, inner }, Tolerances.Default);
+        var w = Assert.Single(walls);
+        Assert.NotNull(w.Arc);
+        Assert.Equal(450, w.TypeThickness);
+        Assert.InRange(w.Arc!.Radius, 20215, 20235); // to the 10 mm
+        Assert.Equal(0.6, w.Arc.Sweep, 3);
+    }
+
+    [Fact]
+    public void Curved_facade_with_straight_recesses_is_measured_from_the_material()
+    {
+        // outer face an arc; behind it 600 mm of wall material (inside the outline)
+        var face = new Arc2(new Vec2(0, 0), 20000, 0.2, 0.8);
+        bool material(Vec2 p) { double r = p.DistanceTo(new Vec2(0, 0)); return r < 20000 && r > 19400; }
+        var outline = new Polygon2(new[] { new Vec2(0, 0), new Vec2(20000, 0), new Vec2(20000 * Math.Cos(0.5), 20000 * Math.Sin(0.5)), new Vec2(0, 20000) });
+        var walls = CurvedWalls.Add(new List<WallCandidate>(), new[] { face }, Tolerances.Default, material, outline);
+        var w = Assert.Single(walls);
+        Assert.Equal(600, w.TypeThickness);
+        Assert.Equal(19700, w.Arc!.Radius, 0);
+    }
+
+    [Fact]
+    public void Facets_of_a_bend_are_bridged_across_window_gaps()
+    {
+        var a = W(0, 0, 5000, 0, 450);
+        var b = W(6500, 260, 11000, 1050, 450); // turned 10°, 1.5 m on
+        var window = new[] { S(5100, 50, 6400, 230, "Window") };
+        var walls = WallDetector.BridgeBends(new List<WallCandidate> { a, b }, Tolerances.Default, window);
+        Assert.Equal(3, walls.Count);
+        var bridge = walls[2];
+        Assert.Equal(5000, bridge.Centerline.A.X, 0);
+        Assert.Equal(6500, bridge.Centerline.B.X, 0);
+    }
+
+    [Fact]
+    public void Window_on_a_curved_wall_sits_on_the_curve()
+    {
+        var arc = new Arc2(new Vec2(0, 0), 20000, 0.2, 0.8);
+        var wall = new WallCandidate(new Segment2(arc.PointAt(0.2), arc.PointAt(0.8)), 450, 450, Confidence.Medium, "", "") { Arc = arc };
+        var p = arc.PointAt(0.5);
+        var tangent = new Vec2(-Math.Sin(0.5), Math.Cos(0.5));
+        var win = Assert.Single(WindowFinder.Find(new[] { new Segment2(p - tangent * 600, p + tangent * 600, "Window") }, new[] { wall }, Array.Empty<(Vec2, string)>(), 3500));
+        Assert.Equal(20000, win.Center.DistanceTo(new Vec2(0, 0)), 0);
+        Assert.InRange(win.WidthMm, 1180, 1220);
+    }
 }

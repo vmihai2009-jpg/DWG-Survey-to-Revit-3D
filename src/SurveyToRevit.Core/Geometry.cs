@@ -104,3 +104,71 @@ public static class UnitConversion
         _ => throw new ArgumentException($"Unknown drawing unit '{unit}'.")
     };
 }
+
+/// <summary>A circular arc in plan, anticlockwise from <see cref="Start"/> to <see cref="End"/> (radians), in mm.</summary>
+public sealed record Arc2(Vec2 Center, double Radius, double Start, double End, string Layer = "")
+{
+    public double Sweep { get { double s = Norm(End - Start); return s < 1e-9 ? 2 * Math.PI : s; } }
+    public double Length => Radius * Sweep;
+    public Vec2 PointAt(double angle) => Center + new Vec2(Math.Cos(angle), Math.Sin(angle)) * Radius;
+
+    /// <summary>Angle of a point around the centre, measured from <see cref="Start"/> (0..2π).</summary>
+    public double AngleFromStart(Vec2 p) => Norm(Math.Atan2(p.Y - Center.Y, p.X - Center.X) - Start);
+
+    /// <summary>Short straight pieces along the arc (chords no longer than <paramref name="maxChord"/>).</summary>
+    public IEnumerable<Segment2> Tessellate(double maxChord = 250)
+    {
+        int n = Math.Max(1, (int)Math.Ceiling(Length / maxChord));
+        for (int i = 0; i < n; i++)
+            yield return new Segment2(PointAt(Start + Sweep * i / n), PointAt(Start + Sweep * (i + 1) / n), Layer, "arc");
+    }
+
+    public static double Norm(double a) { a %= 2 * Math.PI; return a < 0 ? a + 2 * Math.PI : a; }
+
+    /// <summary>The arc through a bulged polyline piece from a to b (bulge = tan(sweep/4), positive = anticlockwise).</summary>
+    public static Arc2 FromBulge(Vec2 a, Vec2 b, double bulge, string layer = "")
+    {
+        double sweep = 4 * Math.Atan(Math.Abs(bulge));
+        double chord = a.DistanceTo(b);
+        double r = chord / (2 * Math.Sin(sweep / 2));
+        var mid = (a + b) * 0.5;
+        var dir = (b - a) * (1 / chord);
+        var left = new Vec2(-dir.Y, dir.X);
+        double h = r * Math.Cos(sweep / 2); // centre distance from the chord
+        // anticlockwise travel a→b keeps the centre on the left
+        var (from, to, side) = bulge > 0 ? (a, b, 1.0) : (b, a, -1.0);
+        var c = mid + left * (h * side);
+        return new Arc2(c, r, Math.Atan2(from.Y - c.Y, from.X - c.X), Math.Atan2(to.Y - c.Y, to.X - c.X), layer);
+    }
+}
+
+/// <summary>Measuring along and across a wall, straight or curved.</summary>
+public static class WallGeometry
+{
+    /// <summary>Distance of a point from the wall's centre line, sideways (sign: straight walls left +, curved walls outside +).</summary>
+    public static double Offset(WallCandidate w, Vec2 p) =>
+        w.Arc is Arc2 a ? p.DistanceTo(a.Center) - a.Radius : SegmentCleaner.Offset(w.Centerline, p);
+
+    /// <summary>Distance along the centre line from its start to the point's foot (negative before the start).</summary>
+    public static double Along(WallCandidate w, Vec2 p)
+    {
+        if (w.Arc is not Arc2 a) return SegmentCleaner.Along(w.Centerline, p);
+        double d = a.AngleFromStart(p);
+        if (d <= a.Sweep) return d * a.Radius;
+        // beyond the end: measure to whichever end is nearer
+        return d - a.Sweep < 2 * Math.PI - d ? d * a.Radius : -(2 * Math.PI - d) * a.Radius;
+    }
+
+    public static double Length(WallCandidate w) => w.Arc?.Length ?? w.Centerline.Length;
+
+    public static Vec2 PointAt(WallCandidate w, double along) =>
+        w.Arc is Arc2 a ? a.PointAt(a.Start + along / a.Radius) : w.Centerline.A + w.Centerline.Direction * along;
+
+    /// <summary>Direction of the wall (degrees, 0..180) at a distance along it.</summary>
+    public static double AngleDegAt(WallCandidate w, double along)
+    {
+        if (w.Arc is not Arc2 a) return w.Centerline.AngleDeg;
+        double t = a.Start + along / a.Radius + Math.PI / 2;
+        return (t * 180 / Math.PI % 180 + 180) % 180;
+    }
+}

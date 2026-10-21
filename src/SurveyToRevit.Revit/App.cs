@@ -25,6 +25,15 @@ public class App : IExternalApplication
             LargeImage = Icon("icon32.png"),
         };
         panel.AddItem(button);
+        panel.AddItem(new PushButtonData("WallFromLines", "Wall from\nLines", Assembly.GetExecutingAssembly().Location,
+            typeof(WallFromLinesCommand).FullName)
+        {
+            ToolTip = "For walls the survey reading missed: in a plan view, pick the two face lines of a wall in the linked survey " +
+                      "(straight lines, arcs, or an arc and a straight line). A Concept Wall is built between them on this level, " +
+                      "up to the next level, in the Existing phase. Repeat for more; Esc to finish.",
+            Image = Icon("icon16.png"),
+            LargeImage = Icon("icon32.png"),
+        });
         return Result.Succeeded;
     }
 

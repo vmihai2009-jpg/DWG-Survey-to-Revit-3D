@@ -17,6 +17,12 @@ public sealed record SurveyFrame(Vec2 BasePoint, double RotationDeg)
     }
 
     public Segment2 ToModel(Segment2 s) => s with { A = ToModel(s.A), B = ToModel(s.B) };
+
+    public Arc2 ToModel(Arc2 a)
+    {
+        double r = -RotationDeg * Math.PI / 180;
+        return a with { Center = ToModel(a.Center), Start = a.Start + r, End = a.End + r };
+    }
 }
 
 /// <summary>One floor. Walls, outline and unclear regions are in model coordinates (mm).</summary>
@@ -116,15 +122,18 @@ public static class SurveyAnalyzer
             lines = AxisSnapper.Snap(lines, axes, tol.AngleSnapDeg);
             var openings = AxisSnapper.Snap(p.OpeningLines.Select(frame.ToModel), axes, tol.AngleSnapDeg);
             var markers = p.Texts.Where(t => IsRoomMarker(t, rules)).Select(t => frame.ToModel(t.Position)).ToList();
+            var arcs = p.WallArcs.Select(frame.ToModel).ToList();
 
             var code = p.Name.LevelCode!;
             // The grid reading says where wall material is (robust to gaps in the linework);
             // walls are then the drawn face pairs with wall material between them (exact thickness).
-            var raster = new PlanRaster { Debug = PlanDebug == null ? null : (w, h, c) => PlanDebug(code, w, h, c) }.Analyze(lines, openings, markers, tol);
+            var raster = new PlanRaster { Debug = PlanDebug == null ? null : (w, h, c) => PlanDebug(code, w, h, c) }.Analyze(lines.Concat(arcs.SelectMany(a => a.Tessellate(100))).ToList(), openings, markers, tol);
             var walls = WallDetector.Detect(lines, tol, openings, markers, raster.IsMaterial);
             var found = WallDetector.FromSingleLines(walls.UnpairedSegments, walls.Walls.ToList(), raster.Outline, tol);
             var facade = FacadeWalls.Consolidate(found, raster.Outline, tol);
             facade = WallDetector.CloseGaps(facade, tol, openings);
+            facade = CurvedWalls.Add(facade, arcs, tol, raster.IsMaterial, raster.Outline);
+            facade = WallDetector.BridgeBends(facade, tol, openings);
             facade = facade.Where(w => w.Length >= tol.MinWallLength).ToList();
             walls = walls with { Walls = facade, ThicknessGroups = facade.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
             var plan = raster with { Walls = walls };

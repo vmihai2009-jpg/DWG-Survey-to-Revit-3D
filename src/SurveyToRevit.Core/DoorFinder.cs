@@ -25,17 +25,17 @@ public static class DoorFinder
             foreach (var (end, other) in new[] { (s.A, s.B), (s.B, s.A) })
                 for (int k = 0; k < walls.Count; k++)
                 {
-                    var c = walls[k].Centerline;
-                    double off = Math.Abs(SegmentCleaner.Offset(c, end)), along = SegmentCleaner.Along(c, end);
-                    if (off > walls[k].TypeThickness / 2 + 150 || along < -50 || along > c.Length + 50) continue;
-                    if (SegmentCleaner.AngleDiffDeg(c.AngleDeg, s.AngleDeg) < 20) continue; // lies along the wall: a frame line
+                    var w = walls[k];
+                    double off = Math.Abs(WallGeometry.Offset(w, end)), along = WallGeometry.Along(w, end);
+                    if (off > w.TypeThickness / 2 + 150 || along < -50 || along > WallGeometry.Length(w) + 50) continue;
+                    if (SegmentCleaner.AngleDiffDeg(WallGeometry.AngleDegAt(w, along), s.AngleDeg) < 20) continue; // lies along the wall: a frame line
                     if (off < best.off) best = (k, along, other, off);
                 }
             if (best.host < 0) continue;
-            var axis = walls[best.host].Centerline;
-            double toFree = SegmentCleaner.Along(axis, best.free) - best.hinge;
+            var hostWall = walls[best.host];
+            double toFree = WallGeometry.Along(hostWall, best.free) - best.hinge;
             // the leaf swings away from the opening's far jamb; a leaf drawn square to the wall is ambiguous: take the side with more wall
-            int side = Math.Abs(toFree) > 50 ? Math.Sign(toFree) : (best.hinge < axis.Length / 2 ? 1 : -1);
+            int side = Math.Abs(toFree) > 50 ? Math.Sign(toFree) : (best.hinge < WallGeometry.Length(hostWall) / 2 ? 1 : -1);
             leaves.Add((best.host, best.hinge, side, Math.Round(s.Length / 10) * 10));
         }
 
@@ -46,7 +46,7 @@ public static class DoorFinder
         {
             if (used[i]) continue;
             var a = leaves[i];
-            var axis = walls[a.Host].Centerline;
+            var hw = walls[a.Host];
             int partner = -1;
             for (int j = i + 1; j < leaves.Count && partner < 0; j++)
             {
@@ -61,12 +61,12 @@ public static class DoorFinder
                 used[partner] = true;
                 var b = leaves[partner];
                 double mid = (a.Hinge + b.Hinge) / 2, width = Math.Round(Math.Abs(b.Hinge - a.Hinge) / 10) * 10;
-                doors.Add(new DoorCandidate(a.Host, axis.A + axis.Direction * mid, width, DefaultHeightMm, true));
+                doors.Add(new DoorCandidate(a.Host, WallGeometry.PointAt(hw, mid), width, DefaultHeightMm, true));
             }
             else
             {
-                double mid = Math.Clamp(a.Hinge + a.Side * a.Width / 2, a.Width / 2, Math.Max(a.Width / 2, axis.Length - a.Width / 2));
-                doors.Add(new DoorCandidate(a.Host, axis.A + axis.Direction * mid, a.Width, DefaultHeightMm, false));
+                double mid = Math.Clamp(a.Hinge + a.Side * a.Width / 2, a.Width / 2, Math.Max(a.Width / 2, WallGeometry.Length(hw) - a.Width / 2));
+                doors.Add(new DoorCandidate(a.Host, WallGeometry.PointAt(hw, mid), a.Width, DefaultHeightMm, false));
             }
         }
 

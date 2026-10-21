@@ -252,7 +252,9 @@ public sealed class ModelBuilder
                     if (c.Length < 10) continue;
                     try
                     {
-                        var line = Line.CreateBound(new XYZ(Ft(c.A.X), Ft(c.A.Y), level.Elevation), new XYZ(Ft(c.B.X), Ft(c.B.Y), level.Elevation));
+                        Curve line = w.Arc is Arc2 a
+                            ? Arc.Create(new XYZ(Ft(a.Center.X), Ft(a.Center.Y), level.Elevation), Ft(a.Radius), Arc2.Norm(a.Start), Arc2.Norm(a.Start) + a.Sweep, XYZ.BasisX, XYZ.BasisY)
+                            : Line.CreateBound(new XYZ(Ft(c.A.X), Ft(c.A.Y), level.Elevation), new XYZ(Ft(c.B.X), Ft(c.B.Y), level.Elevation));
                         if (!wallTypes.TryGetValue(w.TypeThickness, out var type)) wallTypes[w.TypeThickness] = type = WallTypeFor(w.TypeThickness);
                         var wall = Wall.Create(_doc, line, type.Id, level.Id, Ft(sl.WallHeightMm), 0, false, false);
                         if (above != null) wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.Set(above.Id);
@@ -503,7 +505,10 @@ public sealed class ModelBuilder
 
     void Cut(Wall wall, XYZ center, double widthMm, double bottomMm, double topMm, string code, string what)
     {
-        var u = ((Line)((LocationCurve)wall.Location).Curve).Direction * Ft(widthMm / 2);
+        // along the wall at the opening (the tangent, on a curved wall)
+        var curve = ((LocationCurve)wall.Location).Curve;
+        var at = curve.Project(center);
+        var u = (at != null ? curve.ComputeDerivatives(at.Parameter, false).BasisX.Normalize() : (curve.GetEndPoint(1) - curve.GetEndPoint(0)).Normalize()) * Ft(widthMm / 2);
         var opening = _doc.Create.NewOpening(wall, center - u + XYZ.BasisZ * Ft(bottomMm), center + u + XYZ.BasisZ * Ft(topMm));
         Mark(opening, code, what);
     }
@@ -512,9 +517,10 @@ public sealed class ModelBuilder
     static IEnumerable<int> WallsAcross(IReadOnlyList<WallCandidate> walls, int host, Vec2 center, double width)
     {
         var h = walls[host];
+        if (h.Arc != null) yield break;
         for (int k = 0; k < walls.Count; k++)
         {
-            if (k == host) continue;
+            if (k == host || walls[k].Arc != null) continue;
             var c = walls[k].Centerline;
             if (SegmentCleaner.AngleDiffDeg(c.AngleDeg, h.Centerline.AngleDeg) > 5) continue;
             if (Math.Abs(SegmentCleaner.Offset(c, center)) > (h.TypeThickness + walls[k].TypeThickness) / 2 + 100) continue;
@@ -664,17 +670,20 @@ public sealed class ModelBuilder
         return type;
     }
 
-    WallType WallTypeFor(double thicknessMm)
+    WallType WallTypeFor(double thicknessMm) => WallTypeFor(_doc, thicknessMm, Log);
+
+    /// <summary>The "Concept Wall 150mm" type for a thickness, made from a basic wall type if missing.</summary>
+    public static WallType WallTypeFor(Document doc, double thicknessMm, List<string>? log = null)
     {
         var name = WallDetector.TypeNameFor(thicknessMm);
-        var all = new FilteredElementCollector(_doc).OfClass(typeof(WallType)).Cast<WallType>().ToList();
+        var all = new FilteredElementCollector(doc).OfClass(typeof(WallType)).Cast<WallType>().ToList();
         var found = all.FirstOrDefault(w => w.Name == name);
         if (found != null) return found;
         var basic = all.First(w => w.Kind == WallKind.Basic);
         var type = (WallType)basic.Duplicate(name);
         type.SetCompoundStructure(CompoundStructure.CreateSingleLayerCompoundStructure(
             MaterialFunctionAssignment.Structure, Ft(thicknessMm), ElementId.InvalidElementId));
-        Log.Add($"Wall type created: {name}");
+        log?.Add($"Wall type created: {name}");
         return type;
     }
 

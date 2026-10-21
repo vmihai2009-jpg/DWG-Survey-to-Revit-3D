@@ -46,21 +46,21 @@ public static class WindowFinder
             int host = -1; double best = double.MaxValue;
             for (int k = 0; k < walls.Count; k++)
             {
-                var c = walls[k].Centerline;
-                if (SegmentCleaner.AngleDiffDeg(c.AngleDeg, main.AngleDeg) > 5) continue;
-                double off = Math.Abs(SegmentCleaner.Offset(c, mid));
-                double along = SegmentCleaner.Along(c, mid);
-                if (off > walls[k].TypeThickness / 2 + 400 || along < 0 || along > c.Length) continue;
+                var w = walls[k];
+                double off = Math.Abs(WallGeometry.Offset(w, mid));
+                double along = WallGeometry.Along(w, mid);
+                if (off > w.TypeThickness / 2 + 400 || along < 0 || along > WallGeometry.Length(w)) continue;
+                if (SegmentCleaner.AngleDiffDeg(WallGeometry.AngleDegAt(w, along), main.AngleDeg) > (w.Arc != null ? 15 : 5)) continue;
                 double score = -walls[k].TypeThickness * 10 + off;
                 if (score < best) { best = score; host = k; }
             }
             if (host < 0) continue;
-            var axis = walls[host].Centerline;
-            var proj = pts.Select(p => SegmentCleaner.Along(axis, p)).ToList();
-            double lo = Math.Max(proj.Min(), 0), hi = Math.Min(proj.Max(), axis.Length);
+            var hw = walls[host];
+            var proj = pts.Select(p => WallGeometry.Along(hw, p)).ToList();
+            double lo = Math.Max(proj.Min(), 0), hi = Math.Min(proj.Max(), WallGeometry.Length(hw));
             double width = Math.Round((hi - lo) / 10) * 10;
             if (width < minWidth || width > maxWidth) continue;
-            var center = axis.A + axis.Direction * ((lo + hi) / 2);
+            var center = WallGeometry.PointAt(hw, (lo + hi) / 2);
 
             var s = Nearest(sills, center, textReach);
             var h = Nearest(heads, center, textReach);

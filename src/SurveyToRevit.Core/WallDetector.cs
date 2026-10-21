@@ -2,10 +2,11 @@ namespace SurveyToRevit.Core;
 
 public enum Confidence { Low, Medium, High }
 
-/// <summary>A wall found in the plan: its centre line and thickness, in mm.</summary>
+/// <summary>A wall found in the plan: its centre line and thickness, in mm. A curved wall has <see cref="Arc"/> (its centre line); <see cref="Centerline"/> is then the chord.</summary>
 public sealed record WallCandidate(Segment2 Centerline, double MeasuredThickness, double TypeThickness, Confidence Confidence, string FaceA, string FaceB)
 {
-    public double Length => Centerline.Length;
+    public Arc2? Arc { get; init; }
+    public double Length => Arc?.Length ?? Centerline.Length;
     public string TypeName => WallDetector.TypeNameFor(TypeThickness);
 }
 
@@ -333,6 +334,55 @@ public static class WallDetector
             lines[i] = lines[i] with { A = a, B = b };
         }
         return list.Select((w, i) => w with { Centerline = lines[i] }).ToList();
+    }
+
+    /// <summary>
+    /// Walls that follow a gentle bend drawn as straight facets (a curved façade, a splayed
+    /// corner) leave gaps that are neither in line nor at a junction. A free wall end facing a
+    /// free end of another wall up to <see cref="Tolerances.DoorGap"/> away (or up to an opening's
+    /// width with window or door linework in the gap), the two walls within 30° of each other and
+    /// of the gap, is bridged with a wall of the thinner type. Nearest ends first, each end once.
+    /// </summary>
+    public static List<WallCandidate> BridgeBends(List<WallCandidate> walls, Tolerances tol, IReadOnlyList<Segment2> openings, double maxTurnDeg = 30)
+    {
+        var straight = walls.Where(w => w.Arc == null).ToList();
+        var lines = straight.Select(w => w.Centerline).ToList();
+        bool Free(int i, Vec2 end) => !walls.Where(w => !ReferenceEquals(w, straight[i]))
+            .Any(o => o.Arc is Arc2 a ? Math.Abs(end.DistanceTo(a.Center) - a.Radius) <= o.TypeThickness / 2 + 50 && a.AngleFromStart(end) <= a.Sweep
+                                      : DistanceToSegment(end, o.Centerline) <= straight[i].TypeThickness / 2 + 50);
+        var ends = new List<(int I, Vec2 P, Vec2 Out)>();
+        for (int i = 0; i < lines.Count; i++)
+        {
+            var u = lines[i].Direction;
+            if (Free(i, lines[i].A)) ends.Add((i, lines[i].A, u * -1));
+            if (Free(i, lines[i].B)) ends.Add((i, lines[i].B, u));
+        }
+        var options = new List<(int E1, int E2, double D)>();
+        double cos = Math.Cos(maxTurnDeg * Math.PI / 180);
+        for (int x = 0; x < ends.Count; x++)
+            for (int y = x + 1; y < ends.Count; y++)
+            {
+                var (i, p, op) = ends[x]; var (j, q, oq) = ends[y];
+                if (i == j) continue;
+                double d = p.DistanceTo(q);
+                if (d < tol.JoinGap || d > tol.MaxOpeningWidth) continue;
+                var gap = (q - p) * (1 / d);
+                // both walls point into the gap and roughly along it
+                if (op.Dot(gap) < cos || oq.Dot(gap * -1) < cos) continue;
+                if (d > tol.DoorGap && !openings.Any(o => DistanceToSegment(o.Mid, new Segment2(p, q)) <= Math.Max(straight[i].TypeThickness, straight[j].TypeThickness))) continue;
+                options.Add((x, y, d));
+            }
+        var used = new bool[ends.Count];
+        var bridges = new List<WallCandidate>();
+        foreach (var (x, y, _) in options.OrderBy(o => o.D))
+        {
+            if (used[x] || used[y]) continue;
+            used[x] = used[y] = true;
+            var a = straight[ends[x].I]; var b = straight[ends[y].I];
+            var thin = a.TypeThickness <= b.TypeThickness ? a : b;
+            bridges.Add(new WallCandidate(new Segment2(ends[x].P, ends[y].P, "bridge", "bridge"), thin.MeasuredThickness, thin.TypeThickness, Confidence.Low, "bridge", "bridge"));
+        }
+        return walls.Concat(bridges).ToList();
     }
 
     static double DistanceToSegment(Vec2 p, Segment2 s)

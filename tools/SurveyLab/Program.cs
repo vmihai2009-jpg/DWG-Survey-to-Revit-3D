@@ -28,6 +28,7 @@ SurveyAnalyzer.PlanDebug = (code, w, h, cls) =>
 };
 var model = SurveyAnalyzer.Analyze(inputs);
 CheckGeometry(model);
+if (Environment.GetEnvironmentVariable("ARCS") is string arcLevel) foreach (var l in model.Levels.Where(l => l.Code == arcLevel)) ArcDebug.Dump(l, model.Frame);
 if (Environment.GetEnvironmentVariable("TEXTS") != null)
     foreach (var l in model.Levels.Take(1))
         foreach (var g in l.Plan.Texts.GroupBy(t => t.Layer))
@@ -57,22 +58,29 @@ static string Svg(SurveyLevel l, SurveyFrame f)
     foreach (var (w, c) in walls)
     {
         var col = palette[types.IndexOf(w.TypeThickness) % palette.Length];
-        sb.Append($"<line x1='{c.A.X:0}' y1='{-c.A.Y:0}' x2='{c.B.X:0}' y2='{-c.B.Y:0}' stroke='{col}' stroke-opacity='0.55' stroke-width='{w.TypeThickness:0}'/>");
+        if (w.Arc is Arc2 arc)
+            sb.Append($"<polyline points='{string.Join(" ", arc.Tessellate(200).Select(s => $"{s.A.X:0},{-s.A.Y:0}").Append($"{c.B.X:0},{-c.B.Y:0}"))}' fill='none' stroke='{col}' stroke-opacity='0.55' stroke-width='{w.TypeThickness:0}'/>");
+        else
+            sb.Append($"<line x1='{c.A.X:0}' y1='{-c.A.Y:0}' x2='{c.B.X:0}' y2='{-c.B.Y:0}' stroke='{col}' stroke-opacity='0.55' stroke-width='{w.TypeThickness:0}'/>");
     }
+    foreach (var arc in l.Plan.WallArcs.Select(f.ToModel))
+        sb.Append($"<polyline points='{string.Join(" ", arc.Tessellate(200).Select(s => $"{s.A.X:0},{-s.A.Y:0}"))}' fill='none' stroke='#888' stroke-width='20'/>");
     if (l.Outline != null)
         sb.Append($"<polygon points='{string.Join(" ", l.Outline.Vertices.Select(v => $"{v.X:0},{-v.Y:0}"))}' fill='#4a90d9' fill-opacity='0.08' stroke='#4a90d9' stroke-width='40'/>");
     foreach (var w in l.Windows)
     {
-        var c = l.Walls.Walls[w.HostIndex].Centerline;
-        var a = w.Center - c.Direction * (w.WidthMm / 2);
-        var b = w.Center + c.Direction * (w.WidthMm / 2);
+        var hw = l.Walls.Walls[w.HostIndex];
+        var al = WallGeometry.Along(hw, w.Center);
+        var a = WallGeometry.PointAt(hw, al - w.WidthMm / 2);
+        var b = WallGeometry.PointAt(hw, al + w.WidthMm / 2);
         sb.Append($"<line x1='{a.X:0}' y1='{-a.Y:0}' x2='{b.X:0}' y2='{-b.Y:0}' stroke='#00a0ff' stroke-width='250'/>");
     }
     foreach (var d in l.Doors)
     {
-        var c = l.Walls.Walls[d.HostIndex].Centerline;
-        var a = d.Center - c.Direction * (d.WidthMm / 2);
-        var b = d.Center + c.Direction * (d.WidthMm / 2);
+        var hw = l.Walls.Walls[d.HostIndex];
+        var al = WallGeometry.Along(hw, d.Center);
+        var a = WallGeometry.PointAt(hw, al - d.WidthMm / 2);
+        var b = WallGeometry.PointAt(hw, al + d.WidthMm / 2);
         sb.Append($"<line x1='{a.X:0}' y1='{-a.Y:0}' x2='{b.X:0}' y2='{-b.Y:0}' stroke='#e0007a' stroke-width='250'/>");
     }
     foreach (var (p, name) in l.RoomNames)
@@ -95,6 +103,8 @@ static string LooseEnds(SurveyLevel l, SurveyFrame f, double[]? box)
     var pal = new[] { "#c06000", "#0050c0", "#00a050", "#a000a0", "#808000", "#00a0a0", "#e00060", "#606060" };
     foreach (var s in segs)
         sb.Append($"<line x1='{s.A.X:0}' y1='{-s.A.Y:0}' x2='{s.B.X:0}' y2='{-s.B.Y:0}' stroke='{pal[layers.IndexOf(s.Layer) % pal.Length]}' stroke-width='15'/>");
+    foreach (var arc in l.Plan.WallArcs.Select(f.ToModel))
+        sb.Append($"<polyline points='{string.Join(" ", arc.Tessellate(100).Select(s => $"{s.A.X:0},{-s.A.Y:0}"))}' fill='none' stroke='#ff0000' stroke-width='25'/>");
     static double DistToSeg(Vec2 p, Segment2 s)
     {
         var d = s.B - s.A; double len2 = d.X * d.X + d.Y * d.Y;
@@ -139,4 +149,14 @@ static bool SelfIntersects(Polygon2 p)
             if (d1 * d2 < 0 && d3 * d4 < 0 && s1.Length > 0 && s2.Length > 0) return true;
         }
     return false;
+}
+
+static class ArcDebug
+{
+    public static void Dump(SurveyLevel l, SurveyFrame f)
+    {
+        var arcs = l.Plan.WallArcs.Select(f.ToModel).ToList();
+        Console.Error.WriteLine($"{l.Name}: {arcs.Count} arcs, {l.Walls.Walls.Count(w => w.Arc != null)} curved walls");
+        foreach (var a in arcs.OrderBy(a => a.Radius)) Console.Error.WriteLine($"   r={a.Radius:0} c=({a.Center.X:0},{a.Center.Y:0}) start={a.Start:0.000} sweep={a.Sweep:0.000} len={a.Length:0} {a.Layer}");
+    }
 }
