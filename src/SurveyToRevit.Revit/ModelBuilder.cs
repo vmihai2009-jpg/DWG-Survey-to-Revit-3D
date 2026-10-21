@@ -587,12 +587,17 @@ public sealed class ModelBuilder
         if (_phase == null) return "no rooms (no phase)";
         _doc.Regenerate();
         var placed = new List<Autodesk.Revit.DB.Architecture.Room>();
+        int circuits = 0, refused = 0;
+        string? firstError = null;
         foreach (PlanCircuit circuit in _doc.get_PlanTopology(level, _phase).Circuits)
         {
+            circuits++;
             if (circuit.IsRoomLocated) continue;
             try { placed.Add(_doc.Create.NewRoom(_doc.Create.NewRoom(_phase), circuit)); }
-            catch { /* a sliver Revit refuses */ }
+            catch (Exception ex) { refused++; firstError ??= ex.Message; }
         }
+        // a new room has no shape until the model regenerates; without this every label looks outside every room
+        _doc.Regenerate();
         double z = level.Elevation + Ft(1000);
         var names = new Dictionary<Autodesk.Revit.DB.Architecture.Room, List<string>>();
         int outside = 0;
@@ -612,7 +617,8 @@ public sealed class ModelBuilder
             room.LimitOffset = Ft(sl.CeilingHeightMm);
             Mark(room, sl.Code, "Room");
         }
-        return $"{names.Count} rooms" + (outside > 0 ? $" ({outside} labels not inside a closed space)" : "");
+        return $"{names.Count} rooms" + (outside > 0 ? $" ({outside} labels not inside a closed space)" : "")
+             + $" [{circuits} enclosed spaces found, {placed.Count} rooms tried" + (refused > 0 ? $", {refused} refused: {firstError}" : "") + "]";
     }
 
     static void SetLength(Element e, double value, BuiltInParameter first, BuiltInParameter second, BuiltInParameter third, string name)
