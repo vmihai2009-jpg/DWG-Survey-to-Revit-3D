@@ -210,4 +210,20 @@ public class PlanReadingTests
         Assert.Equal(20000, win.Center.DistanceTo(new Vec2(0, 0)), 0);
         Assert.InRange(win.WidthMm, 1180, 1220);
     }
+
+    [Theory]
+    [InlineData("29463B-2 GROUND FLOOR PLAN.dwg", "Ground Floor")]
+    [InlineData("29463B-1 (BASEMENT PLAN).dwg", "Basement")]
+    [InlineData("29463B-5_THIRD_FLOOR_PLAN.dwg", "Third Floor")]
+    [InlineData("Lower Ground Floor.dwg", "Lower Ground Floor")]
+    [InlineData("Level 3 plan.dwg", "Third Floor")]
+    [InlineData("000002-PCL-ZZZ-101-M2-G-01000-P02-S3.dwg", "First Floor")]
+    [InlineData("29463B-8 ROOF PLAN.dwg", "Roof")]
+    public void Floor_comes_from_the_file_name(string file, string floor) =>
+        Assert.Equal(floor, DrawingName.DescribeLevel(DrawingName.Parse(file).LevelCode!).Name);
+
+    [Theory]
+    [InlineData("29463B-9 (SECTIONS & ELEVATIONS).dwg")]
+    [InlineData("000002-PCL-ZZZ-ZZZ-M2-G-03000-P03-S3.dwg")]
+    public void Sections_and_elevations_are_not_plans(string file) => Assert.Null(DrawingName.Parse(file).LevelCode);
 }

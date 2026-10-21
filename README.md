@@ -29,7 +29,8 @@ Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`
    - generic models (named "Survey - check") where the drawing could not be read.
    - surroundings, if LiDAR tiles were selected too (see below).
 5. **Build** sets project coordinates and north from the survey, creates the levels, then builds what was ticked. *Open report* shows the full analysis without changing anything.
-6. A log is saved in `%TEMP%\SurveyToRevit`.
+6. Anything missed: open the floor plan with the linked survey and use **Wall from Lines** (same panel). Pick the two face lines of the wall (straight, curved, or a curve and a straight line); repeat; Esc to finish.
+7. A log is saved in `%TEMP%\SurveyToRevit`.
 
 ### Surroundings (optional)
 

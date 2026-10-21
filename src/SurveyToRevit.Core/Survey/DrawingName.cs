@@ -3,8 +3,10 @@ using System.Text.RegularExpressions;
 namespace SurveyToRevit.Core.Survey;
 
 /// <summary>
-/// Reads the level from an ISO 19650 / BS 1192 style file name,
-/// e.g. 000002-PCL-ZZZ-101-M2-G-01000 → level "101". ZZZ/XXX mean "several levels".
+/// Reads the level from the file name: an ISO 19650 / BS 1192 code
+/// (000002-PCL-ZZZ-101-M2-G-01000 → "101"; ZZZ/XXX mean "several levels"), or else the
+/// words surveyors use ("29463B-2 GROUND FLOOR PLAN", "Basement", "Level 3", "LG", "Roof Plan").
+/// Sections and elevations are never plans.
 /// </summary>
 public sealed record DrawingName(string FileName, string? LevelCode)
 {
@@ -18,7 +20,32 @@ public sealed record DrawingName(string FileName, string? LevelCode)
             var code = parts[3].Trim().ToUpperInvariant();
             if (code is not ("ZZZ" or "XXX" or "ZZ" or "XX")) level = code;
         }
-        return new DrawingName(name, level);
+        return new DrawingName(name, level ?? FromWords(name));
+    }
+
+    static readonly string[] OrdinalWords = { "ground", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth" };
+
+    static string? FromWords(string name)
+    {
+        var n = Regex.Replace(name.ToLowerInvariant(), @"[_\-().]+", " ");
+        if (Regex.IsMatch(n, @"\b(section|sections|elevation|elevations|axo|3d)\b")) return null;
+        bool mezz = Regex.IsMatch(n, @"\bmezz(anine)?\b");
+        string? code = null;
+        if (Regex.IsMatch(n, @"\blower ground\b|\blg\b|\blgf\b")) code = "LG";
+        else if (Regex.IsMatch(n, @"\bupper ground\b|\bug\b|\bugf\b")) code = "UG";
+        else if (Regex.Match(n, @"\b(sub ?)?basement( (\d))?\b") is { Success: true } b)
+            code = "B" + (b.Groups[1].Success ? "2" : b.Groups[3].Success ? b.Groups[3].Value : "1");
+        else if (Regex.Match(n, @"\b(b|lb)(\d)\b") is { Success: true } bn) code = "B" + bn.Groups[2].Value;
+        else if (Regex.IsMatch(n, @"\broof\b")) code = "RF";
+        else if (Regex.IsMatch(n, @"\b(ground|gf)\b")) code = "00";
+        else
+        {
+            for (int i = 1; i < OrdinalWords.Length && code == null; i++)
+                if (Regex.IsMatch(n, $@"\b{OrdinalWords[i]}\b")) code = i.ToString("00");
+            if (code == null && Regex.Match(n, @"\b(level|lvl|l|floor)\s?(\d{1,2})\b") is { Success: true } l) code = int.Parse(l.Groups[2].Value).ToString("00");
+        }
+        if (code == null) return null;
+        return mezz && !code.EndsWith("M") ? code + "M" : code;
     }
 
     static readonly string[] Ordinals = { "Ground", "First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth" };
@@ -30,6 +57,12 @@ public sealed record DrawingName(string FileName, string? LevelCode)
     /// </summary>
     public static (double Order, string Name) DescribeLevel(string code)
     {
+        switch (code.ToUpperInvariant().TrimEnd('M'))
+        {
+            case "LG": return (-0.5 + (code.EndsWith("M", StringComparison.OrdinalIgnoreCase) ? 0.25 : 0), "Lower Ground Floor" + (code.EndsWith("M", StringComparison.OrdinalIgnoreCase) ? " Mezzanine" : ""));
+            case "UG": return (0.25, "Upper Ground Floor");
+            case "RF": return (999, "Roof");
+        }
         var m = Regex.Match(code, @"^(B)?(\d+)(M)?$", RegexOptions.IgnoreCase);
         if (!m.Success) return (double.MaxValue, $"Level {code}");
         int n = int.Parse(m.Groups[2].Value);

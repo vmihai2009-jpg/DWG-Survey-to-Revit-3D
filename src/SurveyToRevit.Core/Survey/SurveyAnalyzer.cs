@@ -129,7 +129,7 @@ public static class SurveyAnalyzer
             // walls are then the drawn face pairs with wall material between them (exact thickness).
             var raster = new PlanRaster { Debug = PlanDebug == null ? null : (w, h, c) => PlanDebug(code, w, h, c) }.Analyze(lines.Concat(arcs.SelectMany(a => a.Tessellate(100))).ToList(), openings, markers, tol);
             var walls = WallDetector.Detect(lines, tol, openings, markers, raster.IsMaterial);
-            var found = WallDetector.FromSingleLines(walls.UnpairedSegments, walls.Walls.ToList(), raster.Outline, tol);
+            var found = WallDetector.FromSingleLines(walls.UnpairedSegments, walls.Walls.ToList(), raster.Outline, tol, rules.FacesOnly.IsMatch);
             var facade = FacadeWalls.Consolidate(found, raster.Outline, tol);
             facade = WallDetector.CloseGaps(facade, tol, openings);
             facade = CurvedWalls.Add(facade, arcs, tol, raster.IsMaterial, raster.Outline);

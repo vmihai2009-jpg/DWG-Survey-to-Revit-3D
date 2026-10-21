@@ -171,11 +171,13 @@ public static class WallDetector
     /// lines inside the building, long enough, and not a face of a wall already found,
     /// become thin walls centred on the line, marked low confidence.
     /// </summary>
-    public static List<WallCandidate> FromSingleLines(IEnumerable<Segment2> unpaired, List<WallCandidate> walls, Polygon2? outline, Tolerances tol)
+    /// <param name="facesOnly">Layers whose lines are wall faces only when paired (e.g. "BUILDINGS", which also holds roof outlines and rooflights).</param>
+    public static List<WallCandidate> FromSingleLines(IEnumerable<Segment2> unpaired, List<WallCandidate> walls, Polygon2? outline, Tolerances tol,
+        Func<string, bool>? facesOnly = null)
     {
         var result = new List<WallCandidate>(walls);
         var t = tol.SingleLineWallThickness;
-        foreach (var s in unpaired.Where(s => s.Length >= tol.MinSingleLineWall))
+        foreach (var s in unpaired.Where(s => s.Length >= tol.MinSingleLineWall && facesOnly?.Invoke(s.Layer) != true))
         {
             if (outline != null && !FacadeWalls.Contains(outline, s.Mid)) continue;
             bool isFace = result.Any(w =>
