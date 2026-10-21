@@ -19,7 +19,8 @@ public sealed class SurveyDialog : Form
     readonly CheckBox _windows = new() { Text = "Windows (sill and head from the survey where given)", Checked = true, AutoSize = true };
     readonly CheckBox _doors = new() { Text = "Doors (from the door swings)", Checked = true, AutoSize = true };
     readonly CheckBox _rooms = new() { Text = "Rooms named from the survey", Checked = true, AutoSize = true };
-    readonly CheckBox _details = new() { Text = "Detail as generic models (columns, fittings, railings, wall fills)", Checked = true, AutoSize = true };
+    readonly CheckBox _details = new() { Text = "Odd columns and chimneys as generic models", Checked = true, AutoSize = true };
+    readonly CheckBox _sections = new() { Text = "Section views along the survey sections", Checked = true, AutoSize = true };
     readonly CheckBox _roofs = new() { Text = "Roofs (only from a roof plan or roof layer)", Checked = true, AutoSize = true };
     readonly CheckBox _stairs = new() { Text = "Stairs (from the stair layers, up to the next level)", Checked = true, AutoSize = true };
     readonly CheckBox _floors = new() { Text = "Floor slabs, thickness (mm):", Checked = true, AutoSize = true };
@@ -28,7 +29,7 @@ public sealed class SurveyDialog : Form
     readonly CheckBox _site = new() { Text = "Surroundings from LiDAR, radius (m):", AutoSize = true };
     readonly NumericUpDown _radius = new() { Minimum = 50, Maximum = 500, Increment = 50, Value = 150, Width = 70 };
     readonly int _lidarFiles;
-    readonly CheckBox _generic = new() { Text = "Generic models where the drawing is unclear (to check)", Checked = true, AutoSize = true };
+    readonly CheckBox _generic = new() { Text = "Generic models where the drawing is unclear (to check)", Checked = false, AutoSize = true };
 
     public BuildOptions Options { get; } = new();
     public bool OpenReport { get; private set; }
@@ -98,7 +99,7 @@ public sealed class SurveyDialog : Form
             AutoSize = true, ForeColor = Color.DimGray, Padding = new Padding(0, 4, 0, 0),
             Text = "To add these, select Environment Agency LiDAR DSM and DTM tiles (.tif), and footprints (.shp) if you have them, with the DWGs.",
         });
-        options.Controls.AddRange(new Control[] { _link, _walls, _windows, _doors, _rooms, _stairs, _details, _roofs, slabRow, _ceilings, _generic, siteRow });
+        options.Controls.AddRange(new Control[] { _link, _walls, _windows, _doors, _rooms, _stairs, _details, _roofs, _sections, slabRow, _ceilings, _generic, siteRow });
         _walls.CheckedChanged += (_, _) => { _windows.Enabled = _doors.Enabled = _rooms.Enabled = _walls.Checked; };
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 44, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8, 6, 8, 6) };
@@ -163,6 +164,7 @@ public sealed class SurveyDialog : Form
         Options.Stairs = _stairs.Checked;
         Options.Details = _details.Checked;
         Options.Roofs = _roofs.Checked;
+        Options.Sections = _sections.Checked;
         Options.Floors = _floors.Checked;
         Options.SlabThicknessMm = (double)_slab.Value;
         Options.Ceilings = _ceilings.Checked;

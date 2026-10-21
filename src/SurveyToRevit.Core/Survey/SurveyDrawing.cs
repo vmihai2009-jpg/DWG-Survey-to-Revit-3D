@@ -22,6 +22,8 @@ public sealed class SurveyDrawing
     public required IReadOnlyList<Segment2> OpeningLines { get; init; }
     /// <summary>Curved lines (arcs, bulged polyline pieces) on wall layers, radius 1 m or more.</summary>
     public IReadOnlyList<Arc2> WallArcs { get; init; } = Array.Empty<Arc2>();
+    /// <summary>Door swing arcs (centre at the hinge, radius = leaf width).</summary>
+    public IReadOnlyList<Arc2> DoorArcs { get; init; } = Array.Empty<Arc2>();
     public required IReadOnlyList<SurveyText> Texts { get; init; }
     /// <summary>Lines on layers for other parts of the building (stairs, columns, roofs, fittings…; see <see cref="LayerRules.IsFeature"/>), curves in short pieces.</summary>
     public IReadOnlyList<Segment2> FeatureLines { get; init; } = Array.Empty<Segment2>();
@@ -70,14 +72,14 @@ public sealed class SurveyDrawing
                         var a = v[i].Location; var b = v[(i + 1) % v.Count].Location;
                         if (Math.Abs(v[i].Bulge) > 1e-6)
                         {
-                            if ((role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window || LayerRules.IsFeature(role)) && (a.X != b.X || a.Y != b.Y))
+                            if ((role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role)) && (a.X != b.X || a.Y != b.Y))
                                 arcs.Add((role, Arc2.FromBulge(new Vec2(a.X, a.Y), new Vec2(b.X, b.Y), v[i].Bulge, layer)));
                             continue;
                         }
                         AddSeg(layer, role, a.X, a.Y, b.X, b.Y);
                     }
                     break;
-                case Arc arc when role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window || LayerRules.IsFeature(role):
+                case Arc arc when role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role):
                     arcs.Add((role, new Arc2(new Vec2(arc.Center.X, arc.Center.Y), arc.Radius, arc.StartAngle, arc.EndAngle, layer)));
                     break;
                 case Circle circle when LayerRules.IsFeature(role):
@@ -112,6 +114,7 @@ public sealed class SurveyDrawing
         {
             FeatureLines = features.Select(Seg).Concat(scaled.Where(a => LayerRules.IsFeature(a.role))
                 .SelectMany(a => a.arc.Tessellate(Math.Max(20, Math.Min(250, a.arc.Length / 16)))).Select(x => x with { Source = System.IO.Path.GetFileName(path) })).ToList(),
+            DoorArcs = scaled.Where(a => a.role == LayerRole.Door).Select(a => a.arc).ToList(),
             WallArcs = scaled.Where(a => a.role is LayerRole.Wall or LayerRole.CurtainWall && a.arc.Radius >= 1000 && a.arc.Length >= 200).Select(a => a.arc with { Layer = a.arc.Layer }).ToList(),
             Path = path,
             Name = DrawingName.Parse(path),

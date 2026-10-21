@@ -9,8 +9,8 @@ public sealed record DetailShape(LayerRole Role, Polygon2 Outline, double BaseMm
 /// <summary>
 /// Roofs and detail from what the plans show, the same way for any survey.
 /// Roofs: only where a roof plan or a roof layer shows them, at their surveyed spot heights.
-/// Detail: closed shapes on column, chimney, fitting, balcony and rooflight layers become blocks
-/// of a plausible height; railing lines become thin 1.1 m high strips.
+/// Detail: only odd pieces walls cannot show: closed shapes on column and chimney layers,
+/// full storey height. Everything else on the plan is built as walls.
 /// </summary>
 public static class RoofsAndDetails
 {
@@ -69,9 +69,6 @@ public static class RoofsAndDetails
         {
             (LayerRole.Column, 0, storey, 0.02e6, 4e6),
             (LayerRole.Chimney, 0, storey, 0.05e6, 10e6),
-            (LayerRole.Fitting, 0, 900, 0.1e6, 30e6),
-            (LayerRole.Balcony, -200, 200, 0.5e6, 60e6),
-            (LayerRole.Rooflight, 0, 300, 0.1e6, 40e6),
         };
         foreach (var (role, bottom, height, minArea, maxArea) in shapes)
         {
@@ -84,30 +81,7 @@ public static class RoofsAndDetails
                     result.Add(new DetailShape(role, p, bottom, height));
             }
         }
-        // wall material no wall covers (odd-shaped masonry, thick blocks): filled to its outline, full height
-        foreach (var piece in l.Leftover)
-            if (piece.Count > 0)
-            {
-                var grid = ShapeGrid.Around(piece, 25, 100);
-                foreach (var p in grid.Outlines(grid.Mark(piece), 0.05e6).Where(p => !DoorPocket(p)))
-                    result.Add(new DetailShape(LayerRole.Wall, p, 0, storey));
-            }
-        // short gaps where a wall stops just short of the next one, closed full height
-        foreach (var g in l.GapFills) result.Add(new DetailShape(LayerRole.Wall, g, 0, storey));
-        if (byRole.TryGetValue(LayerRole.Railing, out var rails))
-            foreach (var s in rails.Where(s => s.Length >= 300))
-            {
-                var n = s.Direction.Perp() * 25;
-                result.Add(new DetailShape(LayerRole.Railing, new Polygon2(new[] { s.A - n, s.B - n, s.B + n, s.A + n }), 0, 1100));
-            }
         return result;
-    }
-
-    // a small wedge (the triangle a door leaf and its swing close off) rather than solid wall
-    static bool DoorPocket(Polygon2 p)
-    {
-        double w = p.Vertices.Max(v => v.X) - p.Vertices.Min(v => v.X), h = p.Vertices.Max(v => v.Y) - p.Vertices.Min(v => v.Y);
-        return p.Area < 1.5e6 && p.Area < 0.62 * w * h && Math.Min(w, h) > 300;
     }
 
     // lines near each other (within reach) as groups, so each grid stays small

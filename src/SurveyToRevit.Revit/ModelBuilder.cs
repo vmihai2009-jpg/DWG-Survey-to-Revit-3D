@@ -19,13 +19,15 @@ public sealed class BuildOptions
     /// <summary>Rooms named from the survey's room labels (needs walls).</summary>
     public bool Rooms { get; set; } = true;
     /// <summary>Areas the engine could not read become generic models (DirectShape) for review.</summary>
-    public bool UnclearAsGenericModels { get; set; } = true;
+    public bool UnclearAsGenericModels { get; set; } = false;
     /// <summary>Stairs from the stair layers.</summary>
     public bool Stairs { get; set; } = true;
     /// <summary>Columns, chimneys, fittings, balconies, rooflights, railings and odd-shaped wall fills as generic models.</summary>
     public bool Details { get; set; } = true;
     /// <summary>Flat concept roofs, only where a roof plan or a roof layer shows them.</summary>
     public bool Roofs { get; set; } = true;
+    /// <summary>Section views along the cut lines of the survey sections.</summary>
+    public bool Sections { get; set; } = true;
     public double SlabThicknessMm { get; set; } = 300;
     /// <summary>Surroundings from LiDAR (ground and neighbouring blocks); null for none.</summary>
     public SiteContext? Site { get; set; }
@@ -68,6 +70,7 @@ public sealed class ModelBuilder
         BuildElements(levels, o);
         if (o.Stairs) BuildStairs(levels);
         if (o.Roofs && _model.Roofs.Count > 0) BuildRoofs(levels.Values.Select(v => v.level).ToList());
+        if (o.Sections && _model.Sections.Any(x => x.Cut != null)) BuildSections(levels.Values.Select(v => v.level).ToList());
         if (o.Site != null) BuildSite(o.Site, levels.Values.Select(v => v.level).ToList());
         group.Assimilate();
     }
@@ -288,6 +291,7 @@ public sealed class ModelBuilder
                     var floor = Floor.Create(_doc, new List<CurveLoop> { loop }, FloorTypeFor(o.SlabThicknessMm).Id, level.Id);
                     Mark(floor, sl.Code, "Floor");
                     done.Add($"floor {sl.Outline!.Area / 1e6:0} m²");
+                    if (o.Stairs && sl.StairVoids.Count > 0) done.Add(StairVoids(floor, sl, level));
                 }
                 catch (Exception ex) { done.Add($"no floor ({ex.Message})"); }
             }
@@ -526,6 +530,66 @@ public sealed class ModelBuilder
         }
         var counts = sl.Details.GroupBy(d => d.Role).Select(g => $"{g.Count()} {(DetailNames.TryGetValue(g.Key, out var n) ? n[9..] : "detail")}");
         return $"{made} detail generic models ({string.Join(", ", counts)})" + (refused > 0 ? $", {refused} refused by Revit" : "");
+    }
+
+    /// <summary>Openings in the slab over the stairs arriving from the floor below (the stairs' footprints).</summary>
+    string StairVoids(Floor floor, SurveyLevel sl, Level level)
+    {
+        int made = 0, refused = 0;
+        foreach (var v in sl.StairVoids)
+        {
+            try
+            {
+                if (Loop(v, level.Elevation) is not CurveLoop loop) { refused++; continue; }
+                var curves = new CurveArray();
+                foreach (var c in loop) curves.Append(c);
+                var opening = _doc.Create.NewOpening(floor, curves, false);
+                Mark(opening, sl.Code, "Stair opening");
+                made++;
+            }
+            catch { refused++; }
+        }
+        return $"{made} stair openings in the slab" + (refused > 0 ? $" ({refused} refused by Revit)" : "");
+    }
+
+    /// <summary>
+    /// A section view along each survey section's cut line (placed from the key plan on the
+    /// section sheet), named "Survey Section A" etc., from below the lowest level to above the
+    /// highest. Views of an earlier run with the same names are replaced.
+    /// </summary>
+    void BuildSections(List<Level> levels)
+    {
+        var type = new FilteredElementCollector(_doc).OfClass(typeof(ViewFamilyType)).Cast<ViewFamilyType>().FirstOrDefault(v => v.ViewFamily == ViewFamily.Section);
+        if (type == null) { Log.Add("Sections: the project has no section view type; no section views made."); return; }
+        using var t = new Transaction(_doc, "Survey sections");
+        t.Start();
+        double low = levels.Min(l => l.Elevation) - Ft(2000), high = levels.Max(l => l.Elevation) + Ft(6000);
+        var made = new List<string>();
+        foreach (var sec in _model.Sections.Where(x => x.Cut != null))
+        {
+            var name = $"Survey Section {sec.Name}";
+            var old = new FilteredElementCollector(_doc).OfClass(typeof(ViewSection)).Cast<ViewSection>().Where(v => !v.IsTemplate && v.Name == name).Select(v => v.Id).ToList();
+            try { if (old.Count > 0) _doc.Delete(old); } catch { /* open view: keep it, Revit names the new one */ }
+            var c = sec.Cut!;
+            var a = new XYZ(Ft(c.A.X), Ft(c.A.Y), 0); var b = new XYZ(Ft(c.B.X), Ft(c.B.Y), 0);
+            var dir = (b - a).Normalize();
+            var tr = Transform.Identity;
+            tr.Origin = (a + b) / 2;
+            tr.BasisX = dir;
+            tr.BasisY = XYZ.BasisZ;
+            tr.BasisZ = dir.CrossProduct(XYZ.BasisZ);
+            double half = a.DistanceTo(b) / 2 + Ft(1000);
+            var box = new BoundingBoxXYZ { Transform = tr, Min = new XYZ(-half, low, 0), Max = new XYZ(half, high, Ft(30000)) };
+            try
+            {
+                var view = ViewSection.CreateSection(_doc, type.Id, box);
+                try { view.Name = name; } catch { /* name taken: keep Revit's */ }
+                made.Add(view.Name);
+            }
+            catch (Exception ex) { Log.Add($"Sections: section {sec.Name} not made ({ex.Message})."); }
+        }
+        t.Commit();
+        if (made.Count > 0) Log.Add($"Sections: {string.Join(", ", made)} along the survey's cut lines. Compare them with the survey section sheet; the direction looked in may need flipping.");
     }
 
     const string RoofCode = "ROOF";

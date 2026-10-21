@@ -56,8 +56,8 @@ public sealed record Tolerances
     public double JoinGap { get; init; } = 10.0;
     /// <summary>Ignore lines shorter than this (hatching, ticks, noise).</summary>
     public double MinSegmentLength { get; init; } = 50.0;
-    /// <summary>Thinnest wall to look for.</summary>
-    public double MinWallThickness { get; init; } = 50.0;
+    /// <summary>Thinnest wall to look for (WC cubicle panels are drawn about 30 mm thick).</summary>
+    public double MinWallThickness { get; init; } = 25.0;
     /// <summary>Thickest wall to look for (old masonry can be very thick).</summary>
     public double MaxWallThickness { get; init; } = 1000.0;
     /// <summary>Shortest wall piece to accept.</summary>

@@ -327,4 +327,52 @@ public class PlanReadingTests
         Assert.InRange(shapes[1].Area, 0.48e6, 0.58e6);  // the L: 0.3 + 0.21 m², plus the line width
         Assert.InRange(shapes[1].Vertices.Count, 6, 10); // straight edges, not a staircase of cells
     }
+
+    [Fact]
+    public void Door_symbol_gives_its_opening_and_a_wall_across_an_empty_opening()
+    {
+        // two walls running north, ends 900 apart at y=0 (a doorway between wall ends, no wall across it)
+        var walls = new List<WallCandidate> { W(0, -3000, 0, 0, 200), W(0, 900, 0, 4000, 200) };
+        // leaf hinged at (0,0), open at 45° into +x; swing back to (0,900)
+        var leaf = S(0, 0, 636, 636, "Door");
+        var arc = new Arc2(new Vec2(0, 0), 900, Math.PI / 4, Math.PI / 2, "Door");
+        var added = new List<WallCandidate>();
+        var d = Assert.Single(DoorFinder.Find(new[] { leaf }, walls, arcs: new[] { arc }, added: added));
+        Assert.Equal(900, d.WidthMm);
+        Assert.Equal(450, d.Center.Y, 0);
+        var wall = Assert.Single(added);
+        Assert.Equal(2, d.HostIndex);
+        Assert.True(wall.Centerline.Length >= 900);
+    }
+
+    [Fact]
+    public void Facade_is_widened_to_the_masonry_behind_it()
+    {
+        // building 10 x 8 m; the drawing's material runs 600 mm in from the outside face, but a line pair found only 200 mm of it
+        var outline = new Polygon2(new[] { new Vec2(0, 0), new Vec2(10000, 0), new Vec2(10000, 8000), new Vec2(0, 8000) });
+        var wall = W(1000, 100, 9000, 100, 200);
+        bool material(Vec2 p) => p.Y >= 0 && p.Y <= 600 && p.X >= 0 && p.X <= 10000;
+        var fitted = Assert.Single(WallFit.Fit(new List<WallCandidate> { wall }, material, outline, Tolerances.Default));
+        Assert.InRange(fitted.TypeThickness, 580, 620);
+        Assert.InRange(fitted.Centerline.A.Y, 280, 320);
+    }
+
+    [Fact]
+    public void A_wall_inside_another_is_removed()
+    {
+        var walls = new List<WallCandidate> { W(0, 0, 5000, 0, 600), W(1000, 100, 3000, 100, 100), W(2000, 0, 2000, 3000, 100) };
+        var kept = WallFit.RemoveOverlaps(walls, Tolerances.Default);
+        Assert.Equal(2, kept.Count);
+        Assert.DoesNotContain(kept, k => k.TypeThickness == 100 && k.Centerline.AngleDeg < 1);
+    }
+
+    [Fact]
+    public void Stair_footprint_covers_its_flights()
+    {
+        var lines = new List<Segment2>();
+        for (int i = 0; i < 8; i++) lines.Add(S(0, i * 250, 1000, i * 250, "Stair"));
+        var stair = Assert.Single(StairFinder.Find(lines, new List<(Vec2, string)>()));
+        var f = stair.Footprint();
+        Assert.InRange(f.Area, 1.75e6, 2.1e6);
+    }
 }

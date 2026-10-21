@@ -22,6 +22,27 @@ public sealed record StairFlight(IReadOnlyList<Segment2> Risers)
 public sealed record StairCandidate(IReadOnlyList<StairFlight> Flights, bool DirectionKnown)
 {
     public int Risers => Flights.Sum(f => f.Risers.Count);
+
+    /// <summary>The stair's footprint (flights and the landings between them) as a convex outline, grown by a margin: the opening it needs in the floor above.</summary>
+    public Polygon2 Footprint(double margin = 50)
+    {
+        var pts = Flights.SelectMany(f => f.Risers.SelectMany(r => new[] { r.A, r.B })).Distinct().OrderBy(p => p.X).ThenBy(p => p.Y).ToList();
+        if (pts.Count < 3) return new Polygon2(pts);
+        double Cross(Vec2 o, Vec2 a, Vec2 b) => (a - o).Cross(b - o);
+        var hull = new List<Vec2>();
+        foreach (var pass in new[] { pts, Enumerable.Reverse(pts).ToList() })
+        {
+            int start = hull.Count;
+            foreach (var p in pass)
+            {
+                while (hull.Count >= start + 2 && Cross(hull[^2], hull[^1], p) <= 0) hull.RemoveAt(hull.Count - 1);
+                hull.Add(p);
+            }
+            hull.RemoveAt(hull.Count - 1);
+        }
+        var c = new Vec2(hull.Average(p => p.X), hull.Average(p => p.Y));
+        return new Polygon2(hull.Select(p => p + (p - c).Normalized() * margin).ToList());
+    }
 }
 
 /// <summary>

@@ -20,16 +20,17 @@ Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`
 3. Select the survey DWGs (all of them is fine: elevations, sections and duplicate plans are skipped).
 4. A window lists each floor found: tick the floors to build, correct a level or ceiling height if needed (highlighted floors need checking), and choose what to build:
    - link each plan at its level (shared coordinates),
-   - walls ("Concept Wall 160mm" etc., in 20 mm steps), joined across door gaps; glazed screens as curtain walls,
+   - walls ("Concept Wall 160mm" etc., in 20 mm steps), joined across door gaps; façades as thick as the masonry drawn; no two walls in the same place; glazed screens as curtain walls,
    - windows in the walls (sill and head from the survey texts where given, e.g. "S 0.94"/"H 2.58" or "fs 0.92"/"sh 1.88"),
-   - doors (from the door swings in the survey; height from "dh 2.03" texts where given, else 2100 mm),
+   - doors, read from each door symbol (leaf and swing give the opening's width and direction; two swings meeting = double door); a door between two wall ends gets a wall made across the opening to hold it; height from "dh 2.03" texts where given, else 2100 mm,
    - rooms named from the survey's room labels (and "Room" for unlabelled spaces the drawing encloses); no room separation lines are drawn,
    - floor slabs ("Concept Slab 300mm") from each floor's outline,
    - ceilings (one per floor, at the height in the table: the survey's "u/s"/"CH" ceiling heights where given),
-   - stairs from the stair layers: Revit stairs from the drawn treads (curved flights stay curved), up to the next level; a stair Revit refuses becomes stepped blocks ("Survey - stair"),
-   - detail as generic models: columns, chimneys, fittings and equipment, balconies, rooflights, railings, odd-shaped wall material no wall covers, and blocks closing short gaps (up to 600 mm) where a wall stops short of the next ("Survey - wall fill"),
+   - stairs from the stair layers, with an opening in the floor slab above each: Revit stairs from the drawn treads (curved flights stay curved), up to the next level; a stair Revit refuses becomes stepped blocks ("Survey - stair"),
+   - odd columns and chimneys as generic models ("Survey - column"); everything else is walls,
    - roofs: flat concept roofs ("Concept Roof 300mm"), only where a roof plan or a roof layer shows them, at the middle of the spot heights on each roof,
-   - generic models (named "Survey - check") where the drawing could not be read.
+   - section views ("Survey Section A" …) along the cut lines of a survey section sheet (placed from the key plan on the sheet); the heights on the sections set the ceilings and check the levels,
+   - optional (off by default): generic models (named "Survey - check") where the drawing could not be read.
    - surroundings, if LiDAR tiles were selected too (see below).
    *Layers:* each layer is read by its name (Uniclass, AIA or plain English). *Open report* lists every layer and what it was read as. If your survey uses other names, put a `layers.txt` in the DWG folder, one line per layer: `A-GLAZ-CURT = CurtainWall` or `MY_STAIRS* = Stair` (* matches anything). Roles: Wall, CurtainWall, Window, Door, LevelText, RoomName, HeightText, Stair, Ramp, Lift, Column, Roof, Rooflight, Chimney, Balcony, Railing, Fitting, Ceiling, Area, Overhead, Annotation, Other.
 5. **Build** sets project coordinates and north from the survey, creates the levels, then builds what was ticked. *Open report* shows the full analysis without changing anything.

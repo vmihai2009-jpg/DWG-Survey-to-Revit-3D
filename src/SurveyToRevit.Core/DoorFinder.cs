@@ -4,22 +4,160 @@ namespace SurveyToRevit.Core;
 public sealed record DoorCandidate(int HostIndex, Vec2 Center, double WidthMm, double HeightMm, bool Double, bool HeightFromSurvey = false);
 
 /// <summary>
-/// Doors from the door layers. Surveys draw a door as its leaf shown open: a line from
-/// the hinge, at the wall, swung into the room, as long as the leaf is wide. So a door
-/// line of leaf length with one end at a wall and running away from it is a leaf; the
-/// opening runs along the wall from the hinge. Two leaves meeting in one opening are a
-/// double door. A door head height written nearby ("dh 2.03") is used; otherwise 2100 mm.
+/// Doors from the door layers, read the way an architect reads a door symbol. A door is drawn
+/// as its leaf swung open (a line from the hinge) and the swing (an arc, or a polyline, from
+/// the leaf's tip back to where the leaf closes). The hinge, and the point where the swing ends
+/// at the leaf's length from the hinge, are the two sides of the opening, so the opening's width
+/// and direction come from the symbol itself, not from whichever wall is nearest. Two swings
+/// closing on one point are a double door (leaf-and-a-half too). The door goes in the wall that
+/// runs through the opening; where no wall does (a door between two wall ends, as in a lobby),
+/// a wall is made across the opening, jamb to jamb, to hold it. A leaf with no swing drawn
+/// falls back to the leaf alone. A door head height written nearby ("dh 2.03") is used;
+/// otherwise 2100 mm.
 /// </summary>
 public static class DoorFinder
 {
     public const double DefaultHeightMm = 2100;
 
+    /// <summary>Doors on <paramref name="walls"/>; walls made across empty openings are added to <paramref name="added"/> (their doors' HostIndex counts on from the end of <paramref name="walls"/>).</summary>
     public static List<DoorCandidate> Find(IReadOnlyList<Segment2> doorLines, IReadOnlyList<WallCandidate> walls,
-        IEnumerable<WindowCandidate>? windows = null, double minLeaf = 500, double maxLeaf = 1300,
-        IReadOnlyList<HeightNote>? heights = null, double storeyMm = double.MaxValue, double textReach = 1500)
+        IEnumerable<WindowCandidate>? windows = null, double minLeaf = 350, double maxLeaf = 1300,
+        IReadOnlyList<HeightNote>? heights = null, double storeyMm = double.MaxValue, double textReach = 1500,
+        IReadOnlyList<Arc2>? arcs = null, List<WallCandidate>? added = null, IReadOnlyList<double>? wallSizes = null)
+    {
+        var lines = doorLines.Concat((arcs ?? Array.Empty<Arc2>()).Where(a => a.Radius >= minLeaf && a.Radius <= maxLeaf * 1.05).SelectMany(a => a.Tessellate(100))).ToList();
+        var pool = lines.SelectMany(l => new[] { l.A, l.B }).ToList();
+
+        // 1. openings from leaf + swing: hinge H, leaf tip T, swing end C with |HC| = |HT|
+        var openings = new List<(Vec2 H, Vec2 C, double R)>();
+        var usedLeaves = new HashSet<Segment2>();
+        foreach (var s in doorLines.Where(l => l.Length >= minLeaf && l.Length <= maxLeaf))
+        {
+            (Vec2 H, Vec2 C, int score)? best = null;
+            foreach (var (h, t) in new[] { (s.A, s.B), (s.B, s.A) })
+            {
+                double r = s.Length, tolR = Math.Max(30, 0.04 * r);
+                var leafDir = (t - h).Normalized();
+                Vec2? c = null; double maxAng = 0; int score = 0;
+                foreach (var p in pool)
+                {
+                    double d = p.DistanceTo(h);
+                    if (Math.Abs(d - r) > tolR || p.DistanceTo(t) < 20) continue;
+                    double ang = Math.Acos(Math.Clamp((p - h).Normalized().Dot(leafDir), -1, 1)) * 180 / Math.PI;
+                    if (ang < 5 || ang > 100) continue;
+                    score++;
+                    if (ang >= 25 && ang > maxAng) { maxAng = ang; c = p; }
+                }
+                if (c is Vec2 cc && (best == null || score > best.Value.score)) best = (h, cc, score);
+            }
+            if (best is not { } b) continue;
+            usedLeaves.Add(s);
+            if (!openings.Any(o => o.H.DistanceTo(b.H) < 50 && o.C.DistanceTo(b.C) < 50))
+                openings.Add((b.H, b.C, b.H.DistanceTo(b.C)));
+        }
+
+        // 2. two swings closing on one point: one double opening from hinge to hinge
+        var merged = new List<(Vec2 A, Vec2 B, bool Double)>();
+        var done = new bool[openings.Count];
+        for (int i = 0; i < openings.Count; i++)
+        {
+            if (done[i]) continue;
+            done[i] = true;
+            var o = openings[i];
+            int partner = -1;
+            for (int j = i + 1; j < openings.Count && partner < 0; j++)
+            {
+                if (done[j]) continue;
+                var q = openings[j];
+                if (q.C.DistanceTo(o.C) > 150) continue;
+                var d1 = (o.C - o.H).Normalized(); var d2 = (q.H - q.C).Normalized();
+                if (d1.Dot(d2) > Math.Cos(15 * Math.PI / 180)) partner = j;
+            }
+            if (partner >= 0) { done[partner] = true; merged.Add((o.H, openings[partner].H, true)); }
+            else merged.Add((o.H, o.C, false));
+        }
+
+        // 3. each opening in the wall running through it, or in a wall made across it
+        var all = walls.ToList();
+        var doors = new List<DoorCandidate>();
+        var wins = windows?.ToList() ?? new List<WindowCandidate>();
+        foreach (var (a, b, dbl) in merged.OrderByDescending(m => m.A.DistanceTo(m.B)))
+        {
+            var mid = (a + b) * 0.5;
+            double width = Math.Round(a.DistanceTo(b) / 10) * 10;
+            var seg = new Segment2(a, b);
+            if (doors.Any(d => d.Center.DistanceTo(mid) < (d.WidthMm + width) / 2 - 50)) continue;
+            int host = -1; double bestOff = double.MaxValue;
+            for (int k = 0; k < all.Count; k++)
+            {
+                var w = all[k];
+                if (w.Curtain) continue;
+                double along = WallGeometry.Along(w, mid), off = Math.Abs(WallGeometry.Offset(w, mid));
+                if (off > w.TypeThickness / 2 + 150 || along < -50 || along > WallGeometry.Length(w) + 50) continue;
+                if (SegmentCleaner.AngleDiffDeg(WallGeometry.AngleDegAt(w, Math.Clamp(along, 0, WallGeometry.Length(w))), seg.AngleDeg) > 12) continue;
+                if (off < bestOff) { bestOff = off; host = k; }
+            }
+            if (host < 0)
+            {
+                if (added == null) continue;
+                var wall = AcrossOpening(a, b, all, wallSizes);
+                added.Add(wall);
+                all.Add(wall);
+                host = all.Count - 1;
+            }
+            var hw = all[host];
+            double at = Math.Clamp(WallGeometry.Along(hw, mid), width / 2, Math.Max(width / 2, WallGeometry.Length(hw) - width / 2));
+            var center = WallGeometry.PointAt(hw, at);
+            if (wins.Any(w => w.HostIndex == host && w.Center.DistanceTo(center) < (w.WidthMm + width) / 2)) continue;
+            doors.Add(new DoorCandidate(host, center, width, DefaultHeightMm, dbl));
+        }
+
+        // 4. leaves drawn without a swing
+        foreach (var d in LeafDoors(doorLines.Where(l => !usedLeaves.Contains(l) && l.Length >= 500 && l.Length <= maxLeaf).ToList(), all))
+        {
+            bool clash = doors.Any(k => k.Center.DistanceTo(d.Center) < (k.WidthMm + d.WidthMm) / 2)
+                      || wins.Any(w => w.HostIndex == d.HostIndex && w.Center.DistanceTo(d.Center) < (w.WidthMm + d.WidthMm) / 2);
+            if (!clash) doors.Add(d);
+        }
+
+        // a surveyed door head ("dh 2.03") nearby sets the height
+        if (heights == null) return doors;
+        return doors.Select(d => SurveyHeights.Nearest(heights, HeightKind.DoorHead, d.Center, textReach) is double h && h >= 1500 && h <= storeyMm - 100
+            ? d with { HeightMm = Math.Round(h / 10) * 10, HeightFromSurvey = true } : d).ToList();
+    }
+
+    // a wall across an empty opening, run on at each end to the wall body forming the jamb (up to 400 mm), as thick as those walls (100–300 mm)
+    static WallCandidate AcrossOpening(Vec2 a, Vec2 b, List<WallCandidate> walls, IReadOnlyList<double>? sizes)
+    {
+        var u = (b - a).Normalized();
+        var hits = new List<WallCandidate>();
+        Vec2 Run(Vec2 p, Vec2 dir)
+        {
+            for (double d = 0; d <= 400; d += 10)
+            {
+                var q = p + dir * d;
+                var hit = walls.FirstOrDefault(w => Body(w, q));
+                if (hit != null) { hits.Add(hit); return q + dir * Math.Min(hit.TypeThickness / 2, 50); }
+            }
+            return p;
+        }
+        var s = Run(a, u * -1); var e = Run(b, u);
+        double t = hits.Count > 0 ? Math.Clamp(hits.Min(h => h.TypeThickness), 100, 300) : 100;
+        double type = sizes != null && sizes.Count > 0 ? WallDetector.SnapThickness(t, sizes) : t;
+        return new WallCandidate(new Segment2(s, e, "door opening", "door opening"), t, type, Confidence.Low, "door opening", "door opening");
+    }
+
+    static bool Body(WallCandidate w, Vec2 p)
+    {
+        double along = WallGeometry.Along(w, p);
+        return along >= 0 && along <= WallGeometry.Length(w) && Math.Abs(WallGeometry.Offset(w, p)) <= w.TypeThickness / 2;
+    }
+
+    // the leaf alone: a line of leaf length hinged at a wall and running away from it
+    static List<DoorCandidate> LeafDoors(IReadOnlyList<Segment2> doorLines, IReadOnlyList<WallCandidate> walls)
     {
         var leaves = new List<(int Host, double Hinge, int Side, double Width)>();
-        foreach (var s in doorLines.Where(l => l.Length >= minLeaf && l.Length <= maxLeaf))
+        foreach (var s in doorLines)
         {
             // hinge end: on a wall; the leaf runs away from that wall at an angle
             (int host, double hinge, Vec2 free, double off) best = (-1, 0, default, double.MaxValue);
@@ -71,18 +209,6 @@ public static class DoorFinder
             }
         }
 
-        // one door per opening, and none on top of a window
-        var wins = windows?.ToList() ?? new List<WindowCandidate>();
-        var kept = new List<DoorCandidate>();
-        foreach (var d in doors.OrderByDescending(d => d.WidthMm))
-        {
-            bool clash = kept.Any(k => k.HostIndex == d.HostIndex && k.Center.DistanceTo(d.Center) < (k.WidthMm + d.WidthMm) / 2)
-                      || wins.Any(w => w.HostIndex == d.HostIndex && w.Center.DistanceTo(d.Center) < (w.WidthMm + d.WidthMm) / 2);
-            if (!clash) kept.Add(d);
-        }
-        // a surveyed door head ("dh 2.03") nearby sets the height
-        if (heights == null) return kept;
-        return kept.Select(d => SurveyHeights.Nearest(heights, HeightKind.DoorHead, d.Center, textReach) is double h && h >= 1500 && h <= storeyMm - 100
-            ? d with { HeightMm = Math.Round(h / 10) * 10, HeightFromSurvey = true } : d).ToList();
+        return doors;
     }
 }

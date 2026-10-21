@@ -32,21 +32,22 @@ public sealed record SurveyLevel(
 {
     /// <summary>Floor level above survey datum (mm). Editable before building.</summary>
     public double ElevationMm { get; set; } = ElevationMm;
+    /// <summary>Walls (walls made to hold doors in empty openings are added after the doors are read).</summary>
+    public WallDetectionResult Walls { get; set; } = Walls;
     /// <summary>Wall height: up to the next level, or the default for the top level.</summary>
     public double WallHeightMm { get; set; }
     /// <summary>Ceiling height above this floor (mm): the surveyed one when the plan gives it ("u/s 2.52"), else a default to adjust.</summary>
     public double CeilingHeightMm { get; set; }
     /// <summary>True when <see cref="CeilingHeightMm"/> comes from ceiling heights written on the plan.</summary>
     public bool CeilingFromSurvey { get; set; }
-    /// <summary>Room separation lines that close the rooms the drawing shows where walls alone leave them open.</summary>
-    /// <summary>Blocks closing short gaps between walls (generic models, so the walls read as joined).</summary>
-    public IReadOnlyList<Polygon2> GapFills { get; set; } = Array.Empty<Polygon2>();
     /// <summary>Wall material no wall covers, as lists of 25 mm cell centres (filled as generic models so nothing is left open).</summary>
     public IReadOnlyList<List<Vec2>> Leftover { get; set; } = Array.Empty<List<Vec2>>();
     /// <summary>Columns, chimneys, fittings, balconies, rooflights and railings, as generic model blocks.</summary>
     public IReadOnlyList<DetailShape> Details { get; set; } = Array.Empty<DetailShape>();
     /// <summary>Stairs found on the stair layers, climbing from this floor.</summary>
     public IReadOnlyList<StairCandidate> Stairs { get; set; } = Array.Empty<StairCandidate>();
+    /// <summary>Openings this floor's slab needs for the stairs coming up from the floor below.</summary>
+    public IReadOnlyList<Polygon2> StairVoids { get; set; } = Array.Empty<Polygon2>();
     /// <summary>Is this point (model mm) in a room the drawing encloses?</summary>
     public Func<Vec2, bool>? IsRoom { get; set; }
     /// <summary>Windows found on this floor (hosted in <see cref="Walls"/>).</summary>
@@ -71,6 +72,8 @@ public sealed class SurveyModel
     public IReadOnlyList<RoofCandidate> Roofs { get; init; } = Array.Empty<RoofCandidate>();
     /// <summary>The layer rules used (built-in, plus any layers.txt).</summary>
     public LayerRules Rules { get; init; } = LayerRules.Default;
+    /// <summary>Survey sections read from section sheets (heights, and cut lines for section views).</summary>
+    public IReadOnlyList<SurveySection> Sections { get; init; } = Array.Empty<SurveySection>();
 }
 
 /// <summary>
@@ -105,6 +108,7 @@ public static class SurveyAnalyzer
         }
         var plans = new List<SurveyDrawing>();
         var roofPlans = new List<SurveyDrawing>();
+        var sectionSheets = new List<SurveyDrawing>();
 
         foreach (var path in paths.OrderBy(p => System.IO.Path.GetFileName(p)))
         {
@@ -113,6 +117,7 @@ public static class SurveyAnalyzer
             catch (Exception ex) { skipped.Add(new(System.IO.Path.GetFileName(path), $"could not be read: {ex.Message}")); continue; }
 
             if (RoofsAndDetails.IsRoofPlan(d, rules)) { roofPlans.Add(d); continue; }
+            if (d.Name.LevelCode == null && SectionReader.IsSectionSheet(d)) { sectionSheets.Add(d); continue; }
             if (d.Name.LevelCode == null) { skipped.Add(new(d.Name.FileName, "not a single-floor plan (elevation, section or multi-level sheet)")); continue; }
             if (d.WallLines.Count < 30) { skipped.Add(new(d.Name.FileName, $"only {d.WallLines.Count} lines on wall layers: not a floor plan")); continue; }
             if (!d.SpotHeightsMm(rules).Any() && DrawingName.DescribeLevel(d.Name.LevelCode).Order == double.MaxValue)
@@ -131,6 +136,13 @@ public static class SurveyAnalyzer
         }
 
         var frame = MakeFrame(chosen, tol);
+        var sections = new List<SurveySection>();
+        foreach (var sheet in sectionSheets)
+        {
+            try { sections.AddRange(SectionReader.Read(sheet, rules, frame, chosen.SelectMany(c => c.WallLines).ToList())); }
+            catch (Exception ex) { notes.Add($"{sheet.Name.FileName}: section sheet could not be read ({ex.Message})."); }
+        }
+        foreach (var s in sections) notes.Add(s.Note);
         var levels = new List<SurveyLevel>();
         var windowInput = new Dictionary<SurveyLevel, (List<Segment2> Lines, List<(Vec2, string)> Texts)>(ReferenceEqualityComparer.Instance);
         var doorInput = new Dictionary<SurveyLevel, List<Segment2>>(ReferenceEqualityComparer.Instance);
@@ -164,6 +176,7 @@ public static class SurveyAnalyzer
             facade = WallDetector.BridgeBends(facade, tol, openings);
             facade = PierWalls.Fill(facade, raster.Leftover, tol);
             facade = WallDetector.CloseFacade(facade, raster.Outline, tol);
+            facade = WallFit.Fit(facade, raster.IsMaterial, raster.Outline, tol);
             facade = facade.Where(w => w.Length >= tol.MinWallLength).ToList();
             // walls drawn on glazed-screen layers become curtain walls
             facade = facade.Select(w => rules.Classify(w.Centerline.Layer) == LayerRole.CurtainWall ? w with { Curtain = true } : w).ToList();
@@ -179,7 +192,6 @@ public static class SurveyAnalyzer
                     .Where(cells => !IsDoorSwing(cells, openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList())).ToList();
             level.Stairs = StairFinder.Find(p.FeatureLines.Where(f => rules.Classify(f.Layer) == LayerRole.Stair).Select(frame.ToModel).ToList(),
                 p.Texts.Select(t => (frame.ToModel(t.Position), t.Value)).ToList());
-            level.GapFills = RoomBounds.GapFills(facade, raster.IsRoom);
             doorInput[level] = openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList();
             level.RoomNames = p.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.RoomName)
                 .Select(t => (frame.ToModel(t.Position), Name: System.Text.RegularExpressions.Regex.Replace(t.Value, @"\s+", " ").Trim()))
@@ -211,16 +223,38 @@ public static class SurveyAnalyzer
             var heights = SurveyHeights.Read(tx);
             // surveyed ceiling heights ("u/s 2.52") win over the default
             var surveyedCeiling = SurveyHeights.CeilingHeight(heights, levels[i].WallHeightMm);
+            // heights on the survey sections between this floor and the next: the ceilings (and soffits) seen in section
+            var inSection = sections.SelectMany(s => s.HeightsMm).Where(h => next != null && h > levels[i].ElevationMm + 2000 && h < next.ElevationMm - 60).OrderBy(h => h).ToList();
+            if (surveyedCeiling == null && inSection.Count > 0)
+            {
+                surveyedCeiling = Math.Round((inSection[inSection.Count / 2] - levels[i].ElevationMm) / 10) * 10;
+                notes.Add($"{levels[i].Name}: ceiling {surveyedCeiling / 1000:0.00} m from the survey section ({inSection.Count} heights on the section in this storey).");
+            }
+            if (sections.Count > 0 && !double.IsNaN(levels[i].ElevationMm))
+            {
+                var near = sections.SelectMany(s => s.HeightsMm).Where(h => Math.Abs(h - levels[i].ElevationMm) <= 600).OrderBy(h => Math.Abs(h - levels[i].ElevationMm)).ToList();
+                if (near.Count > 0 && Math.Abs(near[0] - levels[i].ElevationMm) <= 30) notes.Add($"{levels[i].Name}: level {levels[i].ElevationMm / 1000:0.00} m agrees with the survey section.");
+                else if (near.Count > 0) notes.Add($"CHECK {levels[i].Name}: level {levels[i].ElevationMm / 1000:0.00} m from the plan; the section shows {string.Join(", ", near.Take(3).Select(h => $"{h / 1000:0.00}"))} m nearby.");
+            }
             levels[i].CeilingFromSurvey = surveyedCeiling != null;
             levels[i].CeilingHeightMm = surveyedCeiling ?? DefaultCeilingHeight(levels[i].WallHeightMm);
             levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm, outline: levels[i].Outline);
-            levels[i].Doors = DoorFinder.Find(doorInput[levels[i]], levels[i].Walls.Walls, levels[i].Windows, heights: heights, storeyMm: levels[i].WallHeightMm);
+            var doorWalls = new List<WallCandidate>();
+            levels[i].Doors = DoorFinder.Find(doorInput[levels[i]], levels[i].Walls.Walls, levels[i].Windows, heights: heights, storeyMm: levels[i].WallHeightMm,
+                arcs: levels[i].Plan.DoorArcs.Select(frame.ToModel).ToList(), added: doorWalls, wallSizes: tol.WallTypeSizes);
+            if (doorWalls.Count > 0)
+            {
+                var all = levels[i].Walls.Walls.Concat(doorWalls).ToList();
+                levels[i].Walls = levels[i].Walls with { Walls = all, ThicknessGroups = all.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
+            }
             if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
         }
 
         notes.Add($"Survey base point E {frame.BasePoint.X / 1000:0.000} m, N {frame.BasePoint.Y / 1000:0.000} m; " +
                   $"model turned {frame.RotationDeg:0.00}° so the main walls are square (grid north = true north).");
         foreach (var l in levels) l.Details = RoofsAndDetails.Details(l, frame, rules);
+        for (int i = 1; i < levels.Count; i++)
+            levels[i].StairVoids = levels[i - 1].Stairs.Select(st => st.Footprint()).Where(p => p.Vertices.Count >= 3 && p.Area >= 0.5e6).ToList();
         // roofs only where the survey shows them: roof plans, and roof layers on the floor plans
         var roofs = new List<RoofCandidate>();
         int noHeight = 0;
@@ -237,7 +271,7 @@ public static class SurveyAnalyzer
         }
         if (noHeight > 0) notes.Add($"{noHeight} roof areas have no spot height inside them and were left out.");
         if (roofPlans.Count == 0 && roofs.Count == 0) notes.Add("No roof plan or roof layer: no roofs built.");
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs };
+        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections };
     }
 
     /// <summary>
