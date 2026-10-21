@@ -27,6 +27,7 @@ SurveyAnalyzer.PlanDebug = (code, w, h, cls) =>
         for (int x = 0; x < w; x++) fs.Write(pal[cls[y * w + x]]);
 };
 var model = SurveyAnalyzer.Analyze(inputs);
+CheckGeometry(model);
 var sb = new StringBuilder();
 sb.AppendLine(SurveyReport.Build(model));
 File.WriteAllText(Path.Combine(outDir, "report.txt"), sb.ToString());
@@ -56,6 +57,13 @@ static string Svg(SurveyLevel l, SurveyFrame f)
     }
     if (l.Outline != null)
         sb.Append($"<polygon points='{string.Join(" ", l.Outline.Vertices.Select(v => $"{v.X:0},{-v.Y:0}"))}' fill='#4a90d9' fill-opacity='0.08' stroke='#4a90d9' stroke-width='40'/>");
+    foreach (var w in l.Windows)
+    {
+        var c = l.Walls.Walls[w.HostIndex].Centerline;
+        var a = w.Center - c.Direction * (w.WidthMm / 2);
+        var b = w.Center + c.Direction * (w.WidthMm / 2);
+        sb.Append($"<line x1='{a.X:0}' y1='{-a.Y:0}' x2='{b.X:0}' y2='{-b.Y:0}' stroke='#00a0ff' stroke-width='250'/>");
+    }
     foreach (var u in l.Unclear)
         sb.Append($"<polygon points='{string.Join(" ", u.Outline.Vertices.Select(v => $"{v.X:0},{-v.Y:0}"))}' fill='#f5a623' fill-opacity='0.6'/>");
     sb.Append("</svg>");
@@ -88,4 +96,18 @@ static string LooseEnds(SurveyLevel l, SurveyFrame f, double[]? box)
         sb.Append($"<text x='{minX + 200:0}' y='{-maxY + 400 + k * 400:0}' font-size='300' fill='{pal[k % pal.Length]}'>{layers[k]}</text>");
     Console.Error.WriteLine($"{l.Code}: {segs.Count} lines, {loose} loose ends");
     return sb.Append("</svg>").ToString();
+}
+
+static void CheckGeometry(SurveyModel model)
+{
+    static bool Bad(Vec2 p) => !double.IsFinite(p.X) || !double.IsFinite(p.Y);
+    foreach (var l in model.Levels)
+    {
+        var walls = l.Walls.Walls;
+        int nonFinite = walls.Count(w => Bad(w.Centerline.A) || Bad(w.Centerline.B));
+        int tiny = walls.Count(w => w.Centerline.Length < 10);
+        double far = walls.Where(w => !Bad(w.Centerline.A) && !Bad(w.Centerline.B)).Select(w => Math.Max(w.Centerline.A.Length, w.Centerline.B.Length)).DefaultIfEmpty(0).Max();
+        int badPoly = l.Unclear.Count(u => u.Outline.Vertices.Any(Bad) || u.Outline.Vertices.Count < 3) + (l.Outline?.Vertices.Any(Bad) == true ? 1 : 0);
+        Console.Error.WriteLine($"{l.Code}: non-finite walls {nonFinite}, under 10 mm {tiny}, farthest point {far / 1000:0} m, bad polygons {badPoly}");
+    }
 }

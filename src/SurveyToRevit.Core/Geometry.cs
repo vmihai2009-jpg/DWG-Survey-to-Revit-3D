@@ -64,6 +64,8 @@ public sealed record Tolerances
     public double MinWallLength { get; init; } = 200.0;
     /// <summary>Wall pieces either side of a door or window up to this wide are joined into one wall.</summary>
     public double MaxOpeningWidth { get; init; } = 3000.0;
+    /// <summary>Gaps up to this in a wall line are closed for a continuous concept wall (doors, missing linework), and hanging wall ends run on this far to meet a wall.</summary>
+    public double DoorGap { get; init; } = 1500.0;
 
     /// <summary>
     /// Wall type sizes. Each measured thickness becomes the nearest of these, so an

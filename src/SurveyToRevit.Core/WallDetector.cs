@@ -221,7 +221,7 @@ public static class WallDetector
     /// between them is a junction (up to a wall thickness), or a door or window
     /// shown by opening linework in the gap.
     /// </summary>
-    internal static List<WallCandidate> JoinCollinearWalls(List<WallCandidate> walls, Tolerances tol, IReadOnlyList<Segment2> openings)
+    internal static List<WallCandidate> JoinCollinearWalls(List<WallCandidate> walls, Tolerances tol, IReadOnlyList<Segment2> openings, double plainGap = 0)
     {
         var list = walls.ToList();
         bool merged = true;
@@ -240,7 +240,7 @@ public static class WallDetector
                     double lo = Math.Min(b0, b1), hi = Math.Max(b0, b1);
                     double gapStart = lo > a.Length ? a.Length : hi, gapEnd = lo > a.Length ? lo : 0;
                     double gap = gapEnd - gapStart; // <= 0 when touching or overlapping
-                    bool join = gap <= w1.TypeThickness + tol.JoinGap
+                    bool join = gap <= Math.Max(w1.TypeThickness + tol.JoinGap, plainGap)
                         || (gap <= tol.MaxOpeningWidth && HasOpeningIn(a, gapStart, gapEnd, w1.TypeThickness, openings));
                     if (!join) continue;
 
@@ -297,6 +297,49 @@ public static class WallDetector
             lines[i] = lines[i] with { A = a, B = b };
         }
         return walls.Select((w, i) => w with { Centerline = lines[i] }).ToList();
+    }
+
+    /// <summary>
+    /// Concept walls should run continuously: pieces of one wall either side of a gap up to
+    /// <see cref="Tolerances.DoorGap"/> (door openings, missing linework) are joined, and
+    /// wall ends left hanging run on to the next wall across their path within the same distance.
+    /// </summary>
+    public static List<WallCandidate> CloseGaps(List<WallCandidate> walls, Tolerances tol, IReadOnlyList<Segment2> openings)
+    {
+        var list = JoinCollinearWalls(walls, tol, openings, tol.DoorGap);
+        list = ExtendToJunctions(list, tol);
+        var lines = list.Select(w => w.Centerline).ToArray();
+        bool Free(int i, Vec2 end) => !lines.Where((_, k) => k != i).Any(o => DistanceToSegment(end, o) <= list[i].TypeThickness / 2 + 2 * tol.JoinGap);
+        for (int i = 0; i < lines.Length; i++)
+        {
+            Vec2 a = lines[i].A, b = lines[i].B;
+            var u = lines[i].Direction;
+            foreach (bool atB in new[] { false, true })
+            {
+                var end = atB ? b : a;
+                if (!Free(i, end)) continue;
+                var dir = atB ? u : u * -1;
+                Vec2? best = null; double bestD = tol.DoorGap;
+                for (int k = 0; k < lines.Length; k++)
+                {
+                    if (k == i || SegmentCleaner.AngleDiffDeg(lines[i].AngleDeg, lines[k].AngleDeg) < 10) continue;
+                    if (Intersect(lines[i], lines[k]) is not Vec2 p) continue;
+                    double ahead = (p - end).Dot(dir), t = SegmentCleaner.Along(lines[k], p);
+                    if (ahead <= 0 || ahead >= bestD || t < -tol.JoinGap || t > lines[k].Length + tol.JoinGap) continue;
+                    best = p; bestD = ahead;
+                }
+                if (best is Vec2 q) { if (atB) b = q; else a = q; }
+            }
+            lines[i] = lines[i] with { A = a, B = b };
+        }
+        return list.Select((w, i) => w with { Centerline = lines[i] }).ToList();
+    }
+
+    static double DistanceToSegment(Vec2 p, Segment2 s)
+    {
+        var d = s.B - s.A; double len2 = d.Dot(d);
+        double t = len2 == 0 ? 0 : Math.Clamp((p - s.A).Dot(d) / len2, 0, 1);
+        return p.DistanceTo(s.A + d * t);
     }
 
     public static Vec2? Intersect(Segment2 s1, Segment2 s2)

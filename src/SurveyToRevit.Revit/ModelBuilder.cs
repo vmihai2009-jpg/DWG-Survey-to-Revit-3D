@@ -11,6 +11,8 @@ public sealed class BuildOptions
     public bool Walls { get; set; } = true;
     public bool Floors { get; set; } = true;
     public bool Ceilings { get; set; } = true;
+    /// <summary>Windows in the walls (needs walls).</summary>
+    public bool Windows { get; set; } = true;
     /// <summary>Areas the engine could not read become generic models (DirectShape) for review.</summary>
     public bool UnclearAsGenericModels { get; set; } = true;
     public double SlabThicknessMm { get; set; } = 300;
@@ -126,12 +128,17 @@ public sealed class ModelBuilder
                 ThisViewOnly = true,
                 ColorMode = ImportColorMode.Preserved,
             };
-            if (_doc.Link(sl.Plan.Path, options, view, out ElementId id) && _doc.GetElement(id) is ImportInstance inst)
+            bool ok;
+            ElementId id;
+            try { ok = _doc.Link(sl.Plan.Path, options, view, out id); }
+            catch (Exception ex) { t.RollBack(); Log.Add($"WARNING: could not link {file} ({ex.Message})."); continue; }
+            if (ok && _doc.GetElement(id) is ImportInstance inst)
             {
                 inst.Pinned = true;
                 t.Commit();
                 Log.Add($"Linked {file} into '{view.Name}' using shared coordinates.");
-                CheckLinkPosition(inst, sl);
+                try { CheckLinkPosition(inst, sl); }
+                catch (Exception ex) { Log.Add($"Could not check where {file} landed ({ex.Message}); check it by eye."); }
             }
             else { t.RollBack(); Log.Add($"WARNING: could not link {file}."); }
         }
@@ -191,7 +198,7 @@ public sealed class ModelBuilder
                 if (o is GeometryInstance gi) { Visit(gi.GetInstanceGeometry()); continue; }
                 var layer = (_doc.GetElement(o.GraphicsStyleId) as GraphicsStyle)?.GraphicsStyleCategory?.Name ?? "";
                 if (rules.Classify(layer) != LayerRole.Wall) continue;
-                if (o is Curve c) { Add(c.GetEndPoint(0)); Add(c.GetEndPoint(1)); }
+                if (o is Curve c) { foreach (var p in c.Tessellate()) Add(p); } // circles are unbound: no end points
                 else if (o is PolyLine pl) foreach (var p in pl.GetCoordinates()) Add(p);
             }
         }
@@ -217,21 +224,28 @@ public sealed class ModelBuilder
             int removed = DeleteGenerated(sl.Code);
             var done = new List<string>();
 
+            var created = new Dictionary<WallCandidate, Wall>(ReferenceEqualityComparer.Instance);
             if (o.Walls)
             {
-                int made = 0;
+                int made = 0, skipped = 0;
                 foreach (var w in sl.Walls.Walls)
                 {
                     var c = w.Centerline; // already in model (internal) coordinates
                     if (c.Length < 10) continue;
-                    var line = Line.CreateBound(new XYZ(Ft(c.A.X), Ft(c.A.Y), level.Elevation), new XYZ(Ft(c.B.X), Ft(c.B.Y), level.Elevation));
-                    if (!wallTypes.TryGetValue(w.TypeThickness, out var type)) wallTypes[w.TypeThickness] = type = WallTypeFor(w.TypeThickness);
-                    var wall = Wall.Create(_doc, line, type.Id, level.Id, Ft(sl.WallHeightMm), 0, false, false);
-                    if (above != null) wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.Set(above.Id);
-                    Mark(wall, sl.Code, w.Confidence.ToString());
-                    made++;
+                    try
+                    {
+                        var line = Line.CreateBound(new XYZ(Ft(c.A.X), Ft(c.A.Y), level.Elevation), new XYZ(Ft(c.B.X), Ft(c.B.Y), level.Elevation));
+                        if (!wallTypes.TryGetValue(w.TypeThickness, out var type)) wallTypes[w.TypeThickness] = type = WallTypeFor(w.TypeThickness);
+                        var wall = Wall.Create(_doc, line, type.Id, level.Id, Ft(sl.WallHeightMm), 0, false, false);
+                        if (above != null) wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.Set(above.Id);
+                        Mark(wall, sl.Code, w.Confidence.ToString());
+                        created[w] = wall;
+                        made++;
+                    }
+                    catch (Exception ex) { skipped++; if (skipped <= 5) Log.Add($"{sl.Name}: a wall at ({c.A.X:0}, {c.A.Y:0}) mm was skipped: {ex.Message}"); }
                 }
-                done.Add($"{made} walls");
+                done.Add($"{made} walls" + (skipped > 0 ? $" ({skipped} skipped)" : ""));
+                if (o.Windows && sl.Windows.Count > 0) done.Add(CreateWindows(sl, level, created));
             }
 
             var loop = sl.Outline != null ? Loop(sl.Outline, level.Elevation) : null;
@@ -303,12 +317,104 @@ public sealed class ModelBuilder
     int DeleteGenerated(string levelCode)
     {
         var prefix = $"{Tag}|{levelCode}|";
-        var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape) });
+        var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape), typeof(FamilyInstance), typeof(Opening) });
         var ids = new FilteredElementCollector(_doc).WherePasses(classes).WhereElementIsNotElementType()
             .Where(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(prefix) == true)
             .Select(e => e.Id).ToList();
         if (ids.Count > 0) _doc.Delete(ids);
         return ids.Count;
+    }
+
+    /// <summary>
+    /// Windows hosted in the generated walls. Uses a window family already in the project
+    /// (a fixed window if there is one), else loads Revit's own fixed window from the library;
+    /// a type per size is made ("Concept Window 1200x1500"). With no window family at all,
+    /// plain rectangular openings are cut instead.
+    /// </summary>
+    string CreateWindows(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created)
+    {
+        var family = WindowFamily();
+        var symbols = new Dictionary<(double, double), FamilySymbol>();
+        int made = 0, failed = 0;
+        foreach (var win in sl.Windows)
+        {
+            var host = sl.Walls.Walls[win.HostIndex];
+            if (!created.TryGetValue(host, out var wall)) continue;
+            var c = new XYZ(Ft(win.Center.X), Ft(win.Center.Y), level.Elevation);
+            try
+            {
+                if (family != null)
+                {
+                    double w = Math.Round(win.WidthMm / 50) * 50, h = Math.Round(win.HeightMm / 50) * 50;
+                    if (!symbols.TryGetValue((w, h), out var symbol)) symbols[(w, h)] = symbol = WindowType(family, w, h);
+                    var inst = _doc.Create.NewFamilyInstance(c, symbol, wall, level, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+                    inst.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM)?.Set(Ft(win.SillMm));
+                    Mark(inst, sl.Code, "Window");
+                }
+                else
+                {
+                    var u = ((Line)((LocationCurve)wall.Location).Curve).Direction * Ft(win.WidthMm / 2);
+                    var opening = _doc.Create.NewOpening(wall, c - u + XYZ.BasisZ * Ft(win.SillMm), c + u + XYZ.BasisZ * Ft(win.HeadMm));
+                    Mark(opening, sl.Code, "Window opening");
+                }
+                made++;
+            }
+            catch { failed++; }
+        }
+        return family != null ? $"{made} windows" + (failed > 0 ? $" ({failed} did not fit)" : "")
+                              : $"{made} window openings (no window family found)";
+    }
+
+    Family? _windowFamily;
+    bool _windowFamilySearched;
+
+    Family? WindowFamily()
+    {
+        if (_windowFamilySearched) return _windowFamily;
+        _windowFamilySearched = true;
+        var windows = new FilteredElementCollector(_doc).OfClass(typeof(Family)).Cast<Family>()
+            .Where(f => f.FamilyCategory?.Id.Value == (long)BuiltInCategory.OST_Windows).ToList();
+        _windowFamily = windows.FirstOrDefault(f => f.Name.Contains("Fixed", StringComparison.OrdinalIgnoreCase)) ?? windows.FirstOrDefault();
+        if (_windowFamily != null) return _windowFamily;
+        foreach (var root in _doc.Application.GetLibraryPaths().Values.Where(Directory.Exists))
+        {
+            string? file = null;
+            try
+            {
+                file = Directory.EnumerateFiles(root, "*Fixed*.rfa", SearchOption.AllDirectories)
+                    .FirstOrDefault(f => f.Contains("Window", StringComparison.OrdinalIgnoreCase));
+            }
+            catch { /* unreadable folder */ }
+            if (file != null && _doc.LoadFamily(file, out Family loaded))
+            {
+                Log.Add($"Window family loaded: {Path.GetFileName(file)}");
+                return _windowFamily = loaded;
+            }
+        }
+        Log.Add("No window family in the project or Revit library: windows are cut as plain openings. Load a window family and run again for real windows.");
+        return null;
+    }
+
+    FamilySymbol WindowType(Family family, double widthMm, double heightMm)
+    {
+        var name = $"Concept Window {widthMm:0}x{heightMm:0}";
+        var ids = family.GetFamilySymbolIds();
+        var all = ids.Select(id => (FamilySymbol)_doc.GetElement(id)).ToList();
+        var symbol = all.FirstOrDefault(s => s.Name == name);
+        if (symbol == null)
+        {
+            symbol = (FamilySymbol)all.First().Duplicate(name);
+            SetLength(symbol, Ft(widthMm), BuiltInParameter.WINDOW_WIDTH, BuiltInParameter.FAMILY_WIDTH_PARAM, "Width");
+            SetLength(symbol, Ft(heightMm), BuiltInParameter.WINDOW_HEIGHT, BuiltInParameter.FAMILY_HEIGHT_PARAM, "Height");
+        }
+        if (!symbol.IsActive) { symbol.Activate(); _doc.Regenerate(); }
+        return symbol;
+    }
+
+    static void SetLength(Element e, double value, BuiltInParameter first, BuiltInParameter second, string name)
+    {
+        var p = e.get_Parameter(first) ?? e.get_Parameter(second) ?? e.LookupParameter(name);
+        if (p != null && !p.IsReadOnly && p.StorageType == StorageType.Double) p.Set(value);
     }
 
     FloorType FloorTypeFor(double thicknessMm)
@@ -351,14 +457,22 @@ public sealed class ModelBuilder
         return type;
     }
 
-    /// <summary>Dismisses warnings (e.g. overlapping walls) so a large run is not interrupted; errors still stop it.</summary>
+    /// <summary>
+    /// Dismisses warnings (e.g. overlapping walls) so a large run is not interrupted, and lets
+    /// Revit apply its own fix for errors on single elements (usually deleting the element that
+    /// cannot be made, e.g. a window that does not fit), so one bad element never cancels the run.
+    /// </summary>
     sealed class WarningSwallower : IFailuresPreprocessor
     {
         public FailureProcessingResult PreprocessFailures(FailuresAccessor a)
         {
+            bool resolved = false;
             foreach (var f in a.GetFailureMessages())
+            {
                 if (f.GetSeverity() == FailureSeverity.Warning) a.DeleteWarning(f);
-            return FailureProcessingResult.Continue;
+                else if (f.GetSeverity() == FailureSeverity.Error && f.HasResolutions()) { a.ResolveFailure(f); resolved = true; }
+            }
+            return resolved ? FailureProcessingResult.ProceedWithCommit : FailureProcessingResult.Continue;
         }
     }
 }

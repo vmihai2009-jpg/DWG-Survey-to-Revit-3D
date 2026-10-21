@@ -55,7 +55,12 @@ public class BuildFromSurveyCommand : IExternalCommand
 
         var builder = new ModelBuilder(doc, model);
         try { builder.Run(options); }
-        catch (Exception ex) { message = ex.Message; return Result.Failed; }
+        catch (Exception ex)
+        {
+            var errorPath = SaveText("error", ex + "\n\nLOG\n" + string.Join("\n", builder.Log));
+            message = $"{ex.Message}\nNothing was changed. Details for support: {errorPath}";
+            return Result.Failed;
+        }
 
         var logPath = SaveText("build", SurveyReport.Build(model) + "\nWHAT WAS DONE IN REVIT\n" + string.Join("\n", builder.Log.Select(l => "  - " + l)));
         var done = new TaskDialog("Survey to Revit")

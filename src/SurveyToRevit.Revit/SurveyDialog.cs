@@ -16,6 +16,7 @@ public sealed class SurveyDialog : Form
     readonly DataGridView _grid = new();
     readonly CheckBox _link = new() { Text = "Link each plan at its level (shared coordinates)", Checked = true, AutoSize = true };
     readonly CheckBox _walls = new() { Text = "Walls (Concept Wall types)", Checked = true, AutoSize = true };
+    readonly CheckBox _windows = new() { Text = "Windows (sill and head from the survey where given)", Checked = true, AutoSize = true };
     readonly CheckBox _floors = new() { Text = "Floor slabs, thickness (mm):", Checked = true, AutoSize = true };
     readonly NumericUpDown _slab = new() { Minimum = 50, Maximum = 1000, Increment = 50, Value = 300, Width = 70 };
     readonly CheckBox _ceilings = new() { Text = "Ceilings (height per floor in the table)", Checked = true, AutoSize = true };
@@ -54,13 +55,14 @@ public sealed class SurveyDialog : Form
         AddText("Ceiling", "Ceiling above floor (mm)", 70, false);
         AddText("Walls", "Walls", 40, true);
         AddText("Area", "Floor area (m²)", 50, true);
+        AddText("Windows", "Windows", 40, true);
         AddText("Unclear", "Areas to check", 50, true);
         AddText("Drawing", "Drawing", 160, true);
         foreach (var l in model.Levels)
         {
             int r = _grid.Rows.Add(l.Include, l.Name, double.IsNaN(l.ElevationMm) ? "" : (l.ElevationMm / 1000).ToString("0.000", CultureInfo.InvariantCulture),
                 l.CeilingHeightMm.ToString("0", CultureInfo.InvariantCulture), l.Walls.Walls.Count,
-                l.Outline == null ? "-" : (l.Outline.Area / 1e6).ToString("0"), l.Unclear.Count, l.Plan.Name.FileName);
+                l.Outline == null ? "-" : (l.Outline.Area / 1e6).ToString("0"), l.Windows.Count, l.Unclear.Count, l.Plan.Name.FileName);
             if (model.Notes.Any(n => n.StartsWith("CHECK " + l.Name + ":")) || double.IsNaN(l.ElevationMm))
             {
                 _grid.Rows[r].DefaultCellStyle.BackColor = Color.LightYellow;
@@ -72,7 +74,8 @@ public sealed class SurveyDialog : Form
         var slabRow = new FlowLayoutPanel { AutoSize = true, Margin = Padding.Empty };
         slabRow.Controls.Add(_floors);
         slabRow.Controls.Add(_slab);
-        options.Controls.AddRange(new Control[] { _link, _walls, slabRow, _ceilings, _generic });
+        options.Controls.AddRange(new Control[] { _link, _walls, _windows, slabRow, _ceilings, _generic });
+        _walls.CheckedChanged += (_, _) => { _windows.Enabled = _walls.Checked; };
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 44, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8, 6, 8, 6) };
         var build = new Button { Text = "Build", Width = 100 };
@@ -130,6 +133,7 @@ public sealed class SurveyDialog : Form
 
         Options.LinkPlans = _link.Checked;
         Options.Walls = _walls.Checked;
+        Options.Windows = _walls.Checked && _windows.Checked;
         Options.Floors = _floors.Checked;
         Options.SlabThicknessMm = (double)_slab.Value;
         Options.Ceilings = _ceilings.Checked;

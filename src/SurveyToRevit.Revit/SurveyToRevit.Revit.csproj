@@ -21,10 +21,17 @@
   <ItemGroup>
     <!-- File picker. Referenced directly (rather than UseWindowsForms) so the add-in also builds on Linux CI. -->
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+    <!-- Ribbon button images (Revit's ribbon takes WPF images). -->
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SurveyToRevit.Core\SurveyToRevit.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\icon16.png" LogicalName="icon16.png" />
+    <EmbeddedResource Include="Resources\icon32.png" LogicalName="icon32.png" />
   </ItemGroup>
 
   <ItemGroup>

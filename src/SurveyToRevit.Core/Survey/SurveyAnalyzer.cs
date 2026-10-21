@@ -30,6 +30,8 @@ public sealed record SurveyLevel(
     public double WallHeightMm { get; set; }
     /// <summary>Ceiling height above this floor (mm). Surveys rarely give it, so it is a default to adjust.</summary>
     public double CeilingHeightMm { get; set; }
+    /// <summary>Windows found on this floor (hosted in <see cref="Walls"/>).</summary>
+    public IReadOnlyList<WindowCandidate> Windows { get; set; } = Array.Empty<WindowCandidate>();
     /// <summary>Build this floor? (Editable before building.)</summary>
     public bool Include { get; set; } = true;
 }
@@ -92,6 +94,7 @@ public static class SurveyAnalyzer
 
         var frame = MakeFrame(chosen, tol);
         var levels = new List<SurveyLevel>();
+        var windowInput = new Dictionary<SurveyLevel, (List<Segment2> Lines, List<(Vec2, string)> Texts)>(ReferenceEqualityComparer.Instance);
         foreach (var p in chosen)
         {
             var (order, name) = DrawingName.DescribeLevel(p.Name.LevelCode!);
@@ -116,10 +119,14 @@ public static class SurveyAnalyzer
             var walls = WallDetector.Detect(lines, tol, openings, markers, raster.IsMaterial);
             var found = WallDetector.FromSingleLines(walls.UnpairedSegments, walls.Walls.ToList(), raster.Outline, tol);
             var facade = FacadeWalls.Consolidate(found, raster.Outline, tol);
-            facade = WallDetector.ExtendToJunctions(facade, tol);
+            facade = WallDetector.CloseGaps(facade, tol, openings);
+            facade = facade.Where(w => w.Length >= tol.MinWallLength).ToList();
             walls = walls with { Walls = facade, ThicknessGroups = facade.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
             var plan = raster with { Walls = walls };
-            levels.Add(new SurveyLevel(p.Name.LevelCode!, name, order, est?.FloorLevelMm ?? double.NaN, est, p, plan.Walls, plan.Outline, plan.Unclear));
+            var level = new SurveyLevel(p.Name.LevelCode!, name, order, est?.FloorLevelMm ?? double.NaN, est, p, plan.Walls, plan.Outline, plan.Unclear);
+            windowInput[level] = (openings.Where(o => rules.Classify(o.Layer) == LayerRole.Window).ToList(),
+                                  p.Texts.Select(t => (frame.ToModel(t.Position), t.Value)).ToList());
+            levels.Add(level);
             if (plan.Outline == null) notes.Add($"{name}: no closed building outline found; no floor slab.");
         }
         levels = levels.OrderBy(l => l.Order).ThenBy(l => l.ElevationMm).ToList();
@@ -129,6 +136,8 @@ public static class SurveyAnalyzer
             var next = levels.Skip(i + 1).FirstOrDefault(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm > levels[i].ElevationMm);
             levels[i].WallHeightMm = next != null ? next.ElevationMm - levels[i].ElevationMm : DefaultTopWallHeightMm;
             levels[i].CeilingHeightMm = DefaultCeilingHeight(levels[i].WallHeightMm);
+            var (wl, tx) = windowInput[levels[i]];
+            levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm);
             if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
         }
 

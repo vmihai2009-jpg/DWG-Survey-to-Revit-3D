@@ -20,7 +20,8 @@ Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`
 3. Select the survey DWGs (all of them is fine: elevations, sections and duplicate plans are skipped).
 4. A window lists each floor found: tick the floors to build, correct a level or ceiling height if needed (highlighted floors need checking), and choose what to build:
    - link each plan at its level (shared coordinates),
-   - walls ("Concept Wall 150mm" etc.),
+   - walls ("Concept Wall 150mm" etc.), joined across door gaps,
+   - windows in the walls (sill and head from the survey texts where given),
    - floor slabs ("Concept Slab 300mm") from each floor's outline,
    - ceilings (one per floor, at the height in the table),
    - generic models (named "Survey - check") where the drawing could not be read.

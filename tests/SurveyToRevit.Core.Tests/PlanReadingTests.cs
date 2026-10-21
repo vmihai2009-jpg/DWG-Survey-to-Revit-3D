@@ -65,4 +65,44 @@ public class PlanReadingTests
         Assert.Equal(2400, SurveyAnalyzer.DefaultCeilingHeight(3000));
         Assert.Equal(2100, SurveyAnalyzer.DefaultCeilingHeight(2200));
     }
+
+    [Fact]
+    public void Window_lines_in_a_wall_make_one_window_with_surveyed_sill_and_head()
+    {
+        var walls = new List<WallCandidate> { W(0, 300, 10000, 300, 600) };
+        var glass = new[] { S(2000, 250, 3200, 250, "Ss_25_30_95-Window"), S(2000, 350, 3200, 350, "Ss_25_30_95-Window"),
+                            S(2000, 250, 2000, 350, "Ss_25_30_95-Window"), S(3200, 250, 3200, 350, "Ss_25_30_95-Window") };
+        var texts = new List<(Vec2, string)> { (new Vec2(2600, 900), "S 0.94"), (new Vec2(2600, 1200), "H 2.58") };
+        var w = Assert.Single(WindowFinder.Find(glass, walls, texts, 3500));
+        Assert.Equal(1200, w.WidthMm);
+        Assert.Equal(940, w.SillMm);
+        Assert.Equal(2580, w.HeadMm);
+        Assert.True(w.HeightsFromSurvey);
+    }
+
+    [Fact]
+    public void Window_without_texts_gets_default_heights_below_the_floor_above()
+    {
+        var walls = new List<WallCandidate> { W(0, 300, 10000, 300, 600) };
+        var glass = new[] { S(5000, 300, 6000, 300, "Ss_25_30_95-Window") };
+        var w = Assert.Single(WindowFinder.Find(glass, walls, new List<(Vec2, string)>(), 2300));
+        Assert.Equal(WindowFinder.DefaultSillMm, w.SillMm);
+        Assert.Equal(2150, w.HeadMm); // capped 150 below the next floor
+    }
+
+    [Fact]
+    public void Door_gap_is_closed_and_a_hanging_end_runs_on_to_the_next_wall()
+    {
+        var walls = new List<WallCandidate>
+        {
+            W(0, 0, 4000, 0, 100), W(4900, 0, 9000, 0, 100),   // 900 door gap, no door drawn
+            W(2000, 1200, 2000, 5000, 100),                     // stops 1200 short of the wall below
+        };
+        var closed = WallDetector.CloseGaps(walls, Tolerances.Default, Array.Empty<Segment2>());
+        Assert.Equal(2, closed.Count);
+        var along = Assert.Single(closed, w => w.Centerline.AngleDeg < 1);
+        Assert.Equal(9000, along.Centerline.Length, 0);
+        var cross = Assert.Single(closed, w => w.Centerline.AngleDeg > 89);
+        Assert.Equal(0, Math.Min(cross.Centerline.A.Y, cross.Centerline.B.Y), 0);
+    }
 }
