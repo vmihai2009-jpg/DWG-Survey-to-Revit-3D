@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Copy this file to %AppData%\Autodesk\Revit\Addins\2025\
-     and the built files to %AppData%\Autodesk\Revit\Addins\2025\SurveyToRevit\
-     (install.ps1 does both). -->
+<!-- For manual installs: copy to %AppData%\Autodesk\Revit\Addins\2025\ with the built files in
+     ...\Addins\2025\SurveyToRevit\. install.ps1 writes its own copy pointing at a dated subfolder. -->
 <RevitAddIns>
   <AddIn Type="Application">
     <Name>Survey to Revit</Name>
