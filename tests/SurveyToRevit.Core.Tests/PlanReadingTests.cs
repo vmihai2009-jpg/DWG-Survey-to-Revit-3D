@@ -168,7 +168,7 @@ public class PlanReadingTests
         var walls = CurvedWalls.Add(new List<WallCandidate> { chord }, new[] { outer, inner }, Tolerances.Default);
         var w = Assert.Single(walls);
         Assert.NotNull(w.Arc);
-        Assert.Equal(450, w.TypeThickness);
+        Assert.Equal(460, w.TypeThickness); // 450 is halfway between 20 mm steps: the thicker
         Assert.InRange(w.Arc!.Radius, 20215, 20235); // to the 10 mm
         Assert.Equal(0.6, w.Arc.Sweep, 3);
     }

@@ -237,7 +237,7 @@ public sealed class ModelBuilder
         var wallTypes = new Dictionary<double, WallType>();
         for (int i = 0; i < ordered.Count; i++)
         {
-            var (sl, (level, _)) = (ordered[i].Key, ordered[i].Value);
+            var (sl, (level, view)) = (ordered[i].Key, ordered[i].Value);
             var above = i + 1 < ordered.Count ? ordered[i + 1].Value.level : null;
             int removed = DeleteGenerated(sl.Code);
             var done = new List<string>();
@@ -255,7 +255,9 @@ public sealed class ModelBuilder
                         Curve line = w.Arc is Arc2 a
                             ? Arc.Create(new XYZ(Ft(a.Center.X), Ft(a.Center.Y), level.Elevation), Ft(a.Radius), Arc2.Norm(a.Start), Arc2.Norm(a.Start) + a.Sweep, XYZ.BasisX, XYZ.BasisY)
                             : Line.CreateBound(new XYZ(Ft(c.A.X), Ft(c.A.Y), level.Elevation), new XYZ(Ft(c.B.X), Ft(c.B.Y), level.Elevation));
-                        if (!wallTypes.TryGetValue(w.TypeThickness, out var type)) wallTypes[w.TypeThickness] = type = WallTypeFor(w.TypeThickness);
+                        WallType type;
+                        if (w.Curtain) type = _curtainType ??= CurtainTypeFor();
+                        else if (!wallTypes.TryGetValue(w.TypeThickness, out type!)) wallTypes[w.TypeThickness] = type = WallTypeFor(w.TypeThickness);
                         var wall = Wall.Create(_doc, line, type.Id, level.Id, Ft(sl.WallHeightMm), 0, false, false);
                         if (above != null) wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.Set(above.Id);
                         Mark(wall, sl.Code, w.Confidence.ToString());
@@ -311,9 +313,9 @@ public sealed class ModelBuilder
                 }
                 done.Add($"{made} generic models for areas to check");
             }
-            if (o.Rooms && o.Walls && sl.RoomNames.Count > 0)
+            if (o.Rooms && o.Walls)
             {
-                try { done.Add(CreateRooms(sl, level)); }
+                try { done.Add(CreateRooms(sl, level, view)); }
                 catch (Exception ex) { done.Add($"no rooms ({ex.Message})"); }
             }
             Log.Add($"{sl.Name}: {string.Join(", ", done)}" + (removed > 0 ? $" (replacing {removed} elements from an earlier run)." : "."));
@@ -440,7 +442,7 @@ public sealed class ModelBuilder
     int DeleteGenerated(string levelCode)
     {
         var prefix = $"{Tag}|{levelCode}|";
-        var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape), typeof(FamilyInstance), typeof(Opening), typeof(SpatialElement), typeof(Toposolid) });
+        var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape), typeof(FamilyInstance), typeof(Opening), typeof(SpatialElement), typeof(Toposolid), typeof(CurveElement) });
         var ids = new FilteredElementCollector(_doc).WherePasses(classes).WhereElementIsNotElementType()
             .Where(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(prefix) == true)
             .Select(e => e.Id).ToList();
@@ -457,7 +459,7 @@ public sealed class ModelBuilder
     string CreateWindows(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created)
     {
         var (made, failed, real) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Windows, "Window",
-            sl.Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm)));
+            sl.Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward)));
         return real ? $"{made} windows" + (failed > 0 ? $" ({failed} did not fit)" : "")
                     : $"{made} window openings (no window family found)";
     }
@@ -466,20 +468,20 @@ public sealed class ModelBuilder
     string CreateDoors(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created)
     {
         var (made, failed, real) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Doors, "Door",
-            sl.Doors.Select(d => (d.HostIndex, d.Center, d.WidthMm, 0.0, d.HeightMm)));
+            sl.Doors.Select(d => (d.HostIndex, d.Center, d.WidthMm, 0.0, d.HeightMm, (Vec2?)null)));
         return real ? $"{made} doors" + (failed > 0 ? $" ({failed} did not fit)" : "")
                     : $"{made} door openings (no door family found)";
     }
 
     (int Made, int Failed, bool Real) PlaceHosted(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created,
-        BuiltInCategory category, string what, IEnumerable<(int Host, Vec2 Center, double Width, double Bottom, double Top)> items)
+        BuiltInCategory category, string what, IEnumerable<(int Host, Vec2 Center, double Width, double Bottom, double Top, Vec2? Outward)> items)
     {
         var family = HostedFamily(category, what);
         var symbols = new Dictionary<(double, double), FamilySymbol>();
         int made = 0, failed = 0;
-        foreach (var (hostIndex, center, width, bottom, top) in items)
+        foreach (var (hostIndex, center, width, bottom, top, outward) in items)
         {
-            if (!created.TryGetValue(sl.Walls.Walls[hostIndex], out var wall)) continue;
+            if (!created.TryGetValue(sl.Walls.Walls[hostIndex], out var wall) || sl.Walls.Walls[hostIndex].Curtain) continue;
             var c = new XYZ(Ft(center.X), Ft(center.Y), level.Elevation);
             try
             {
@@ -489,6 +491,8 @@ public sealed class ModelBuilder
                     if (!symbols.TryGetValue((w, h), out var symbol)) symbols[(w, h)] = symbol = HostedType(family, what, w, h);
                     var inst = _doc.Create.NewFamilyInstance(c, symbol, wall, level, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
                     if (category == BuiltInCategory.OST_Windows) inst.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM)?.Set(Ft(bottom));
+                    // the window's outer face to the outside of the building
+                    if (outward is Vec2 o && inst.CanFlipFacing && inst.FacingOrientation.DotProduct(new XYZ(o.X, o.Y, 0)) < 0) inst.flipFacing();
                     Mark(inst, sl.Code, what);
                 }
                 else Cut(wall, c, width, bottom, top, sl.Code, what + " opening");
@@ -588,9 +592,23 @@ public sealed class ModelBuilder
     /// level (in the Existing phase); each one holding a survey room label becomes a room with
     /// that name. Spaces with no label get no room.
     /// </summary>
-    string CreateRooms(SurveyLevel sl, Level level)
+    string CreateRooms(SurveyLevel sl, Level level, ViewPlan? view)
     {
         if (_phase == null) return "no rooms (no phase)";
+        // room separation lines where the drawing closes a room but no wall does
+        int separations = 0;
+        if (view != null && sl.RoomSeparations.Count > 0)
+        {
+            var sketch = SketchPlane.Create(_doc, Plane.CreateByNormalAndOrigin(XYZ.BasisZ, new XYZ(0, 0, level.Elevation)));
+            var curves = new CurveArray();
+            foreach (var s in sl.RoomSeparations.Where(s => s.Length >= 30))
+                curves.Append(Line.CreateBound(new XYZ(Ft(s.A.X), Ft(s.A.Y), level.Elevation), new XYZ(Ft(s.B.X), Ft(s.B.Y), level.Elevation)));
+            try
+            {
+                foreach (ModelCurve c in _doc.Create.NewRoomBoundaryLines(sketch, curves, view)) { Mark(c, sl.Code, "Room separation"); separations++; }
+            }
+            catch (Exception ex) { Log.Add($"{sl.Name}: room separation lines not added ({ex.Message})."); }
+        }
         _doc.Regenerate();
         var placed = new List<Autodesk.Revit.DB.Architecture.Room>();
         int circuits = 0, refused = 0;
@@ -614,8 +632,12 @@ public sealed class ModelBuilder
             if (!names.TryGetValue(room, out var list)) names[room] = list = new List<string>();
             if (!list.Contains(name, StringComparer.OrdinalIgnoreCase)) list.Add(name);
         }
-        var unnamed = placed.Where(r => !names.ContainsKey(r)).Select(r => r.Id).ToList();
-        if (unnamed.Count > 0) _doc.Delete(unnamed);
+        // a space with no label stays a room where the drawing shows a room there (and it is not a sliver)
+        var unnamed = placed.Where(r => !names.ContainsKey(r)).ToList();
+        var keep = unnamed.Where(r => r.Area >= Ft(1000) * Ft(2000) && r.Location is LocationPoint lp
+            && sl.IsRoom?.Invoke(new Vec2(lp.Point.X * 304.8, lp.Point.Y * 304.8)) == true).ToList();
+        var drop = unnamed.Except(keep).Select(r => r.Id).ToList();
+        if (drop.Count > 0) _doc.Delete(drop);
         foreach (var (room, list) in names)
         {
             room.Name = string.Join(" / ", list);
@@ -623,7 +645,14 @@ public sealed class ModelBuilder
             room.LimitOffset = Ft(sl.CeilingHeightMm);
             Mark(room, sl.Code, "Room");
         }
-        return $"{names.Count} rooms" + (outside > 0 ? $" ({outside} labels not inside a closed space)" : "")
+        foreach (var room in keep)
+        {
+            room.Name = "Room";
+            room.UpperLimit = level;
+            room.LimitOffset = Ft(sl.CeilingHeightMm);
+            Mark(room, sl.Code, "Room (no label)");
+        }
+        return $"{names.Count} named rooms, {keep.Count} unnamed, {separations} room separation lines" + (outside > 0 ? $" ({outside} labels not inside a closed space)" : "")
              + $" [{circuits} enclosed spaces found, {placed.Count} rooms tried" + (refused > 0 ? $", {refused} refused: {firstError}" : "") + "]";
     }
 
@@ -671,6 +700,22 @@ public sealed class ModelBuilder
     }
 
     WallType WallTypeFor(double thicknessMm) => WallTypeFor(_doc, thicknessMm, Log);
+
+    WallType? _curtainType;
+
+    /// <summary>"Concept Curtain Wall": a copy of the project's first curtain wall type (glazed screens and partitions).</summary>
+    WallType CurtainTypeFor()
+    {
+        const string name = "Concept Curtain Wall";
+        var all = new FilteredElementCollector(_doc).OfClass(typeof(WallType)).Cast<WallType>().ToList();
+        var found = all.FirstOrDefault(w => w.Name == name);
+        if (found != null) return found;
+        var curtain = all.FirstOrDefault(w => w.Kind == WallKind.Curtain);
+        if (curtain == null) { Log.Add("No curtain wall type in the project: glazed screens are built as thin walls."); return WallTypeFor(60); }
+        var type = (WallType)curtain.Duplicate(name);
+        Log.Add($"Wall type created: {name} (from {curtain.Name})");
+        return type;
+    }
 
     /// <summary>The "Concept Wall 150mm" type for a thickness, made from a basic wall type if missing.</summary>
     public static WallType WallTypeFor(Document doc, double thicknessMm, List<string>? log = null)

@@ -17,6 +17,9 @@ public sealed record PlanResult(
     /// the remaining pieces as lists of cell centres (model mm), each at least 0.15 m².
     /// </summary>
     public Func<Func<Vec2, bool>, List<List<Vec2>>>? Leftover { get; init; }
+
+    /// <summary>Is this point (model mm) inside a room the drawing encloses (labelled, or a wide unlabelled space)?</summary>
+    public Func<Vec2, bool>? IsRoom { get; init; }
 }
 
 /// <summary>
@@ -170,7 +173,12 @@ public sealed class PlanRaster
                 }
             return pieces;
         }
-        return new PlanResult(result, outline, unclear, rooms) { IsMaterial = IsMaterial, Leftover = Leftover };
+        bool IsRoom(Vec2 p)
+        {
+            int c = Cell(p);
+            return c >= 0 && label[c] > 0 && !line[c] && !material[c];
+        }
+        return new PlanResult(result, outline, unclear, rooms) { IsMaterial = IsMaterial, Leftover = Leftover, IsRoom = IsRoom };
     }
 
     // Thin strands (a stray line leaking into the outside) and parts touching only at a corner

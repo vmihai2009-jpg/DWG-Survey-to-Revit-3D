@@ -89,14 +89,15 @@ public class GeometryTests
     }
 
     [Fact]
-    public void Odd_thicknesses_snap_to_a_few_standard_wall_types()
+    public void Odd_thicknesses_snap_to_20mm_wall_types()
     {
         var sizes = Tolerances.Default.WallTypeSizes;
         Assert.Equal(100, WallDetector.SnapThickness(92, sizes));
-        Assert.Equal(150, WallDetector.SnapThickness(138, sizes));
-        Assert.Equal(450, WallDetector.SnapThickness(523, sizes));
-        Assert.Equal(600, WallDetector.SnapThickness(667, sizes));
-        Assert.Equal(1200, WallDetector.SnapThickness(1180, sizes));
+        Assert.Equal(140, WallDetector.SnapThickness(138, sizes));
+        Assert.Equal(520, WallDetector.SnapThickness(523, sizes));
+        Assert.Equal(660, WallDetector.SnapThickness(667, sizes));
+        Assert.Equal(1180, WallDetector.SnapThickness(1180, sizes));
+        Assert.Equal(1300, WallDetector.SnapThickness(1290, sizes));
     }
 
     [Fact]

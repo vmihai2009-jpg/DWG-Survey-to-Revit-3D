@@ -68,11 +68,10 @@ public sealed record Tolerances
     public double DoorGap { get; init; } = 1500.0;
 
     /// <summary>
-    /// Wall type sizes. Each measured thickness becomes the nearest of these, so an
-    /// old building gives a handful of wall types instead of one per odd measurement.
-    /// Thicker walls round to 100 mm.
+    /// Wall type sizes: every 20 mm from 40 to 1200 mm. Each measured thickness becomes the
+    /// nearest of these ("Concept Wall 340mm"). Thicker walls round to 100 mm.
     /// </summary>
-    public IReadOnlyList<double> WallTypeSizes { get; init; } = new double[] { 100, 150, 200, 300, 450, 600, 900 };
+    public IReadOnlyList<double> WallTypeSizes { get; init; } = Enumerable.Range(2, 59).Select(i => i * 20.0).ToArray();
 
     /// <summary>A wall drawn as a single line (one face only) becomes a wall this thick, centred on the line.</summary>
     public double SingleLineWallThickness { get; init; } = 100.0;

@@ -70,7 +70,7 @@ public class SurveyTests
         var door = new[] { S(3000, 75, 3900, 75, "Ss_25_30_20-Door") };
         var w = Assert.Single(WallDetector.Detect(segs, openings: door).Walls);
         Assert.Equal(7000, w.Length, 0);
-        Assert.Equal("Concept Wall 150mm", w.TypeName);
+        Assert.Equal("Concept Wall 160mm", w.TypeName);
     }
 
     [Fact]
@@ -152,7 +152,22 @@ public class SurveyTests
         Assert.Equal(LayerRole.Window, r.Classify("Ss_25_30_95-Window"));
         Assert.Equal(LayerRole.Door, r.Classify("Ss_25_30_20-Fire_Door"));
         Assert.Equal(LayerRole.LevelText, r.Classify("Zz_60_45-Level"));
-        Assert.Equal(LayerRole.Other, r.Classify("Zz_20_40_05-exRestrictedHeadroom"));
-        Assert.Equal(LayerRole.Other, r.Classify("Pr_40_30_30-FittedFurn"));
+        Assert.Equal(LayerRole.Annotation, r.Classify("Zz_20_40_05-exRestrictedHeadroom"));
+        Assert.Equal(LayerRole.HeightText, r.Classify("Zz_20-TextHt"));
+        Assert.Equal(LayerRole.Fitting, r.Classify("Pr_40_30_30-FittedFurn"));
+        Assert.Equal(LayerRole.CurtainWall, r.Classify("Ss_25_10_30-PartGlass"));
+        Assert.Equal(LayerRole.Stair, r.Classify("EF_35_10-Stair"));
+        Assert.Equal(LayerRole.Stair, r.Classify("STEPS"));
+        Assert.Equal(LayerRole.Ramp, r.Classify("EF_35_20-Ramp"));
+        Assert.Equal(LayerRole.Lift, r.Classify("Ss_80_50-Lift"));
+        Assert.Equal(LayerRole.Column, r.Classify("COLUMN"));
+        Assert.Equal(LayerRole.Roof, r.Classify("Ss_30-Roof"));
+        Assert.Equal(LayerRole.Rooflight, r.Classify("Pr_30_59_72_77-Skylight"));
+        Assert.Equal(LayerRole.Chimney, r.Classify("Ss_37_17_13-Chimney"));
+        Assert.Equal(LayerRole.Railing, r.Classify("FENCES_HANDRAILS"));
+        Assert.Equal(LayerRole.Wall, r.Classify("WALLS-INT"));
+        Assert.Equal(LayerRole.Other, r.Classify("EF_25-Plinth"));
+        Assert.Equal(LayerRole.Area, r.Classify("GIA AREA"));
+        Assert.Equal(LayerRole.Window, r.Classify("GLAZING"));
     }
 }

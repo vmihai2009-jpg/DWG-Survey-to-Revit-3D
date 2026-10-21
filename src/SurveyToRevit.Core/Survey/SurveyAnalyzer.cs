@@ -38,6 +38,10 @@ public sealed record SurveyLevel(
     public double CeilingHeightMm { get; set; }
     /// <summary>True when <see cref="CeilingHeightMm"/> comes from ceiling heights written on the plan.</summary>
     public bool CeilingFromSurvey { get; set; }
+    /// <summary>Room separation lines that close the rooms the drawing shows where walls alone leave them open.</summary>
+    public IReadOnlyList<Segment2> RoomSeparations { get; set; } = Array.Empty<Segment2>();
+    /// <summary>Is this point (model mm) in a room the drawing encloses?</summary>
+    public Func<Vec2, bool>? IsRoom { get; set; }
     /// <summary>Windows found on this floor (hosted in <see cref="Walls"/>).</summary>
     public IReadOnlyList<WindowCandidate> Windows { get; set; } = Array.Empty<WindowCandidate>();
     /// <summary>Doors found on this floor (hosted in <see cref="Walls"/>).</summary>
@@ -56,6 +60,8 @@ public sealed class SurveyModel
     public required IReadOnlyList<SurveyLevel> Levels { get; init; }
     public required IReadOnlyList<SkippedDrawing> Skipped { get; init; }
     public required IReadOnlyList<string> Notes { get; init; }
+    /// <summary>The layer rules used (built-in, plus any layers.txt).</summary>
+    public LayerRules Rules { get; init; } = LayerRules.Default;
 }
 
 /// <summary>
@@ -81,6 +87,13 @@ public static class SurveyAnalyzer
         rules ??= LayerRules.Default;
         var skipped = new List<SkippedDrawing>();
         var notes = new List<string>();
+        paths = paths.ToList();
+        // the office's own layer names, in a layers.txt next to the drawings
+        if (rules.OverrideFile == null && paths.Select(p => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(p) ?? "", LayerRules.OverrideFileName)).FirstOrDefault(File.Exists) is string layerFile)
+        {
+            rules = rules.WithOverrides(layerFile, notes);
+            notes.Add($"Layer names from {layerFile} ({rules.Overrides.Count} rules) are used before the built-in ones.");
+        }
         var plans = new List<SurveyDrawing>();
 
         foreach (var path in paths.OrderBy(p => System.IO.Path.GetFileName(p)))
@@ -141,11 +154,15 @@ public static class SurveyAnalyzer
             facade = PierWalls.Fill(facade, raster.Leftover, tol);
             facade = WallDetector.CloseFacade(facade, raster.Outline, tol);
             facade = facade.Where(w => w.Length >= tol.MinWallLength).ToList();
+            // walls drawn on glazed-screen layers become curtain walls
+            facade = facade.Select(w => rules.Classify(w.Centerline.Layer) == LayerRole.CurtainWall ? w with { Curtain = true } : w).ToList();
             walls = walls with { Walls = facade, ThicknessGroups = facade.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
             // unclear pockets now filled by a pier wall are explained
             var unclearLeft = raster.Unclear.Where(u => !facade.Any(w => w.FaceA == "pier" && FacadeWalls.Contains(u.Outline, w.Centerline.Mid))).ToList();
             var plan = raster with { Walls = walls, Unclear = unclearLeft };
             var level = new SurveyLevel(p.Name.LevelCode!, name, order, est?.FloorLevelMm ?? double.NaN, est, p, plan.Walls, plan.Outline, plan.Unclear);
+            level.IsRoom = raster.IsRoom;
+            level.RoomSeparations = RoomBounds.Separations(facade, lines, raster.IsRoom);
             doorInput[level] = openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList();
             level.RoomNames = p.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.RoomName)
                 .Select(t => (frame.ToModel(t.Position), Name: System.Text.RegularExpressions.Regex.Replace(t.Value, @"\s+", " ").Trim()))
@@ -179,14 +196,14 @@ public static class SurveyAnalyzer
             var surveyedCeiling = SurveyHeights.CeilingHeight(heights, levels[i].WallHeightMm);
             levels[i].CeilingFromSurvey = surveyedCeiling != null;
             levels[i].CeilingHeightMm = surveyedCeiling ?? DefaultCeilingHeight(levels[i].WallHeightMm);
-            levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm);
+            levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm, outline: levels[i].Outline);
             levels[i].Doors = DoorFinder.Find(doorInput[levels[i]], levels[i].Walls.Walls, levels[i].Windows, heights: heights, storeyMm: levels[i].WallHeightMm);
             if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
         }
 
         notes.Add($"Survey base point E {frame.BasePoint.X / 1000:0.000} m, N {frame.BasePoint.Y / 1000:0.000} m; " +
                   $"model turned {frame.RotationDeg:0.00}° so the main walls are square (grid north = true north).");
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes };
+        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules };
     }
 
     /// <summary>

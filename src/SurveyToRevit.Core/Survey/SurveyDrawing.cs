@@ -23,6 +23,8 @@ public sealed class SurveyDrawing
     /// <summary>Curved lines (arcs, bulged polyline pieces) on wall layers, radius 1 m or more.</summary>
     public IReadOnlyList<Arc2> WallArcs { get; init; } = Array.Empty<Arc2>();
     public required IReadOnlyList<SurveyText> Texts { get; init; }
+    /// <summary>Lines on layers for other parts of the building (stairs, columns, roofs, fittings…; see <see cref="LayerRules.IsFeature"/>), curves in short pieces.</summary>
+    public IReadOnlyList<Segment2> FeatureLines { get; init; } = Array.Empty<Segment2>();
     public required IReadOnlyDictionary<string, int> LayerCounts { get; init; }
 
     /// <summary>Spot heights on level layers, in mm.</summary>
@@ -37,14 +39,16 @@ public sealed class SurveyDrawing
 
         var walls = new List<(string layer, double x1, double y1, double x2, double y2)>();
         var openings = new List<(string layer, double x1, double y1, double x2, double y2)>();
+        var features = new List<(string layer, double x1, double y1, double x2, double y2)>();
         var texts = new List<(double x, double y, string value, string layer)>();
         var arcs = new List<(LayerRole role, Arc2 arc)>(); // in drawing units until the units are known
         var counts = new Dictionary<string, int>();
 
         void AddSeg(string layer, LayerRole role, double x1, double y1, double x2, double y2)
         {
-            if (role == LayerRole.Wall) walls.Add((layer, x1, y1, x2, y2));
+            if (role is LayerRole.Wall or LayerRole.CurtainWall) walls.Add((layer, x1, y1, x2, y2));
             else if (role is LayerRole.Window or LayerRole.Door) openings.Add((layer, x1, y1, x2, y2));
+            else if (LayerRules.IsFeature(role)) features.Add((layer, x1, y1, x2, y2));
         }
 
         void Visit(Entity e, string? inheritedLayer, int depth)
@@ -66,15 +70,19 @@ public sealed class SurveyDrawing
                         var a = v[i].Location; var b = v[(i + 1) % v.Count].Location;
                         if (Math.Abs(v[i].Bulge) > 1e-6)
                         {
-                            if (role is LayerRole.Wall or LayerRole.Window && (a.X != b.X || a.Y != b.Y))
+                            if ((role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window || LayerRules.IsFeature(role)) && (a.X != b.X || a.Y != b.Y))
                                 arcs.Add((role, Arc2.FromBulge(new Vec2(a.X, a.Y), new Vec2(b.X, b.Y), v[i].Bulge, layer)));
                             continue;
                         }
                         AddSeg(layer, role, a.X, a.Y, b.X, b.Y);
                     }
                     break;
-                case Arc arc when role is LayerRole.Wall or LayerRole.Window:
+                case Arc arc when role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window || LayerRules.IsFeature(role):
                     arcs.Add((role, new Arc2(new Vec2(arc.Center.X, arc.Center.Y), arc.Radius, arc.StartAngle, arc.EndAngle, layer)));
+                    break;
+                case Circle circle when LayerRules.IsFeature(role):
+                    // round columns, rooflights: a full turn
+                    arcs.Add((role, new Arc2(new Vec2(circle.Center.X, circle.Center.Y), circle.Radius, 0, 2 * Math.PI, layer)));
                     break;
                 case TextEntity t:
                     texts.Add((t.InsertPoint.X, t.InsertPoint.Y, t.Value ?? "", layer));
@@ -82,8 +90,8 @@ public sealed class SurveyDrawing
                 case MText mt:
                     texts.Add((mt.InsertPoint.X, mt.InsertPoint.Y, mt.PlainText ?? "", layer));
                     break;
-                case Insert ins when depth < 4 && role is LayerRole.Wall or LayerRole.Window or LayerRole.Door:
-                    // Window/door symbols are usually blocks: explode them for opening evidence.
+                case Insert ins when depth < 4 && (role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role)):
+                    // Window/door symbols (and stair, sanitary and furniture symbols) are usually blocks: explode them.
                     try { foreach (var sub in ins.Explode()) Visit(sub, layer, depth + 1); } catch { /* unusual block: ignore */ }
                     break;
             }
@@ -102,7 +110,9 @@ public sealed class SurveyDrawing
             .SelectMany(a => a.arc.Tessellate(250)).Select(s => s with { Source = System.IO.Path.GetFileName(path) })).ToList();
         return new SurveyDrawing
         {
-            WallArcs = scaled.Where(a => a.role == LayerRole.Wall && a.arc.Radius >= 1000 && a.arc.Length >= 200).Select(a => a.arc with { Layer = a.arc.Layer }).ToList(),
+            FeatureLines = features.Select(Seg).Concat(scaled.Where(a => LayerRules.IsFeature(a.role))
+                .SelectMany(a => a.arc.Tessellate(Math.Max(20, Math.Min(250, a.arc.Length / 16)))).Select(x => x with { Source = System.IO.Path.GetFileName(path) })).ToList(),
+            WallArcs = scaled.Where(a => a.role is LayerRole.Wall or LayerRole.CurtainWall && a.arc.Radius >= 1000 && a.arc.Length >= 200).Select(a => a.arc with { Layer = a.arc.Layer }).ToList(),
             Path = path,
             Name = DrawingName.Parse(path),
             MmPerUnit = mmPerUnit,

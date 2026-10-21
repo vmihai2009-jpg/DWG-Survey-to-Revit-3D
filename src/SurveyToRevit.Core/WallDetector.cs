@@ -6,6 +6,8 @@ public enum Confidence { Low, Medium, High }
 public sealed record WallCandidate(Segment2 Centerline, double MeasuredThickness, double TypeThickness, Confidence Confidence, string FaceA, string FaceB)
 {
     public Arc2? Arc { get; init; }
+    /// <summary>A glazed wall or screen (drawn on a curtain wall / glazed partition layer): built as a curtain wall.</summary>
+    public bool Curtain { get; init; }
     public double Length => Arc?.Length ?? Centerline.Length;
     public string TypeName => WallDetector.TypeNameFor(TypeThickness);
 }
@@ -199,7 +201,8 @@ public static class WallDetector
     {
         if (sizes.Count == 0) return Math.Round(measured / 10) * 10;
         if (measured > sizes[^1]) return Math.Round(measured / 100) * 100;
-        return sizes.OrderBy(x => Math.Abs(x - measured)).ThenBy(x => x).First();
+        // halfway between two sizes (a 150 mm wall with 20 mm steps) takes the thicker one
+        return sizes.OrderBy(x => Math.Round(Math.Abs(x - measured), 6)).ThenByDescending(x => x).First();
     }
 
     // Is any marker point strictly between faces a and b, within [s, e] along a?
