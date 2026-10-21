@@ -83,6 +83,8 @@ static string Svg(SurveyLevel l, SurveyFrame f)
         var b = WallGeometry.PointAt(hw, al + d.WidthMm / 2);
         sb.Append($"<line x1='{a.X:0}' y1='{-a.Y:0}' x2='{b.X:0}' y2='{-b.Y:0}' stroke='#e0007a' stroke-width='250'/>");
     }
+    foreach (var d in l.Details)
+        sb.Append($"<polygon points='{string.Join(" ", d.Outline.Vertices.Select(v => $"{v.X:0},{-v.Y:0}"))}' fill='{(d.Role == SurveyToRevit.Core.Survey.LayerRole.Wall ? "#000" : "#7a3db8")}' fill-opacity='0.75'/>");
     foreach (var s in l.RoomSeparations)
         sb.Append($"<line x1='{s.A.X:0}' y1='{-s.A.Y:0}' x2='{s.B.X:0}' y2='{-s.B.Y:0}' stroke='#00b050' stroke-width='60' stroke-dasharray='150 80'/>");
     foreach (var (p, name) in l.RoomNames)

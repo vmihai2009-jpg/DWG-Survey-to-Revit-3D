@@ -20,6 +20,12 @@ public sealed class BuildOptions
     public bool Rooms { get; set; } = true;
     /// <summary>Areas the engine could not read become generic models (DirectShape) for review.</summary>
     public bool UnclearAsGenericModels { get; set; } = true;
+    /// <summary>Stairs from the stair layers.</summary>
+    public bool Stairs { get; set; } = true;
+    /// <summary>Columns, chimneys, fittings, balconies, rooflights, railings and odd-shaped wall fills as generic models.</summary>
+    public bool Details { get; set; } = true;
+    /// <summary>Flat concept roofs, only where a roof plan or a roof layer shows them.</summary>
+    public bool Roofs { get; set; } = true;
     public double SlabThicknessMm { get; set; } = 300;
     /// <summary>Surroundings from LiDAR (ground and neighbouring blocks); null for none.</summary>
     public SiteContext? Site { get; set; }
@@ -60,6 +66,8 @@ public sealed class ModelBuilder
         var levels = SetUpLevels();
         if (o.LinkPlans) LinkPlans(levels);
         BuildElements(levels, o);
+        if (o.Stairs) BuildStairs(levels);
+        if (o.Roofs && _model.Roofs.Count > 0) BuildRoofs(levels.Values.Select(v => v.level).ToList());
         if (o.Site != null) BuildSite(o.Site, levels.Values.Select(v => v.level).ToList());
         group.Assimilate();
     }
@@ -313,6 +321,7 @@ public sealed class ModelBuilder
                 }
                 done.Add($"{made} generic models for areas to check");
             }
+            if (o.Details && sl.Details.Count > 0) done.Add(BuildDetails(sl, level));
             if (o.Rooms && o.Walls)
             {
                 try { done.Add(CreateRooms(sl, level, view)); }
@@ -416,6 +425,213 @@ public sealed class ModelBuilder
     }
 
     /// <summary>Tags a generated element (so a re-run replaces it) and puts it on the Existing phase.</summary>
+    /// <summary>
+    /// Stairs, each in its own stairs edit (Revit builds stairs outside the main transaction):
+    /// one Revit stair per survey stair, from its floor to the next level, a sketched run per
+    /// flight made from the drawn risers (so curved flights stay curved), landings between
+    /// flights where Revit can make them. A stair Revit refuses is built as stepped generic
+    /// model blocks ("Survey - stair") instead, so nothing is lost.
+    /// </summary>
+    void BuildStairs(Dictionary<SurveyLevel, (Level level, ViewPlan? view)> levels)
+    {
+        var ordered = levels.OrderBy(kv => kv.Value.level.Elevation).ToList();
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            var (sl, (level, _)) = (ordered[i].Key, ordered[i].Value);
+            if (sl.Stairs.Count == 0) continue;
+            var above = i + 1 < ordered.Count ? ordered[i + 1].Value.level : null;
+            double rise = above != null ? (above.Elevation - level.Elevation) * 304.8 : sl.WallHeightMm;
+            int native = 0, blocks = 0, unknown = 0;
+            string? firstError = null;
+            foreach (var stair in sl.Stairs)
+            {
+                if (!stair.DirectionKnown) unknown++;
+                bool ok = false;
+                if (above != null)
+                    try { ok = NativeStair(stair, level, above, sl.Code, rise); }
+                    catch (Exception ex) { firstError ??= ex.Message; }
+                if (ok) { native++; continue; }
+                using var t = new Transaction(_doc, "Survey stair (blocks)");
+                t.Start();
+                try { StairBlocks(stair, level, sl.Code, rise); blocks++; t.Commit(); }
+                catch (Exception ex) { firstError ??= ex.Message; t.RollBack(); }
+            }
+            Log.Add($"{sl.Name}: {native} stairs" + (blocks > 0 ? $", {blocks} as generic model blocks" + (firstError != null ? $" (Revit refused the stair: {firstError})" : "") : "")
+                    + (unknown > 0 ? $"; {unknown} with no UP note: climbing direction guessed, check" : ""));
+        }
+    }
+
+    bool NativeStair(StairCandidate stair, Level level, Level above, string code, double riseMm)
+    {
+        int risers = Math.Max(3, stair.Risers);
+        double riserMm = riseMm / risers;
+        using var scope = new StairsEditScope(_doc, "Survey stair");
+        var id = scope.Start(level.Id, above.Id);
+        using (var t = new Transaction(_doc, "Survey stair runs"))
+        {
+            t.Start();
+            var runs = new List<Autodesk.Revit.DB.Architecture.StairsRun>();
+            int done = 0;
+            foreach (var f in stair.Flights)
+            {
+                XYZ P(Vec2 v) => new(Ft(v.X), Ft(v.Y), 0);
+                var left = f.Risers.Select(r => P(r.A)).ToList();
+                var right = f.Risers.Select(r => P(r.B)).ToList();
+                var boundaries = new List<Curve>();
+                for (int k = 1; k < left.Count; k++) boundaries.Add(Line.CreateBound(left[k - 1], left[k]));
+                for (int k = 1; k < right.Count; k++) boundaries.Add(Line.CreateBound(right[k - 1], right[k]));
+                var riserCurves = f.Risers.Select(r => (Curve)Line.CreateBound(P(r.A), P(r.B))).ToList();
+                var path = new List<Curve>();
+                for (int k = 1; k < f.Risers.Count; k++) path.Add(Line.CreateBound(P(f.Risers[k - 1].Mid), P(f.Risers[k].Mid)));
+                runs.Add(Autodesk.Revit.DB.Architecture.StairsRun.CreateSketchedRun(_doc, id, Ft(done * riserMm), boundaries, riserCurves, path));
+                done += f.Risers.Count;
+            }
+            for (int k = 1; k < runs.Count; k++)
+                try { Autodesk.Revit.DB.Architecture.StairsLanding.CreateAutomaticLanding(_doc, runs[k - 1].Id, runs[k].Id); } catch { /* no landing fits: the runs stand alone */ }
+            if (_doc.GetElement(id) is Autodesk.Revit.DB.Architecture.Stairs s)
+            {
+                try { s.DesiredRisersNumber = risers; } catch { /* Revit keeps its own count */ }
+                Mark(s, code, stair.DirectionKnown ? "Stair" : "Stair (direction guessed)");
+            }
+            t.Commit();
+        }
+        scope.Commit(new WarningSwallower());
+        return _doc.GetElement(id) != null;
+    }
+
+    static readonly Dictionary<LayerRole, string> DetailNames = new()
+    {
+        [LayerRole.Wall] = "Survey - wall fill", [LayerRole.Column] = "Survey - column", [LayerRole.Chimney] = "Survey - chimney",
+        [LayerRole.Fitting] = "Survey - fitting", [LayerRole.Balcony] = "Survey - balcony", [LayerRole.Rooflight] = "Survey - rooflight",
+        [LayerRole.Railing] = "Survey - railing",
+    };
+
+    /// <summary>Detail from the plan as generic models (DirectShape), one per shape, named by what it is.</summary>
+    string BuildDetails(SurveyLevel sl, Level level)
+    {
+        int made = 0, refused = 0;
+        foreach (var d in sl.Details)
+        {
+            try
+            {
+                if (Loop(d.Outline, level.Elevation + Ft(d.BaseMm)) is not CurveLoop loop) { refused++; continue; }
+                var solid = GeometryCreationUtilities.CreateExtrusionGeometry(new List<CurveLoop> { loop }, XYZ.BasisZ, Ft(d.HeightMm));
+                var ds = DirectShape.CreateElement(_doc, new ElementId(BuiltInCategory.OST_GenericModel));
+                ds.SetShape(new List<GeometryObject> { solid });
+                ds.Name = DetailNames.TryGetValue(d.Role, out var n) ? n : "Survey - detail";
+                Mark(ds, sl.Code, "Detail: " + d.Role);
+                made++;
+            }
+            catch { refused++; /* a self-crossing outline Revit refuses is skipped */ }
+        }
+        var counts = sl.Details.GroupBy(d => d.Role).Select(g => $"{g.Count()} {(DetailNames.TryGetValue(g.Key, out var n) ? n[9..] : "detail")}");
+        return $"{made} detail generic models ({string.Join(", ", counts)})" + (refused > 0 ? $", {refused} refused by Revit" : "");
+    }
+
+    const string RoofCode = "ROOF";
+
+    /// <summary>
+    /// Flat concept roofs (footprint roofs, "Concept Roof 300mm") from the roof plan or roof layers,
+    /// each with its top at its surveyed height, hosted on the highest level below it.
+    /// A roof Revit refuses is built as a 300 mm generic model slab instead.
+    /// </summary>
+    void BuildRoofs(List<Level> levels)
+    {
+        using var t = new Transaction(_doc, "Survey roofs");
+        var options = t.GetFailureHandlingOptions();
+        options.SetFailuresPreprocessor(new WarningSwallower());
+        t.SetFailureHandlingOptions(options);
+        t.Start();
+        int removed = DeleteGenerated(RoofCode);
+        var type = RoofTypeFor(300);
+        double thick = type?.GetCompoundStructure()?.GetWidth() ?? Ft(300);
+        int native = 0, blocks = 0;
+        string? firstError = null;
+        foreach (var r in _model.Roofs)
+        {
+            double top = Ft(r.ElevationMm);
+            var level = levels.Where(l => l.Elevation <= top - thick).OrderByDescending(l => l.Elevation).FirstOrDefault() ?? levels.OrderBy(l => l.Elevation).First();
+            try
+            {
+                if (type == null) throw new InvalidOperationException("the project has no roof type");
+                var curves = new CurveArray();
+                var loop = Loop(r.Outline, level.Elevation) ?? throw new InvalidOperationException("outline too small");
+                foreach (var c in loop) curves.Append(c);
+                var roof = _doc.Create.NewFootPrintRoof(curves, level, type, out _);
+                roof.get_Parameter(BuiltInParameter.ROOF_LEVEL_OFFSET_PARAM)?.Set(top - thick - level.Elevation);
+                Mark(roof, RoofCode, r.Note);
+                native++;
+            }
+            catch (Exception ex)
+            {
+                firstError ??= ex.Message;
+                try
+                {
+                    var loop = Loop(r.Outline, top - Ft(300));
+                    if (loop == null) continue;
+                    var ds = DirectShape.CreateElement(_doc, new ElementId(BuiltInCategory.OST_GenericModel));
+                    ds.SetShape(new List<GeometryObject> { GeometryCreationUtilities.CreateExtrusionGeometry(new List<CurveLoop> { loop }, XYZ.BasisZ, Ft(300)) });
+                    ds.Name = "Survey - roof";
+                    Mark(ds, RoofCode, r.Note);
+                    blocks++;
+                }
+                catch { /* a sliver */ }
+            }
+        }
+        t.Commit();
+        Log.Add($"Roofs: {native} flat concept roofs" + (blocks > 0 ? $", {blocks} as generic model slabs" + (firstError != null ? $" (Revit refused the roof: {firstError})" : "") : "")
+                + (removed > 0 ? $" (replacing {removed} from an earlier run)." : ".") + " Heights are the middle of the spot heights on each roof; slopes are not modelled.");
+    }
+
+    RoofType? RoofTypeFor(double thicknessMm)
+    {
+        var name = $"Concept Roof {thicknessMm:0}mm";
+        var all = new FilteredElementCollector(_doc).OfClass(typeof(RoofType)).Cast<RoofType>().ToList();
+        var type = all.FirstOrDefault(f => f.Name == name);
+        if (type != null) return type;
+        var basic = all.FirstOrDefault(f => f.GetCompoundStructure() != null);
+        if (basic == null) return all.FirstOrDefault();
+        type = (RoofType)basic.Duplicate(name);
+        Log.Add($"Roof type created: {name}");
+        try
+        {
+            var cs = basic.GetCompoundStructure();
+            var core = cs.GetLayers()[Math.Max(0, cs.GetFirstCoreLayerIndex())];
+            cs.SetLayers(new List<CompoundStructureLayer> { new(Ft(thicknessMm), MaterialFunctionAssignment.Structure, core.MaterialId) });
+            cs.SetNumberOfShellLayers(ShellLayerType.Exterior, 0);
+            cs.SetNumberOfShellLayers(ShellLayerType.Interior, 0);
+            cs.StructuralMaterialIndex = 0;
+            type.SetCompoundStructure(cs);
+        }
+        catch (Exception ex) { Log.Add($"WARNING: could not set {name} to {thicknessMm:0} mm ({ex.Message}); edit the type's structure by hand."); }
+        return type;
+    }
+
+    /// <summary>A stair as stepped blocks: each tread a block one riser high, climbing in the stair's order.</summary>
+    void StairBlocks(StairCandidate stair, Level level, string code, double riseMm)
+    {
+        double riser = riseMm / Math.Max(3, stair.Risers);
+        var solids = new List<GeometryObject>();
+        int step = 0;
+        foreach (var f in stair.Flights)
+            for (int k = 0; k < f.Risers.Count; k++, step++)
+            {
+                var a = f.Risers[k];
+                // the tread runs from this riser to the next (the last one a typical going on)
+                var b = k + 1 < f.Risers.Count ? f.Risers[k + 1]
+                      : a with { A = a.A + (a.Mid - f.Risers[Math.Max(0, k - 1)].Mid).Normalized() * f.Going, B = a.B + (a.Mid - f.Risers[Math.Max(0, k - 1)].Mid).Normalized() * f.Going };
+                double z = level.Elevation + Ft(step * riser);
+                var pts = new[] { a.A, a.B, b.B, b.A }.Select(v => new XYZ(Ft(v.X), Ft(v.Y), z)).ToList();
+                var loop = new CurveLoop();
+                for (int q = 0; q < 4; q++) loop.Append(Line.CreateBound(pts[q], pts[(q + 1) % 4]));
+                try { solids.Add(GeometryCreationUtilities.CreateExtrusionGeometry(new List<CurveLoop> { loop }, XYZ.BasisZ, Ft(riser))); } catch { /* a twisted tread */ }
+            }
+        var ds = DirectShape.CreateElement(_doc, new ElementId(BuiltInCategory.OST_GenericModel));
+        ds.SetShape(solids);
+        ds.Name = "Survey - stair";
+        Mark(ds, code, "Stair blocks");
+    }
+
     void Mark(Element e, string levelCode, string what)
     {
         e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set($"{Tag}|{levelCode}|{what}");
@@ -442,7 +658,7 @@ public sealed class ModelBuilder
     int DeleteGenerated(string levelCode)
     {
         var prefix = $"{Tag}|{levelCode}|";
-        var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape), typeof(FamilyInstance), typeof(Opening), typeof(SpatialElement), typeof(Toposolid), typeof(CurveElement) });
+        var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape), typeof(FamilyInstance), typeof(Opening), typeof(SpatialElement), typeof(Toposolid), typeof(CurveElement), typeof(Autodesk.Revit.DB.Architecture.Stairs), typeof(RoofBase) });
         var ids = new FilteredElementCollector(_doc).WherePasses(classes).WhereElementIsNotElementType()
             .Where(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(prefix) == true)
             .Select(e => e.Id).ToList();

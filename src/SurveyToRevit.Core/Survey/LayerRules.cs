@@ -8,7 +8,7 @@ public enum LayerRole
     /// <summary>Glazed walls and screens: walls built as curtain walls.</summary>
     CurtainWall,
     Stair, Ramp, Lift, Column, Roof, Rooflight, Chimney, Balcony, Railing,
-    /// <summary>Fitted furniture, joinery, sanitaryware, kitchen units.</summary>
+    /// <summary>Objects: fitted furniture, joinery, sanitaryware, kitchen units, plant and services, decorative details.</summary>
     Fitting,
     Ceiling,
     /// <summary>Area or room outlines (GIA, NIA, room boundaries).</summary>
@@ -53,7 +53,7 @@ public sealed class LayerRules
     public Regex Chimney { get; init; } = new(@"(chimney|^Ss_37_17)", RegexOptions.IgnoreCase);
     public Regex Balcony { get; init; } = new(@"(balcon|terrace|^Ss_30_12_85)", RegexOptions.IgnoreCase);
     public Regex Railing { get; init; } = new(@"(rail|balustrad|handrail|fence|^Ss_25_14)", RegexOptions.IgnoreCase);
-    public Regex Fitting { get; init; } = new(@"(^Pr_40|joinery|furn|fitted|sanit|kitchen|^FF&?E|^A-FURN|^A-FLOR-(CASE|SPCL)|^P-SANR|counter|worktop)", RegexOptions.IgnoreCase);
+    public Regex Fitting { get; init; } = new(@"(^Pr_|joinery|furn|fitted|sanit|kitchen|^FF&?E|^A-FURN|^A-FLOR-(CASE|SPCL)|^P-SANR|counter|worktop|^Ss_6[05]|hvac|service|equip|plant|radiator|heater|^M-|^E-)", RegexOptions.IgnoreCase);
     public Regex Ceiling { get; init; } = new(@"(^Ss_30_25|ceiling|^A-CLNG)", RegexOptions.IgnoreCase);
     public Regex Area { get; init; } = new(@"(^G[EI]A\b|\bN[IL]A\b|\bAREA\b|^A-AREA)", RegexOptions.IgnoreCase);
     public Regex Overhead { get; init; } = new(@"(overhead|^Zz_20_40_05|above|over$|bulkhead|beam)", RegexOptions.IgnoreCase);

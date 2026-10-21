@@ -274,4 +274,57 @@ public class PlanReadingTests
         Assert.Equal(2520, SurveyHeights.CeilingHeight(notes, 3000));
         Assert.Null(SurveyHeights.CeilingHeight(notes, 2000)); // none fit under a floor 2 m above
     }
+
+    [Fact]
+    public void Dogleg_stair_is_two_flights_climbed_from_the_up_note()
+    {
+        var lines = new List<Segment2>();
+        // flight 1: risers across x 0..1000, 10 of them going north from y 0; flight 2 beside it going south
+        for (int i = 0; i < 10; i++) lines.Add(S(0, i * 250, 1000, i * 250, "EF_35_10-Stair"));
+        for (int i = 0; i < 10; i++) lines.Add(S(1200, i * 250, 2200, i * 250, "EF_35_10-Stair"));
+        lines.Add(S(0, -100, 0, 2400, "EF_35_10-Stair")); // a stringer: too long to be a riser
+        var stairs = StairFinder.Find(lines, new List<(Vec2, string)> { (new Vec2(1700, -300), "UP") });
+        var stair = Assert.Single(stairs);
+        Assert.Equal(2, stair.Flights.Count);
+        Assert.True(stair.DirectionKnown);
+        Assert.Equal(1700, stair.Flights[0].Bottom.X, 1); // starts at the UP note
+        Assert.Equal(0, stair.Flights[0].Bottom.Y, 1);
+        Assert.Equal(2250, stair.Flights[1].Bottom.Y, 1); // second flight from the landing end
+        Assert.Equal(250, stair.Flights[0].Going, 1);
+        Assert.Equal(1000, stair.Flights[0].Width, 1);
+    }
+
+    [Fact]
+    public void Curved_flight_risers_fan_out_and_stay_one_flight()
+    {
+        var lines = new List<Segment2>();
+        for (int i = 0; i < 12; i++)
+        {
+            double a = i * 0.08;
+            var u = new Vec2(Math.Cos(a), Math.Sin(a));
+            lines.Add(new Segment2(u * 2000, u * 3500, "Stair"));
+        }
+        var f = Assert.Single(Assert.Single(StairFinder.Find(lines, new List<(Vec2, string)>())).Flights);
+        Assert.Equal(12, f.Risers.Count);
+        Assert.True(f.Curved);
+    }
+
+    [Fact]
+    public void Shape_drawn_as_loose_lines_is_filled_to_its_outline()
+    {
+        // a 400 x 400 column drawn as four separate lines, and an L-shaped pier
+        var lines = new List<Segment2>
+        {
+            new(new Vec2(0, 0), new Vec2(400, 0)), new(new Vec2(400, 0), new Vec2(400, 400)),
+            new(new Vec2(400, 400), new Vec2(0, 400)), new(new Vec2(0, 400), new Vec2(0, 0)),
+            new(new Vec2(2000, 0), new Vec2(3000, 0)), new(new Vec2(3000, 0), new Vec2(3000, 300)), new(new Vec2(3000, 300), new Vec2(2300, 300)),
+            new(new Vec2(2300, 300), new Vec2(2300, 1000)), new(new Vec2(2300, 1000), new Vec2(2000, 1000)), new(new Vec2(2000, 1000), new Vec2(2000, 0)),
+        };
+        var grid = ShapeGrid.Around(lines.SelectMany(l => new[] { l.A, l.B }), 25, 100);
+        var shapes = grid.Outlines(grid.Enclosed(grid.Draw(lines)), 0.02e6).OrderBy(p => p.Area).ToList();
+        Assert.Equal(2, shapes.Count);
+        Assert.InRange(shapes[0].Area, 0.15e6, 0.19e6);  // 0.16 m² plus the line width
+        Assert.InRange(shapes[1].Area, 0.48e6, 0.58e6);  // the L: 0.3 + 0.21 m², plus the line width
+        Assert.InRange(shapes[1].Vertices.Count, 6, 10); // straight edges, not a staircase of cells
+    }
 }

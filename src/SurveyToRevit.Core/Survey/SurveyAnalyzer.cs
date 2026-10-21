@@ -40,6 +40,12 @@ public sealed record SurveyLevel(
     public bool CeilingFromSurvey { get; set; }
     /// <summary>Room separation lines that close the rooms the drawing shows where walls alone leave them open.</summary>
     public IReadOnlyList<Segment2> RoomSeparations { get; set; } = Array.Empty<Segment2>();
+    /// <summary>Wall material no wall covers, as lists of 25 mm cell centres (filled as generic models so nothing is left open).</summary>
+    public IReadOnlyList<List<Vec2>> Leftover { get; set; } = Array.Empty<List<Vec2>>();
+    /// <summary>Columns, chimneys, fittings, balconies, rooflights and railings, as generic model blocks.</summary>
+    public IReadOnlyList<DetailShape> Details { get; set; } = Array.Empty<DetailShape>();
+    /// <summary>Stairs found on the stair layers, climbing from this floor.</summary>
+    public IReadOnlyList<StairCandidate> Stairs { get; set; } = Array.Empty<StairCandidate>();
     /// <summary>Is this point (model mm) in a room the drawing encloses?</summary>
     public Func<Vec2, bool>? IsRoom { get; set; }
     /// <summary>Windows found on this floor (hosted in <see cref="Walls"/>).</summary>
@@ -60,6 +66,8 @@ public sealed class SurveyModel
     public required IReadOnlyList<SurveyLevel> Levels { get; init; }
     public required IReadOnlyList<SkippedDrawing> Skipped { get; init; }
     public required IReadOnlyList<string> Notes { get; init; }
+    /// <summary>Flat concept roofs over the parts of each floor not covered by the floor above.</summary>
+    public IReadOnlyList<RoofCandidate> Roofs { get; init; } = Array.Empty<RoofCandidate>();
     /// <summary>The layer rules used (built-in, plus any layers.txt).</summary>
     public LayerRules Rules { get; init; } = LayerRules.Default;
 }
@@ -95,6 +103,7 @@ public static class SurveyAnalyzer
             notes.Add($"Layer names from {layerFile} ({rules.Overrides.Count} rules) are used before the built-in ones.");
         }
         var plans = new List<SurveyDrawing>();
+        var roofPlans = new List<SurveyDrawing>();
 
         foreach (var path in paths.OrderBy(p => System.IO.Path.GetFileName(p)))
         {
@@ -102,6 +111,7 @@ public static class SurveyAnalyzer
             try { d = SurveyDrawing.Read(path, rules); }
             catch (Exception ex) { skipped.Add(new(System.IO.Path.GetFileName(path), $"could not be read: {ex.Message}")); continue; }
 
+            if (RoofsAndDetails.IsRoofPlan(d, rules)) { roofPlans.Add(d); continue; }
             if (d.Name.LevelCode == null) { skipped.Add(new(d.Name.FileName, "not a single-floor plan (elevation, section or multi-level sheet)")); continue; }
             if (d.WallLines.Count < 30) { skipped.Add(new(d.Name.FileName, $"only {d.WallLines.Count} lines on wall layers: not a floor plan")); continue; }
             if (!d.SpotHeightsMm(rules).Any() && DrawingName.DescribeLevel(d.Name.LevelCode).Order == double.MaxValue)
@@ -162,6 +172,12 @@ public static class SurveyAnalyzer
             var plan = raster with { Walls = walls, Unclear = unclearLeft };
             var level = new SurveyLevel(p.Name.LevelCode!, name, order, est?.FloorLevelMm ?? double.NaN, est, p, plan.Walls, plan.Outline, plan.Unclear);
             level.IsRoom = raster.IsRoom;
+            if (raster.Leftover != null)
+                level.Leftover = raster.Leftover(pt => facade.Any(w => RoomBounds.Gap(w, pt) <= 30))
+                    .Where(cells => cells.Count > 0 && !unclearLeft.Any(u => FacadeWalls.Contains(u.Outline, cells[cells.Count / 2]))) // unclear areas have their own generic model
+                    .Where(cells => !IsDoorSwing(cells, openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList())).ToList();
+            level.Stairs = StairFinder.Find(p.FeatureLines.Where(f => rules.Classify(f.Layer) == LayerRole.Stair).Select(frame.ToModel).ToList(),
+                p.Texts.Select(t => (frame.ToModel(t.Position), t.Value)).ToList());
             level.RoomSeparations = RoomBounds.Separations(facade, lines, raster.IsRoom);
             doorInput[level] = openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList();
             level.RoomNames = p.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.RoomName)
@@ -203,7 +219,24 @@ public static class SurveyAnalyzer
 
         notes.Add($"Survey base point E {frame.BasePoint.X / 1000:0.000} m, N {frame.BasePoint.Y / 1000:0.000} m; " +
                   $"model turned {frame.RotationDeg:0.00}° so the main walls are square (grid north = true north).");
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules };
+        foreach (var l in levels) l.Details = RoofsAndDetails.Details(l, frame, rules);
+        // roofs only where the survey shows them: roof plans, and roof layers on the floor plans
+        var roofs = new List<RoofCandidate>();
+        int noHeight = 0;
+        foreach (var rp in roofPlans)
+        {
+            roofs.AddRange(RoofsAndDetails.FromPlan(rp, frame, rules, true, null, out int n));
+            noHeight += n;
+            notes.Add($"{rp.Name.FileName}: read as a roof plan.");
+        }
+        foreach (var l in levels)
+        {
+            roofs.AddRange(RoofsAndDetails.FromPlan(l.Plan, frame, rules, false, l.Outline, out int n));
+            noHeight += n;
+        }
+        if (noHeight > 0) notes.Add($"{noHeight} roof areas have no spot height inside them and were left out.");
+        if (roofPlans.Count == 0 && roofs.Count == 0) notes.Add("No roof plan or roof layer: no roofs built.");
+        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs };
     }
 
     /// <summary>
@@ -215,6 +248,23 @@ public static class SurveyAnalyzer
         if (string.IsNullOrWhiteSpace(t.Value)) return false;
         if (rules.Classify(t.Layer) is LayerRole.Wall or LayerRole.Window or LayerRole.Door) return false;
         return !SurveyHeights.IsOpeningNote(t.Value);
+    }
+
+    /// <summary>A pocket closed off by a door leaf and its swing (drawn lines around open floor), not wall material.</summary>
+    static bool IsDoorSwing(List<Vec2> cells, List<Segment2> doorLines)
+    {
+        double x0 = cells.Min(c => c.X) - 100, x1 = cells.Max(c => c.X) + 100, y0 = cells.Min(c => c.Y) - 100, y1 = cells.Max(c => c.Y) + 100;
+        var near = doorLines.Where(d => Math.Max(d.A.X, d.B.X) >= x0 && Math.Min(d.A.X, d.B.X) <= x1 && Math.Max(d.A.Y, d.B.Y) >= y0 && Math.Min(d.A.Y, d.B.Y) <= y1).ToList();
+        if (near.Count == 0) return false;
+        int touching = cells.Count(c => near.Any(d => Dist(c, d) <= 60));
+        return touching >= cells.Count * 0.15;
+    }
+
+    static double Dist(Vec2 p, Segment2 s)
+    {
+        var d = s.B - s.A; double l2 = d.Dot(d);
+        double t = l2 < 1e-9 ? 0 : Math.Clamp((p - s.A).Dot(d) / l2, 0, 1);
+        return p.DistanceTo(s.A + d * t);
     }
 
     /// <summary>Frame from the ground floor (or lowest plan): centre of its walls rounded to 1 m, and its main wall direction.</summary>

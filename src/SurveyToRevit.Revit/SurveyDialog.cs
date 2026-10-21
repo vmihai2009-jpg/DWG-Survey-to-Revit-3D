@@ -19,6 +19,9 @@ public sealed class SurveyDialog : Form
     readonly CheckBox _windows = new() { Text = "Windows (sill and head from the survey where given)", Checked = true, AutoSize = true };
     readonly CheckBox _doors = new() { Text = "Doors (from the door swings)", Checked = true, AutoSize = true };
     readonly CheckBox _rooms = new() { Text = "Rooms named from the survey", Checked = true, AutoSize = true };
+    readonly CheckBox _details = new() { Text = "Detail as generic models (columns, fittings, railings, wall fills)", Checked = true, AutoSize = true };
+    readonly CheckBox _roofs = new() { Text = "Roofs (only from a roof plan or roof layer)", Checked = true, AutoSize = true };
+    readonly CheckBox _stairs = new() { Text = "Stairs (from the stair layers, up to the next level)", Checked = true, AutoSize = true };
     readonly CheckBox _floors = new() { Text = "Floor slabs, thickness (mm):", Checked = true, AutoSize = true };
     readonly NumericUpDown _slab = new() { Minimum = 50, Maximum = 1000, Increment = 50, Value = 300, Width = 70 };
     readonly CheckBox _ceilings = new() { Text = "Ceilings (height per floor in the table)", Checked = true, AutoSize = true };
@@ -81,7 +84,7 @@ public sealed class SurveyDialog : Form
             }
         }
 
-        var options = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 130, FlowDirection = FlowDirection.TopDown, WrapContents = true, Padding = new Padding(8) };
+        var options = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 160, FlowDirection = FlowDirection.TopDown, WrapContents = true, Padding = new Padding(8) };
         var slabRow = new FlowLayoutPanel { AutoSize = true, Margin = Padding.Empty };
         slabRow.Controls.Add(_floors);
         slabRow.Controls.Add(_slab);
@@ -95,7 +98,7 @@ public sealed class SurveyDialog : Form
             AutoSize = true, ForeColor = Color.DimGray, Padding = new Padding(0, 4, 0, 0),
             Text = "To add these, select Environment Agency LiDAR DSM and DTM tiles (.tif), and footprints (.shp) if you have them, with the DWGs.",
         });
-        options.Controls.AddRange(new Control[] { _link, _walls, _windows, _doors, _rooms, slabRow, _ceilings, _generic, siteRow });
+        options.Controls.AddRange(new Control[] { _link, _walls, _windows, _doors, _rooms, _stairs, _details, _roofs, slabRow, _ceilings, _generic, siteRow });
         _walls.CheckedChanged += (_, _) => { _windows.Enabled = _doors.Enabled = _rooms.Enabled = _walls.Checked; };
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 44, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8, 6, 8, 6) };
@@ -157,6 +160,9 @@ public sealed class SurveyDialog : Form
         Options.Windows = _walls.Checked && _windows.Checked;
         Options.Doors = _walls.Checked && _doors.Checked;
         Options.Rooms = _walls.Checked && _rooms.Checked;
+        Options.Stairs = _stairs.Checked;
+        Options.Details = _details.Checked;
+        Options.Roofs = _roofs.Checked;
         Options.Floors = _floors.Checked;
         Options.SlabThicknessMm = (double)_slab.Value;
         Options.Ceilings = _ceilings.Checked;

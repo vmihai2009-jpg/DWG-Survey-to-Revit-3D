@@ -26,6 +26,9 @@ Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`
    - rooms named from the survey's room labels (and "Room" for unlabelled spaces the drawing encloses), with room separation lines where no wall closes them,
    - floor slabs ("Concept Slab 300mm") from each floor's outline,
    - ceilings (one per floor, at the height in the table: the survey's "u/s"/"CH" ceiling heights where given),
+   - stairs from the stair layers: Revit stairs from the drawn treads (curved flights stay curved), up to the next level; a stair Revit refuses becomes stepped blocks ("Survey - stair"),
+   - detail as generic models: columns, chimneys, fittings and equipment, balconies, rooflights, railings, and odd-shaped wall material no wall covers ("Survey - wall fill"),
+   - roofs: flat concept roofs ("Concept Roof 300mm"), only where a roof plan or a roof layer shows them, at the middle of the spot heights on each roof,
    - generic models (named "Survey - check") where the drawing could not be read.
    - surroundings, if LiDAR tiles were selected too (see below).
    *Layers:* each layer is read by its name (Uniclass, AIA or plain English). *Open report* lists every layer and what it was read as. If your survey uses other names, put a `layers.txt` in the DWG folder, one line per layer: `A-GLAZ-CURT = CurtainWall` or `MY_STAIRS* = Stair` (* matches anything). Roles: Wall, CurtainWall, Window, Door, LevelText, RoomName, HeightText, Stair, Ramp, Lift, Column, Roof, Rooflight, Chimney, Balcony, Railing, Fitting, Ceiling, Area, Overhead, Annotation, Other.

@@ -32,9 +32,16 @@ public static class SurveyReport
         {
             var w = l.Walls;
             sb.AppendLine($"  {l.Name}: {w.Walls.Count} walls, {w.Walls.Sum(x => x.Length) / 1000:0.0} m total, " +
-                          $"{w.ThicknessGroups.Count} wall types; floor outline {(l.Outline == null ? "not found" : $"{l.Outline.Area / 1e6:0} m²")}; {l.Unclear.Count} unclear areas (generic models); {l.Windows.Count} windows ({l.Windows.Count(x => x.HeightsFromSurvey)} with surveyed sill and head); {l.Doors.Count} doors ({l.Doors.Count(x => x.HeightFromSurvey)} with surveyed head); {l.RoomNames.Count} room names; {l.RoomSeparations.Count} room separation lines; {l.Walls.Walls.Count(x => x.Curtain)} curtain walls");
+                          $"{w.ThicknessGroups.Count} wall types; floor outline {(l.Outline == null ? "not found" : $"{l.Outline.Area / 1e6:0} m²")}; {l.Unclear.Count} unclear areas (generic models); {l.Windows.Count} windows ({l.Windows.Count(x => x.HeightsFromSurvey)} with surveyed sill and head); {l.Doors.Count} doors ({l.Doors.Count(x => x.HeightFromSurvey)} with surveyed head); {l.RoomNames.Count} room names; {l.RoomSeparations.Count} room separation lines; {l.Walls.Walls.Count(x => x.Curtain)} curtain walls; {l.Stairs.Count} stairs ({l.Stairs.Sum(x => x.Risers)} risers); detail blocks: {(l.Details.Count == 0 ? "none" : string.Join(", ", l.Details.GroupBy(d => d.Role).Select(g => $"{g.Count()} {g.Key.ToString().ToLowerInvariant()}")))}");
             foreach (var g in w.Walls.GroupBy(x => x.TypeName).OrderBy(g => g.First().TypeThickness))
                 sb.AppendLine($"      {g.Key,-22} {g.Count(),4} walls  {g.Sum(x => x.Length) / 1000,7:0.0} m");
+        }
+        if (m.Roofs.Count == 0) sb.AppendLine("  Roofs: none (no roof plan or roof layer with spot heights).");
+        else
+        {
+            sb.AppendLine($"  Roofs: {m.Roofs.Count} flat concept roofs, {m.Roofs.Sum(r => r.Outline.Area) / 1e6:0} m² in all; the largest:");
+            foreach (var r in m.Roofs.OrderByDescending(r => r.Outline.Area).Take(5))
+                sb.AppendLine($"      {r.Outline.Area / 1e6,5:0} m² at {r.ElevationMm / 1000:0.00} m ({r.Note})");
         }
         var allTypes = m.Levels.SelectMany(l => l.Walls.Walls).GroupBy(x => x.TypeName).Count();
         sb.AppendLine($"  Whole building: {m.Levels.Sum(l => l.Walls.Walls.Count)} walls in {allTypes} wall types.");
