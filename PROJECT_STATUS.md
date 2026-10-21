@@ -8,7 +8,7 @@ _Last updated: 2026-10-21_
 Code for both is written and compiles; neither is yet confirmed inside Revit.
 
 Acceptance:
-- M1: "Survey to Revit" tab with an "Analyse DWG" button appears in Revit 2025.
+- M1: a "Survey to Revit" panel with an "Analyse DWG" button appears on the Barr Gazetas tab in Revit 2025.
 - M2: with a DWG linked, the button reports segment count, layers, extents and wall candidates, and writes a text report. Model unchanged.
 
 ## Architecture (decided)
@@ -30,7 +30,7 @@ Coordinate rule: Revit gives model coordinates in feet; the reader converts to m
 | Corners and T-junctions joined at centrelines | yes | pass | no |
 | Thickness grouping into `CONCEPT_<mm>` types | yes | pass | no |
 | Slab outline validation (open, self-intersecting, duplicate vertices, units sanity) | yes | pass | n/a |
-| Ribbon tab + Analyse DWG command (read-only) | yes | none possible | **no** |
+| Ribbon panel on Barr Gazetas tab + Analyse DWG command (read-only) | yes | none possible | **no** |
 | DWG geometry reading (lines, polylines, nested blocks, layer names) | yes | none possible | **no** |
 
 ## Build and test status

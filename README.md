@@ -16,7 +16,7 @@ Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`
 ## Use
 
 1. Open a project, link a DWG survey (*Insert → Link CAD*, units set correctly, *Current view only* off).
-2. *Survey to Revit* tab → **Analyse DWG**. If several DWGs are linked, select one first or pick it when asked.
+2. *Barr Gazetas* tab → *Survey to Revit* panel → **Analyse DWG**. If several DWGs are linked, select one first or pick it when asked.
 3. Read the summary; *Open report* shows the full text report (also saved in `%TEMP%\SurveyToRevit`).
 
 The command is read-only: it never changes the model.

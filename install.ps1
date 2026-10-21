@@ -22,4 +22,4 @@ Copy-Item $manifest $addins -Force
 # Files from a downloaded zip carry an "internet" mark that can stop Revit loading them.
 Get-ChildItem $target | Unblock-File
 Unblock-File (Join-Path $addins "SurveyToRevit.addin")
-Write-Host "Installed to $target. Restart Revit 2025; look for the 'Survey to Revit' tab."
+Write-Host "Installed to $target. Restart Revit 2025; look for the 'Survey to Revit' panel on the Barr Gazetas tab."

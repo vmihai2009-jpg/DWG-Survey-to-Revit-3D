@@ -3,17 +3,18 @@ using Autodesk.Revit.UI;
 
 namespace SurveyToRevit.Revit;
 
-/// <summary>Adds the "Survey to Revit" ribbon tab when Revit starts.</summary>
+/// <summary>Adds a "Survey to Revit" panel to the shared Barr Gazetas ribbon tab when Revit starts.</summary>
 public class App : IExternalApplication
 {
-    const string TabName = "Survey to Revit";
+    // Shared with other Barr Gazetas add-ins; the name must match exactly (case-sensitive).
+    const string TabName = "Barr Gazetas";
 
     public Result OnStartup(UIControlledApplication app)
     {
         try { app.CreateRibbonTab(TabName); }
-        catch (Autodesk.Revit.Exceptions.ArgumentException) { /* tab already exists */ }
+        catch (Autodesk.Revit.Exceptions.ArgumentException) { /* tab already created by another add-in */ }
 
-        var panel = app.CreateRibbonPanel(TabName, "Survey");
+        var panel = app.CreateRibbonPanel(TabName, "Survey to Revit");
         var button = new PushButtonData("AnalyseDwg", "Analyse\nDWG", Assembly.GetExecutingAssembly().Location,
             typeof(AnalyseDwgCommand).FullName)
         {
