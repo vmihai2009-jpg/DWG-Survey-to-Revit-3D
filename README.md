@@ -6,12 +6,12 @@ Revit 2025 add-in that turns 2D DWG building surveys into an editable concept mo
 
 **From the release zip** (no tools needed):
 1. Unzip anywhere.
-2. Right-click `install.ps1` → *Run with PowerShell* (or run `powershell -ExecutionPolicy Bypass -File install.ps1`).
+2. Double-click `install.cmd`. No admin password is needed: it installs for your Windows user only.
 3. Restart Revit 2025. Revit may ask whether to load the unsigned add-in: choose *Always Load*.
 
-**From source:** install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), then run `install.ps1` from the repository folder; it builds and installs.
+**From source:** install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), then double-click `install.cmd` in the repository folder; it builds and installs.
 
-Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.ps1`.
+Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`.
 
 ## Use
 
