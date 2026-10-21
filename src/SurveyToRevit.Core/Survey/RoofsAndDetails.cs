@@ -92,6 +92,8 @@ public static class RoofsAndDetails
                 foreach (var p in grid.Outlines(grid.Mark(piece), 0.05e6).Where(p => !DoorPocket(p)))
                     result.Add(new DetailShape(LayerRole.Wall, p, 0, storey));
             }
+        // short gaps where a wall stops just short of the next one, closed full height
+        foreach (var g in l.GapFills) result.Add(new DetailShape(LayerRole.Wall, g, 0, storey));
         if (byRole.TryGetValue(LayerRole.Railing, out var rails))
             foreach (var s in rails.Where(s => s.Length >= 300))
             {

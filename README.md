@@ -23,11 +23,11 @@ Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`
    - walls ("Concept Wall 160mm" etc., in 20 mm steps), joined across door gaps; glazed screens as curtain walls,
    - windows in the walls (sill and head from the survey texts where given, e.g. "S 0.94"/"H 2.58" or "fs 0.92"/"sh 1.88"),
    - doors (from the door swings in the survey; height from "dh 2.03" texts where given, else 2100 mm),
-   - rooms named from the survey's room labels (and "Room" for unlabelled spaces the drawing encloses), with room separation lines where no wall closes them,
+   - rooms named from the survey's room labels (and "Room" for unlabelled spaces the drawing encloses); no room separation lines are drawn,
    - floor slabs ("Concept Slab 300mm") from each floor's outline,
    - ceilings (one per floor, at the height in the table: the survey's "u/s"/"CH" ceiling heights where given),
    - stairs from the stair layers: Revit stairs from the drawn treads (curved flights stay curved), up to the next level; a stair Revit refuses becomes stepped blocks ("Survey - stair"),
-   - detail as generic models: columns, chimneys, fittings and equipment, balconies, rooflights, railings, and odd-shaped wall material no wall covers ("Survey - wall fill"),
+   - detail as generic models: columns, chimneys, fittings and equipment, balconies, rooflights, railings, odd-shaped wall material no wall covers, and blocks closing short gaps (up to 600 mm) where a wall stops short of the next ("Survey - wall fill"),
    - roofs: flat concept roofs ("Concept Roof 300mm"), only where a roof plan or a roof layer shows them, at the middle of the spot heights on each roof,
    - generic models (named "Survey - check") where the drawing could not be read.
    - surroundings, if LiDAR tiles were selected too (see below).

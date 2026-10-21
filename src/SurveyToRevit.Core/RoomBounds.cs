@@ -8,8 +8,25 @@ namespace SurveyToRevit.Core;
 /// </summary>
 public static class RoomBounds
 {
+    /// <summary>
+    /// Blocks that close the short gaps where a wall stops just short of the next one, each as thick
+    /// as the wall that stops (built as generic models: the walls then read as joined).
+    /// </summary>
+    public static List<Polygon2> GapFills(IReadOnlyList<WallCandidate> walls, Func<Vec2, bool>? isRoom, double maxGap = 600)
+    {
+        var fills = new List<Polygon2>();
+        Separations(walls, Array.Empty<Segment2>(), isRoom, maxGap: maxGap, fills: fills);
+        return fills;
+    }
+
+    static Polygon2 Block(Vec2 a, Vec2 b, double width)
+    {
+        var n = (b - a).Normalized().Perp() * (width / 2);
+        return new Polygon2(new[] { a - n, b - n, b + n, a + n });
+    }
+
     public static List<Segment2> Separations(IReadOnlyList<WallCandidate> walls, IReadOnlyList<Segment2> wallLines, Func<Vec2, bool>? isRoom,
-        double minLength = 300, double maxGap = 600, double probe = 150, double parallelReach = 450)
+        double minLength = 300, double maxGap = 600, double probe = 150, double parallelReach = 450, List<Polygon2>? fills = null)
     {
         var result = new List<Segment2>();
         if (isRoom == null) return result;
@@ -60,7 +77,10 @@ public static class RoomBounds
                     if (d > 20 && d < best && (q - tip).Dot(dir) > -w.TypeThickness / 2) { best = d; hit = q; }
                 }
                 if (hit is Vec2 h && isRoom((tip + h) * 0.5 + (h - tip).Perp().Normalized() * probe) | isRoom((tip + h) * 0.5 - (h - tip).Perp().Normalized() * probe))
+                {
                     result.Add(new Segment2(tip, h, "room separation", "wall gap"));
+                    fills?.Add(Block(tip - dir * 20, h + (h - tip).Normalized() * 20, w.TypeThickness));
+                }
             }
         }
         return result;

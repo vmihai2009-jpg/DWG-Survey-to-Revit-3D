@@ -811,20 +811,6 @@ public sealed class ModelBuilder
     string CreateRooms(SurveyLevel sl, Level level, ViewPlan? view)
     {
         if (_phase == null) return "no rooms (no phase)";
-        // room separation lines where the drawing closes a room but no wall does
-        int separations = 0;
-        if (view != null && sl.RoomSeparations.Count > 0)
-        {
-            var sketch = SketchPlane.Create(_doc, Plane.CreateByNormalAndOrigin(XYZ.BasisZ, new XYZ(0, 0, level.Elevation)));
-            var curves = new CurveArray();
-            foreach (var s in sl.RoomSeparations.Where(s => s.Length >= 30))
-                curves.Append(Line.CreateBound(new XYZ(Ft(s.A.X), Ft(s.A.Y), level.Elevation), new XYZ(Ft(s.B.X), Ft(s.B.Y), level.Elevation)));
-            try
-            {
-                foreach (ModelCurve c in _doc.Create.NewRoomBoundaryLines(sketch, curves, view)) { Mark(c, sl.Code, "Room separation"); separations++; }
-            }
-            catch (Exception ex) { Log.Add($"{sl.Name}: room separation lines not added ({ex.Message})."); }
-        }
         _doc.Regenerate();
         var placed = new List<Autodesk.Revit.DB.Architecture.Room>();
         int circuits = 0, refused = 0;
@@ -868,7 +854,7 @@ public sealed class ModelBuilder
             room.LimitOffset = Ft(sl.CeilingHeightMm);
             Mark(room, sl.Code, "Room (no label)");
         }
-        return $"{names.Count} named rooms, {keep.Count} unnamed, {separations} room separation lines" + (outside > 0 ? $" ({outside} labels not inside a closed space)" : "")
+        return $"{names.Count} named rooms, {keep.Count} unnamed" + (outside > 0 ? $" ({outside} labels not inside a closed space)" : "")
              + $" [{circuits} enclosed spaces found, {placed.Count} rooms tried" + (refused > 0 ? $", {refused} refused: {firstError}" : "") + "]";
     }
 

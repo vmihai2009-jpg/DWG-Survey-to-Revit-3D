@@ -39,7 +39,8 @@ public sealed record SurveyLevel(
     /// <summary>True when <see cref="CeilingHeightMm"/> comes from ceiling heights written on the plan.</summary>
     public bool CeilingFromSurvey { get; set; }
     /// <summary>Room separation lines that close the rooms the drawing shows where walls alone leave them open.</summary>
-    public IReadOnlyList<Segment2> RoomSeparations { get; set; } = Array.Empty<Segment2>();
+    /// <summary>Blocks closing short gaps between walls (generic models, so the walls read as joined).</summary>
+    public IReadOnlyList<Polygon2> GapFills { get; set; } = Array.Empty<Polygon2>();
     /// <summary>Wall material no wall covers, as lists of 25 mm cell centres (filled as generic models so nothing is left open).</summary>
     public IReadOnlyList<List<Vec2>> Leftover { get; set; } = Array.Empty<List<Vec2>>();
     /// <summary>Columns, chimneys, fittings, balconies, rooflights and railings, as generic model blocks.</summary>
@@ -178,7 +179,7 @@ public static class SurveyAnalyzer
                     .Where(cells => !IsDoorSwing(cells, openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList())).ToList();
             level.Stairs = StairFinder.Find(p.FeatureLines.Where(f => rules.Classify(f.Layer) == LayerRole.Stair).Select(frame.ToModel).ToList(),
                 p.Texts.Select(t => (frame.ToModel(t.Position), t.Value)).ToList());
-            level.RoomSeparations = RoomBounds.Separations(facade, lines, raster.IsRoom);
+            level.GapFills = RoomBounds.GapFills(facade, raster.IsRoom);
             doorInput[level] = openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList();
             level.RoomNames = p.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.RoomName)
                 .Select(t => (frame.ToModel(t.Position), Name: System.Text.RegularExpressions.Regex.Replace(t.Value, @"\s+", " ").Trim()))
