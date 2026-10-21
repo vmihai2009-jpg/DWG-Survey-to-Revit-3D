@@ -10,7 +10,8 @@ namespace SurveyToRevit.Revit;
 
 /// <summary>
 /// Pick survey DWGs → analyse them (outside Revit, so spot heights are readable) →
-/// show what was found → on confirmation set coordinates, levels, links and walls.
+/// show what was found in a window where levels and options can be adjusted →
+/// set coordinates, levels, links, walls, floors, ceilings and generic models.
 /// </summary>
 [Transaction(TransactionMode.Manual)]
 public class BuildFromSurveyCommand : IExternalCommand
@@ -40,32 +41,27 @@ public class BuildFromSurveyCommand : IExternalCommand
             return Result.Cancelled;
         }
 
-        var summary = string.Join("\n", model.Levels.Select(l =>
-            $"{l.Name}: {(double.IsNaN(l.ElevationMm) ? "height unknown" : $"{l.ElevationMm / 1000:0.00} m")}, {l.Walls.Walls.Count} walls"));
-        var dialog = new TaskDialog("Survey to Revit")
+        BuildOptions options;
+        while (true)
         {
-            MainInstruction = $"{model.Levels.Count} floor plans, {model.Levels.Sum(l => l.Walls.Walls.Count)} walls found",
-            MainContent = summary + $"\n\nProject north turned {model.Frame.RotationDeg:0.00}° from grid north." +
-                          (model.Skipped.Count > 0 ? $"\n{model.Skipped.Count} files not used (see report)." : ""),
-            FooterText = "Walls from an earlier run on these floors are replaced. Nothing else in the model is touched. Undo reverses the whole run.",
-            CommonButtons = TaskDialogCommonButtons.Cancel,
-        };
-        dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Build model", "Set coordinates and north, create levels, link the plans and create walls");
-        dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Set up only", "Coordinates, north, levels and linked plans; no walls");
-        dialog.AddCommandLink(TaskDialogCommandLinkId.CommandLink3, "Open the report only");
-        var choice = dialog.Show();
-        if (choice == TaskDialogResult.CommandLink3) { OpenFile(reportPath); return Result.Succeeded; }
-        if (choice is not (TaskDialogResult.CommandLink1 or TaskDialogResult.CommandLink2)) return Result.Cancelled;
+            using var dialog = new SurveyDialog(model, model.Skipped.Count);
+            var result = dialog.ShowDialog();
+            if (dialog.OpenReport) { OpenFile(reportPath); continue; }
+            if (result != DialogResult.OK) return Result.Cancelled;
+            options = dialog.Options;
+            break;
+        }
+        if (!model.Levels.Any(l => l.Include)) return Result.Cancelled;
 
         var builder = new ModelBuilder(doc, model);
-        try { builder.Run(linkDrawings: true, createWalls: choice == TaskDialogResult.CommandLink1); }
+        try { builder.Run(options); }
         catch (Exception ex) { message = ex.Message; return Result.Failed; }
 
         var logPath = SaveText("build", SurveyReport.Build(model) + "\nWHAT WAS DONE IN REVIT\n" + string.Join("\n", builder.Log.Select(l => "  - " + l)));
         var done = new TaskDialog("Survey to Revit")
         {
             MainInstruction = "Done",
-            MainContent = string.Join("\n", builder.Log.Where(l => l.Contains("walls created") || l.StartsWith("WARNING")).Take(15)) + "\n\nFull log:\n" + logPath,
+            MainContent = string.Join("\n", builder.Log.Where(l => model.Levels.Any(x => l.StartsWith(x.Name + ":")) || l.StartsWith("WARNING")).Take(15)) + "\n\nFull log:\n" + logPath,
             CommonButtons = TaskDialogCommonButtons.Close,
         };
         done.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Open full log");

@@ -27,8 +27,9 @@ public static class WallDetector
 {
     /// <param name="openings">Door and window linework, used as evidence to join wall pieces across openings.</param>
     /// <param name="spaceMarkers">Points known to be inside rooms (room names, spot heights). A "wall" containing one is rejected.</param>
+    /// <param name="isMaterial">Optional: is this point wall material? A face pair whose middle is not is not a wall.</param>
     public static WallDetectionResult Detect(IEnumerable<Segment2> rawSegments, Tolerances? tolerances = null,
-        IReadOnlyList<Segment2>? openings = null, IReadOnlyList<Vec2>? spaceMarkers = null)
+        IReadOnlyList<Segment2>? openings = null, IReadOnlyList<Vec2>? spaceMarkers = null, Func<Vec2, bool>? isMaterial = null)
     {
         var tol = tolerances ?? Tolerances.Default;
         var raw = rawSegments.ToList();
@@ -61,10 +62,11 @@ public static class WallDetector
             foreach (var (s, e) in free.Where(iv => iv.Item2 - iv.Item1 >= tol.MinWallLength))
             {
                 if (spaceMarkers != null && ContainsMarker(a, b, s, e, spaceMarkers)) continue;
-                claims[i].Add((s, e));
-                claims[j].Add(ToAxis(a, b, (s, e)));
                 var u = a.Direction;
                 var half = u.Perp() * (SegmentCleaner.Offset(a, b.Mid) * 0.5);
+                if (isMaterial != null && !isMaterial(a.A + u * ((s + e) / 2) + half)) continue;
+                claims[i].Add((s, e));
+                claims[j].Add(ToAxis(a, b, (s, e)));
                 var center = new Segment2(a.A + u * s + half, a.A + u * e + half, a.Layer, $"{a.Source}|{b.Source}");
                 var shorter = Math.Min(a.Length, b.Length);
                 pieces.Add(new Piece(center, d, i, j, (e - s) / shorter, a.Source, b.Source));
@@ -163,6 +165,32 @@ public static class WallDetector
         return t >= 0 && t <= wall.Center.Length && Math.Abs(SegmentCleaner.Offset(wall.Center, point)) < wall.Thickness / 2;
     }
 
+    /// <summary>
+    /// Walls drawn with one line only (common on ground floors and in older surveys):
+    /// lines inside the building, long enough, and not a face of a wall already found,
+    /// become thin walls centred on the line, marked low confidence.
+    /// </summary>
+    public static List<WallCandidate> FromSingleLines(IEnumerable<Segment2> unpaired, List<WallCandidate> walls, Polygon2? outline, Tolerances tol)
+    {
+        var result = new List<WallCandidate>(walls);
+        var t = tol.SingleLineWallThickness;
+        foreach (var s in unpaired.Where(s => s.Length >= tol.MinSingleLineWall))
+        {
+            if (outline != null && !FacadeWalls.Contains(outline, s.Mid)) continue;
+            bool isFace = result.Any(w =>
+            {
+                var c = w.Centerline;
+                if (SegmentCleaner.AngleDiffDeg(c.AngleDeg, s.AngleDeg) > tol.AngleSnapDeg) return false;
+                if (Math.Abs(SegmentCleaner.Offset(c, s.Mid)) > w.TypeThickness / 2 + Math.Max(w.MeasuredThickness - w.TypeThickness, 0) / 2 + 50) return false;
+                double a = SegmentCleaner.Along(c, s.A), b = SegmentCleaner.Along(c, s.B);
+                double overlap = Math.Min(c.Length, Math.Max(a, b)) - Math.Max(0, Math.Min(a, b));
+                return overlap > 0.3 * s.Length;
+            });
+            if (!isFace) result.Add(new WallCandidate(s with { Source = "single line" }, t, t, Confidence.Low, s.Source, ""));
+        }
+        return result;
+    }
+
     /// <summary>Nearest standard size; beyond the list, the nearest 100 mm.</summary>
     public static double SnapThickness(double measured, IReadOnlyList<double> sizes)
     {
@@ -193,7 +221,7 @@ public static class WallDetector
     /// between them is a junction (up to a wall thickness), or a door or window
     /// shown by opening linework in the gap.
     /// </summary>
-    static List<WallCandidate> JoinCollinearWalls(List<WallCandidate> walls, Tolerances tol, IReadOnlyList<Segment2> openings)
+    internal static List<WallCandidate> JoinCollinearWalls(List<WallCandidate> walls, Tolerances tol, IReadOnlyList<Segment2> openings)
     {
         var list = walls.ToList();
         bool merged = true;
@@ -249,7 +277,7 @@ public static class WallDetector
     /// Wall centre lines found from face pairs stop short at corners and T-junctions.
     /// Extend (or trim) each end to meet the centre line of a crossing wall nearby.
     /// </summary>
-    static List<WallCandidate> ExtendToJunctions(List<WallCandidate> walls, Tolerances tol)
+    internal static List<WallCandidate> ExtendToJunctions(List<WallCandidate> walls, Tolerances tol)
     {
         var lines = walls.Select(w => w.Centerline).ToArray();
         for (int i = 0; i < lines.Length; i++)

@@ -4,10 +4,23 @@ using SurveyToRevit.Core.Survey;
 
 namespace SurveyToRevit.Revit;
 
+/// <summary>What to build.</summary>
+public sealed class BuildOptions
+{
+    public bool LinkPlans { get; set; } = true;
+    public bool Walls { get; set; } = true;
+    public bool Floors { get; set; } = true;
+    public bool Ceilings { get; set; } = true;
+    /// <summary>Areas the engine could not read become generic models (DirectShape) for review.</summary>
+    public bool UnclearAsGenericModels { get; set; } = true;
+    public double SlabThicknessMm { get; set; } = 300;
+}
+
 /// <summary>
 /// Applies a <see cref="SurveyModel"/> to a Revit document: shared coordinates
-/// and true north, levels, DWG links in each level's plan view, and walls.
-/// Generated walls are tagged in Comments so a re-run replaces only them.
+/// and true north, levels, DWG links in each level's plan view, walls, floor
+/// slabs, ceilings and generic models for unclear areas.
+/// Everything generated is tagged in Comments so a re-run replaces only it.
 /// </summary>
 public sealed class ModelBuilder
 {
@@ -20,14 +33,14 @@ public sealed class ModelBuilder
 
     static double Ft(double mm) => UnitConversion.MmToFeet(mm);
 
-    public void Run(bool linkDrawings, bool createWalls)
+    public void Run(BuildOptions o)
     {
         using var group = new TransactionGroup(_doc, "Build from survey");
         group.Start();
         SetCoordinates();
         var levels = SetUpLevels();
-        if (linkDrawings) LinkPlans(levels);
-        if (createWalls) CreateWalls(levels);
+        if (o.LinkPlans) LinkPlans(levels);
+        BuildElements(levels, o);
         group.Assimilate();
     }
 
@@ -74,7 +87,7 @@ public sealed class ModelBuilder
         var existing = new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().ToList();
         var planType = new FilteredElementCollector(_doc).OfClass(typeof(ViewFamilyType)).Cast<ViewFamilyType>()
             .First(v => v.ViewFamily == ViewFamily.FloorPlan);
-        foreach (var sl in _model.Levels.Where(l => !double.IsNaN(l.ElevationMm)))
+        foreach (var sl in _model.Levels.Where(l => l.Include && !double.IsNaN(l.ElevationMm)))
         {
             var level = existing.FirstOrDefault(l => l.Name == sl.Name);
             if (level == null)
@@ -133,57 +146,195 @@ public sealed class ModelBuilder
         _ => ImportUnit.Foot,
     };
 
-    // The link should land where the analysed walls go: compare one wall-line end point.
+    /// <summary>
+    /// The link should land where the walls are built. Compare the drawn wall lines as
+    /// Revit placed them with where the engine put them; if they are off, move the link.
+    /// </summary>
     void CheckLinkPosition(ImportInstance inst, SurveyLevel sl)
     {
-        var p = sl.Plan.WallLines.FirstOrDefault();
-        if (p == null) return;
-        var dwgPoint = new XYZ(Ft(p.A.X), Ft(p.A.Y), 0);
-        var placed = inst.GetTotalTransform().OfPoint(dwgPoint);
-        var expected = _model.Frame.ToModel(p.A);
-        var error = Math.Sqrt(Math.Pow(UnitConversion.FeetToMm(placed.X) - expected.X, 2) + Math.Pow(UnitConversion.FeetToMm(placed.Y) - expected.Y, 2));
-        if (error > 10) Log.Add($"WARNING: {System.IO.Path.GetFileName(sl.Plan.Path)} landed {error:0} mm away from where the walls are created. Check its units.");
+        var file = System.IO.Path.GetFileName(sl.Plan.Path);
+        var placed = WallLayerExtents(inst);
+        var lines = sl.Plan.WallLines.Select(_model.Frame.ToModel).ToList();
+        if (placed == null || lines.Count == 0) { Log.Add($"Could not check where {file} landed."); return; }
+        var expected = (Min: new XYZ(Ft(lines.Min(l => Math.Min(l.A.X, l.B.X))), Ft(lines.Min(l => Math.Min(l.A.Y, l.B.Y))), 0),
+                        Max: new XYZ(Ft(lines.Max(l => Math.Max(l.A.X, l.B.X))), Ft(lines.Max(l => Math.Max(l.A.Y, l.B.Y))), 0));
+        var off = (expected.Min + expected.Max) / 2 - (placed.Value.Min + placed.Value.Max) / 2;
+        off = new XYZ(off.X, off.Y, 0);
+        double sizeError = Math.Max(Math.Abs((expected.Max - expected.Min).X - (placed.Value.Max - placed.Value.Min).X),
+                                    Math.Abs((expected.Max - expected.Min).Y - (placed.Value.Max - placed.Value.Min).Y));
+        double offMm = UnitConversion.FeetToMm(off.GetLength());
+        if (UnitConversion.FeetToMm(sizeError) > 100)
+        {
+            Log.Add($"WARNING: {file} is a different size or turned compared with the walls ({UnitConversion.FeetToMm(sizeError):0} mm). Check its units and rotation.");
+            return;
+        }
+        if (offMm <= 10) { Log.Add($"{file} lines up with the walls."); return; }
+        using var t = new Transaction(_doc, "Align survey link");
+        t.Start();
+        inst.Pinned = false;
+        ElementTransformUtils.MoveElement(_doc, inst.Id, off);
+        inst.Pinned = true;
+        t.Commit();
+        Log.Add($"{file} landed {offMm:0} mm away from the walls and was moved onto them.");
     }
 
-    void CreateWalls(Dictionary<SurveyLevel, (Level level, ViewPlan? view)> levels)
+    /// <summary>Extents of the link's wall-layer lines, in model coordinates.</summary>
+    (XYZ Min, XYZ Max)? WallLayerExtents(ImportInstance inst)
+    {
+        var rules = LayerRules.Default;
+        double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+        void Add(XYZ p) { minX = Math.Min(minX, p.X); minY = Math.Min(minY, p.Y); maxX = Math.Max(maxX, p.X); maxY = Math.Max(maxY, p.Y); }
+        void Visit(GeometryElement g)
+        {
+            foreach (var o in g)
+            {
+                if (o is GeometryInstance gi) { Visit(gi.GetInstanceGeometry()); continue; }
+                var layer = (_doc.GetElement(o.GraphicsStyleId) as GraphicsStyle)?.GraphicsStyleCategory?.Name ?? "";
+                if (rules.Classify(layer) != LayerRole.Wall) continue;
+                if (o is Curve c) { Add(c.GetEndPoint(0)); Add(c.GetEndPoint(1)); }
+                else if (o is PolyLine pl) foreach (var p in pl.GetCoordinates()) Add(p);
+            }
+        }
+        var geom = inst.get_Geometry(new Options());
+        if (geom == null) return null;
+        Visit(geom);
+        return minX == double.MaxValue ? null : (new XYZ(minX, minY, 0), new XYZ(maxX, maxY, 0));
+    }
+
+    void BuildElements(Dictionary<SurveyLevel, (Level level, ViewPlan? view)> levels, BuildOptions o)
     {
         var ordered = levels.OrderBy(kv => kv.Value.level.Elevation).ToList();
-        using var t = new Transaction(_doc, "Survey walls");
+        using var t = new Transaction(_doc, "Survey model");
         var options = t.GetFailureHandlingOptions();
         options.SetFailuresPreprocessor(new WarningSwallower());
         t.SetFailureHandlingOptions(options);
         t.Start();
-        var types = new Dictionary<double, WallType>();
+        var wallTypes = new Dictionary<double, WallType>();
         for (int i = 0; i < ordered.Count; i++)
         {
             var (sl, (level, _)) = (ordered[i].Key, ordered[i].Value);
             var above = i + 1 < ordered.Count ? ordered[i + 1].Value.level : null;
             int removed = DeleteGenerated(sl.Code);
-            int made = 0;
-            foreach (var w in sl.Walls.Walls)
+            var done = new List<string>();
+
+            if (o.Walls)
             {
-                var c = _model.Frame.ToModel(w.Centerline);
-                if (c.Length < 10) continue;
-                var line = Line.CreateBound(new XYZ(Ft(c.A.X), Ft(c.A.Y), level.Elevation), new XYZ(Ft(c.B.X), Ft(c.B.Y), level.Elevation));
-                if (!types.TryGetValue(w.TypeThickness, out var type)) types[w.TypeThickness] = type = WallTypeFor(w.TypeThickness);
-                var wall = Wall.Create(_doc, line, type.Id, level.Id, Ft(sl.WallHeightMm), 0, false, false);
-                if (above != null) wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.Set(above.Id);
-                wall.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set($"{Tag}|{sl.Code}|{w.Confidence}");
-                made++;
+                int made = 0;
+                foreach (var w in sl.Walls.Walls)
+                {
+                    var c = w.Centerline; // already in model (internal) coordinates
+                    if (c.Length < 10) continue;
+                    var line = Line.CreateBound(new XYZ(Ft(c.A.X), Ft(c.A.Y), level.Elevation), new XYZ(Ft(c.B.X), Ft(c.B.Y), level.Elevation));
+                    if (!wallTypes.TryGetValue(w.TypeThickness, out var type)) wallTypes[w.TypeThickness] = type = WallTypeFor(w.TypeThickness);
+                    var wall = Wall.Create(_doc, line, type.Id, level.Id, Ft(sl.WallHeightMm), 0, false, false);
+                    if (above != null) wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.Set(above.Id);
+                    Mark(wall, sl.Code, w.Confidence.ToString());
+                    made++;
+                }
+                done.Add($"{made} walls");
             }
-            Log.Add($"{sl.Name}: {made} walls created" + (removed > 0 ? $" (replacing {removed} from an earlier run)." : "."));
+
+            var loop = sl.Outline != null ? Loop(sl.Outline, level.Elevation) : null;
+            if (o.Floors)
+            {
+                if (loop == null) done.Add("no floor (outline not found)");
+                else try
+                {
+                    var floor = Floor.Create(_doc, new List<CurveLoop> { loop }, FloorTypeFor(o.SlabThicknessMm).Id, level.Id);
+                    Mark(floor, sl.Code, "Floor");
+                    done.Add($"floor {sl.Outline!.Area / 1e6:0} m²");
+                }
+                catch (Exception ex) { done.Add($"no floor ({ex.Message})"); }
+            }
+            if (o.Ceilings && loop != null)
+            {
+                try
+                {
+                    var ceiling = Ceiling.Create(_doc, new List<CurveLoop> { loop }, CeilingTypeFor().Id, level.Id);
+                    ceiling.get_Parameter(BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM)?.Set(Ft(sl.CeilingHeightMm));
+                    Mark(ceiling, sl.Code, "Ceiling");
+                    done.Add($"ceiling at {sl.CeilingHeightMm:0} mm");
+                }
+                catch (Exception ex) { done.Add($"no ceiling ({ex.Message})"); }
+            }
+            if (o.UnclearAsGenericModels && sl.Unclear.Count > 0)
+            {
+                int made = 0;
+                foreach (var u in sl.Unclear)
+                {
+                    try
+                    {
+                        var solid = GeometryCreationUtilities.CreateExtrusionGeometry(
+                            new List<CurveLoop> { Loop(u.Outline, level.Elevation)! }, XYZ.BasisZ, Ft(sl.WallHeightMm));
+                        var ds = DirectShape.CreateElement(_doc, new ElementId(BuiltInCategory.OST_GenericModel));
+                        ds.SetShape(new List<GeometryObject> { solid });
+                        ds.Name = "Survey - check";
+                        Mark(ds, sl.Code, "Unclear: " + u.Reason);
+                        made++;
+                    }
+                    catch { /* a sliver Revit refuses is skipped */ }
+                }
+                done.Add($"{made} generic models for areas to check");
+            }
+            Log.Add($"{sl.Name}: {string.Join(", ", done)}" + (removed > 0 ? $" (replacing {removed} elements from an earlier run)." : "."));
         }
         t.Commit();
+    }
+
+    static void Mark(Element e, string levelCode, string what) =>
+        e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set($"{Tag}|{levelCode}|{what}");
+
+    /// <summary>Closed loop at the given height; edges too short for Revit are dropped.</summary>
+    static CurveLoop? Loop(Polygon2 poly, double z)
+    {
+        var pts = new List<XYZ>();
+        foreach (var v in poly.Vertices)
+        {
+            var p = new XYZ(Ft(v.X), Ft(v.Y), z);
+            if (pts.Count == 0 || pts[^1].DistanceTo(p) > 0.01) pts.Add(p); // ~3 mm
+        }
+        while (pts.Count > 1 && pts[0].DistanceTo(pts[^1]) <= 0.01) pts.RemoveAt(pts.Count - 1);
+        if (pts.Count < 3) return null;
+        var loop = new CurveLoop();
+        for (int i = 0; i < pts.Count; i++) loop.Append(Line.CreateBound(pts[i], pts[(i + 1) % pts.Count]));
+        return loop;
     }
 
     int DeleteGenerated(string levelCode)
     {
         var prefix = $"{Tag}|{levelCode}|";
-        var ids = new FilteredElementCollector(_doc).OfClass(typeof(Wall)).WhereElementIsNotElementType()
-            .Where(w => w.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(prefix) == true)
-            .Select(w => w.Id).ToList();
+        var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape) });
+        var ids = new FilteredElementCollector(_doc).WherePasses(classes).WhereElementIsNotElementType()
+            .Where(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(prefix) == true)
+            .Select(e => e.Id).ToList();
         if (ids.Count > 0) _doc.Delete(ids);
         return ids.Count;
+    }
+
+    FloorType FloorTypeFor(double thicknessMm)
+    {
+        var name = $"Concept Slab {thicknessMm:0}mm";
+        var all = new FilteredElementCollector(_doc).OfClass(typeof(FloorType)).Cast<FloorType>().ToList();
+        var found = all.FirstOrDefault(f => f.Name == name);
+        if (found != null) return found;
+        var basic = all.First(f => !f.IsFoundationSlab && f.GetCompoundStructure() != null);
+        var type = (FloorType)basic.Duplicate(name);
+        type.SetCompoundStructure(CompoundStructure.CreateSingleLayerCompoundStructure(
+            MaterialFunctionAssignment.Structure, Ft(thicknessMm), ElementId.InvalidElementId));
+        Log.Add($"Floor type created: {name}");
+        return type;
+    }
+
+    CeilingType CeilingTypeFor()
+    {
+        const string name = "Concept Ceiling";
+        var all = new FilteredElementCollector(_doc).OfClass(typeof(CeilingType)).Cast<CeilingType>().ToList();
+        var found = all.FirstOrDefault(c => c.Name == name);
+        if (found != null) return found;
+        var basic = all.FirstOrDefault(c => c.GetCompoundStructure() != null) ?? all.First();
+        var type = (CeilingType)basic.Duplicate(name);
+        Log.Add($"Ceiling type created: {name}");
+        return type;
     }
 
     WallType WallTypeFor(double thicknessMm)

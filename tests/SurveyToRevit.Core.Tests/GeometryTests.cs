@@ -52,11 +52,11 @@ public class GeometryTests
     [Fact]
     public void Two_parallel_lines_make_one_wall_with_correct_thickness()
     {
-        var r = WallDetector.Detect(new[] { S(0, 0, 5000, 0), S(0, 250, 5000, 250) });
+        var r = WallDetector.Detect(new[] { S(0, 0, 5000, 0), S(0, 290, 5000, 290) });
         var w = Assert.Single(r.Walls);
-        Assert.Equal(250, w.MeasuredThickness, 3);
-        Assert.Equal("Concept Wall 250mm", w.TypeName);
-        Assert.True(SameLine(w.Centerline, new Vec2(0, 125), new Vec2(5000, 125)));
+        Assert.Equal(290, w.MeasuredThickness, 3);
+        Assert.Equal("Concept Wall 300mm", w.TypeName);
+        Assert.True(SameLine(w.Centerline, new Vec2(0, 145), new Vec2(5000, 145)));
         Assert.Equal(Confidence.High, w.Confidence);
     }
 
@@ -94,8 +94,8 @@ public class GeometryTests
         var sizes = Tolerances.Default.WallTypeSizes;
         Assert.Equal(100, WallDetector.SnapThickness(92, sizes));
         Assert.Equal(150, WallDetector.SnapThickness(138, sizes));
-        Assert.Equal(500, WallDetector.SnapThickness(523, sizes));
-        Assert.Equal(700, WallDetector.SnapThickness(667, sizes));
+        Assert.Equal(450, WallDetector.SnapThickness(523, sizes));
+        Assert.Equal(600, WallDetector.SnapThickness(667, sizes));
         Assert.Equal(1200, WallDetector.SnapThickness(1180, sizes));
     }
 

@@ -70,7 +70,12 @@ public sealed record Tolerances
     /// old building gives a handful of wall types instead of one per odd measurement.
     /// Thicker walls round to 100 mm.
     /// </summary>
-    public IReadOnlyList<double> WallTypeSizes { get; init; } = new double[] { 100, 150, 200, 250, 300, 350, 400, 450, 500, 600, 700, 800, 900, 1000 };
+    public IReadOnlyList<double> WallTypeSizes { get; init; } = new double[] { 100, 150, 200, 300, 450, 600, 900 };
+
+    /// <summary>A wall drawn as a single line (one face only) becomes a wall this thick, centred on the line.</summary>
+    public double SingleLineWallThickness { get; init; } = 100.0;
+    /// <summary>Single lines shorter than this are not turned into walls (ticks, returns, furniture).</summary>
+    public double MinSingleLineWall { get; init; } = 1000.0;
 
     /// <summary>Lines this close sideways count as the same line.</summary>
     public double CollinearOffset => Precision;

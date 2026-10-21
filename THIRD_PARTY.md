@@ -14,5 +14,10 @@ Reference projects reviewed (no code copied):
 | HorizunGroup/horizun-revit-mcp | Apache-2.0 | Possible later dev/validation tool |
 | hungpixi/revit-mcp | MIT | Alternative MCP, not used |
 | ParkerCai/Trace-BIM | none found | Raster-plan workflow, not used |
+| ian-quinn/Manicotti | BSD-3-Clause-Clear | Revit add-in, walls from CAD by pairing parallel lines; studied for the pairing and face-finding approach |
+| ian-quinn/Gingerbread | BSD-3-Clause | Space boundaries for energy models; reviewed, not relevant |
+| horizun-revit-mcp (CadInterpretationRules) | Apache-2.0 | Closest-pair-first pairing, letting one face continue along further partners, using fill evidence to say which strips are material; same idea used here with a room/wall map instead of hatching |
+
+Tried and dropped: NetTopologySuite (BSD-3) to trace exact faces from the linework; the survey linework has too many small gaps for exact faces, so the grid method was kept and the dependency removed.
 
 Development only: LibreDWG (GPL-3.0) was used once to inspect the survey files; it is not part of the product.

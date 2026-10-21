@@ -19,12 +19,19 @@ public sealed record SurveyFrame(Vec2 BasePoint, double RotationDeg)
     public Segment2 ToModel(Segment2 s) => s with { A = ToModel(s.A), B = ToModel(s.B) };
 }
 
+/// <summary>One floor. Walls, outline and unclear regions are in model coordinates (mm).</summary>
 public sealed record SurveyLevel(
     string Code, string Name, double Order, double ElevationMm, LevelEstimate? Estimate,
-    SurveyDrawing Plan, WallDetectionResult Walls)
+    SurveyDrawing Plan, WallDetectionResult Walls, Polygon2? Outline, IReadOnlyList<UnclearRegion> Unclear)
 {
+    /// <summary>Floor level above survey datum (mm). Editable before building.</summary>
+    public double ElevationMm { get; set; } = ElevationMm;
     /// <summary>Wall height: up to the next level, or the default for the top level.</summary>
     public double WallHeightMm { get; set; }
+    /// <summary>Ceiling height above this floor (mm). Surveys rarely give it, so it is a default to adjust.</summary>
+    public double CeilingHeightMm { get; set; }
+    /// <summary>Build this floor? (Editable before building.)</summary>
+    public bool Include { get; set; } = true;
 }
 
 public sealed record SkippedDrawing(string FileName, string Reason);
@@ -45,6 +52,12 @@ public sealed class SurveyModel
 public static class SurveyAnalyzer
 {
     public const double DefaultTopWallHeightMm = 3000;
+
+    /// <summary>Ceiling 2700 mm above the floor, or lower where the storey is low (at least 600 mm below the floor above).</summary>
+    public static double DefaultCeilingHeight(double storeyMm) => Math.Round(Math.Min(2700, Math.Max(2100, storeyMm - 600)) / 10) * 10;
+
+    /// <summary>Development aid: receives each floor's classified grid (level code, width, height, classes).</summary>
+    public static Action<string, int, int, byte[]>? PlanDebug { get; set; }
 
     public static SurveyModel Analyze(IEnumerable<string> paths, Tolerances? tol = null, LayerRules? rules = null)
     {
@@ -77,6 +90,7 @@ public static class SurveyAnalyzer
                 skipped.Add(new(other.Name.FileName, $"same floor as {best.Name.FileName}; used that one"));
         }
 
+        var frame = MakeFrame(chosen, tol);
         var levels = new List<SurveyLevel>();
         foreach (var p in chosen)
         {
@@ -87,9 +101,26 @@ public static class SurveyAnalyzer
                 notes.Add($"CHECK {name}: split or unclear floor level. Used {est.FloorLevelMm / 1000:0.00} m, but only {est.Supporting} of {est.Total} spot heights agree" +
                           (est.OtherLevels.Count > 0 ? $" (others: {string.Join(", ", est.OtherLevels.Select(o => $"{o.LevelMm / 1000:0.00}"))})" : "") +
                           ". Move the level in Revit if needed; its walls follow.");
-            var markers = p.Texts.Where(t => !string.IsNullOrWhiteSpace(t.Value)).Select(t => t.Position).ToList();
-            var walls = WallDetector.Detect(p.WallLines, tol, p.OpeningLines, markers);
-            levels.Add(new SurveyLevel(p.Name.LevelCode!, name, order, est?.FloorLevelMm ?? double.NaN, est, p, walls));
+
+            // Into model coordinates, straightened onto the building's directions.
+            var lines = p.WallLines.Select(frame.ToModel).ToList();
+            var axes = AxisSnapper.FindAxes(lines.Where(l => l.Length >= tol.MinSegmentLength).ToList(), tol.AngleSnapDeg);
+            lines = AxisSnapper.Snap(lines, axes, tol.AngleSnapDeg);
+            var openings = AxisSnapper.Snap(p.OpeningLines.Select(frame.ToModel), axes, tol.AngleSnapDeg);
+            var markers = p.Texts.Where(t => IsRoomMarker(t, rules)).Select(t => frame.ToModel(t.Position)).ToList();
+
+            var code = p.Name.LevelCode!;
+            // The grid reading says where wall material is (robust to gaps in the linework);
+            // walls are then the drawn face pairs with wall material between them (exact thickness).
+            var raster = new PlanRaster { Debug = PlanDebug == null ? null : (w, h, c) => PlanDebug(code, w, h, c) }.Analyze(lines, openings, markers, tol);
+            var walls = WallDetector.Detect(lines, tol, openings, markers, raster.IsMaterial);
+            var found = WallDetector.FromSingleLines(walls.UnpairedSegments, walls.Walls.ToList(), raster.Outline, tol);
+            var facade = FacadeWalls.Consolidate(found, raster.Outline, tol);
+            facade = WallDetector.ExtendToJunctions(facade, tol);
+            walls = walls with { Walls = facade, ThicknessGroups = facade.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
+            var plan = raster with { Walls = walls };
+            levels.Add(new SurveyLevel(p.Name.LevelCode!, name, order, est?.FloorLevelMm ?? double.NaN, est, p, plan.Walls, plan.Outline, plan.Unclear));
+            if (plan.Outline == null) notes.Add($"{name}: no closed building outline found; no floor slab.");
         }
         levels = levels.OrderBy(l => l.Order).ThenBy(l => l.ElevationMm).ToList();
 
@@ -97,24 +128,36 @@ public static class SurveyAnalyzer
         {
             var next = levels.Skip(i + 1).FirstOrDefault(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm > levels[i].ElevationMm);
             levels[i].WallHeightMm = next != null ? next.ElevationMm - levels[i].ElevationMm : DefaultTopWallHeightMm;
+            levels[i].CeilingHeightMm = DefaultCeilingHeight(levels[i].WallHeightMm);
             if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
         }
 
-        var frame = MakeFrame(levels, tol);
         notes.Add($"Survey base point E {frame.BasePoint.X / 1000:0.000} m, N {frame.BasePoint.Y / 1000:0.000} m; " +
                   $"model turned {frame.RotationDeg:0.00}° so the main walls are square (grid north = true north).");
         return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes };
     }
 
-    /// <summary>Frame from the ground floor (or lowest plan): centre of its walls rounded to 1 m, and its main wall direction.</summary>
-    static SurveyFrame MakeFrame(List<SurveyLevel> levels, Tolerances tol)
+    /// <summary>
+    /// Texts that sit inside rooms: names, spot heights, notes. Sill/head heights
+    /// ("S 0.94", "H 2.58") are left out because they are placed in window recesses.
+    /// </summary>
+    static bool IsRoomMarker(SurveyText t, LayerRules rules)
     {
-        var refLevel = levels.OrderBy(l => Math.Abs(l.Order)).FirstOrDefault();
-        if (refLevel == null || refLevel.Plan.WallLines.Count == 0) return new SurveyFrame(new Vec2(0, 0), 0);
-        var lines = refLevel.Plan.WallLines;
+        if (string.IsNullOrWhiteSpace(t.Value)) return false;
+        if (rules.Classify(t.Layer) is LayerRole.Wall or LayerRole.Window or LayerRole.Door) return false;
+        return !System.Text.RegularExpressions.Regex.IsMatch(t.Value.Trim(), @"^(S|H|AH|ASH|D)\s*[\d.]|^(S|H)\s+Not", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    /// <summary>Frame from the ground floor (or lowest plan): centre of its walls rounded to 1 m, and its main wall direction.</summary>
+    static SurveyFrame MakeFrame(List<SurveyDrawing> plans, Tolerances tol)
+    {
+        var reference = plans.OrderBy(p => Math.Abs(DrawingName.DescribeLevel(p.Name.LevelCode!).Order)).FirstOrDefault();
+        if (reference == null || reference.WallLines.Count == 0) return new SurveyFrame(new Vec2(0, 0), 0);
+        var lines = reference.WallLines;
         double minX = lines.Min(s => Math.Min(s.A.X, s.B.X)), maxX = lines.Max(s => Math.Max(s.A.X, s.B.X));
         double minY = lines.Min(s => Math.Min(s.A.Y, s.B.Y)), maxY = lines.Max(s => Math.Max(s.A.Y, s.B.Y));
         var centre = new Vec2(Math.Round((minX + maxX) / 2 / 1000) * 1000, Math.Round((minY + maxY) / 2 / 1000) * 1000);
-        return new SurveyFrame(centre, Math.Round(AxisSnapper.MainRotationDeg(refLevel.Walls.Axes), 3));
+        var axes = AxisSnapper.FindAxes(lines.Where(l => l.Length >= tol.MinSegmentLength).ToList(), tol.AngleSnapDeg);
+        return new SurveyFrame(centre, Math.Round(AxisSnapper.MainRotationDeg(axes), 3));
     }
 }

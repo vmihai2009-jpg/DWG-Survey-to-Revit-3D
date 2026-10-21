@@ -22,7 +22,7 @@ public static class SurveyReport
             var h = double.IsNaN(l.ElevationMm) ? "  ?   " : $"{l.ElevationMm / 1000,6:0.00}";
             var est = l.Estimate == null ? "no spot heights" : $"{l.Estimate.Supporting} of {l.Estimate.Total} spot heights agree";
             var others = l.Estimate?.OtherLevels.Count > 0 ? "; also " + string.Join(", ", l.Estimate.OtherLevels.Select(o => $"{o.LevelMm / 1000:0.00} ({o.Count})")) : "";
-            sb.AppendLine($"  {l.Name,-26} {h} m   wall height {l.WallHeightMm:0} mm   [{est}{others}]");
+            sb.AppendLine($"  {l.Name,-26} {h} m   wall height {l.WallHeightMm:0} mm, ceiling {l.CeilingHeightMm:0} mm   [{est}{others}]");
             sb.AppendLine($"  {"",-26} from {l.Plan.Name.FileName}, units {l.Plan.UnitsNote}");
         }
         sb.AppendLine();
@@ -32,7 +32,7 @@ public static class SurveyReport
         {
             var w = l.Walls;
             sb.AppendLine($"  {l.Name}: {w.Walls.Count} walls, {w.Walls.Sum(x => x.Length) / 1000:0.0} m total, " +
-                          $"{w.ThicknessGroups.Count} wall types; {w.UnpairedSegments.Count} wall-layer lines not explained (of {w.CleanedSegments} after cleaning)");
+                          $"{w.ThicknessGroups.Count} wall types; floor outline {(l.Outline == null ? "not found" : $"{l.Outline.Area / 1e6:0} m²")}; {l.Unclear.Count} unclear areas (generic models)");
             foreach (var g in w.Walls.GroupBy(x => x.TypeName).OrderBy(g => g.First().TypeThickness))
                 sb.AppendLine($"      {g.Key,-22} {g.Count(),4} walls  {g.Sum(x => x.Length) / 1000,7:0.0} m");
         }
