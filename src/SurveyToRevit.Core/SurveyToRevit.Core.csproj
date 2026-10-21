@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Revit-free geometry engine. Works in millimetres, plan (XY) coordinates.
+       No Revit references here, so it can be built and tested on any OS. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SurveyToRevit.Core</RootNamespace>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copy this file to %AppData%\Autodesk\Revit\Addins\2025\
+     and the built files to %AppData%\Autodesk\Revit\Addins\2025\SurveyToRevit\
+     (install.ps1 does both). -->
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>Survey to Revit</Name>
+    <Assembly>SurveyToRevit\SurveyToRevit.Revit.dll</Assembly>
+    <AddInId>01d8ac57-f4f6-4331-9bb8-767badc5ce76</AddInId>
+    <FullClassName>SurveyToRevit.Revit.App</FullClassName>
+    <VendorId>SURVEYTOREVIT</VendorId>
+    <VendorDescription>DWG survey to Revit concept model</VendorDescription>
+  </AddIn>
+</RevitAddIns>
