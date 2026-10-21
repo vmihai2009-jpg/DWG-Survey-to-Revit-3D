@@ -6,6 +6,12 @@ $ErrorActionPreference = "Stop"
 $addins = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2025"
 $target = Join-Path $addins "SurveyToRevit"
 
+# Revit keeps the add-in's files open while it runs, so they cannot be replaced.
+while (Get-Process -Name "Revit" -ErrorAction SilentlyContinue) {
+    Write-Host "Revit is open. Save your work, close Revit completely, then press Enter to continue (or close this window to stop)." -ForegroundColor Yellow
+    Read-Host | Out-Null
+}
+
 $packaged = Join-Path $PSScriptRoot "SurveyToRevit"
 if (Test-Path (Join-Path $packaged "SurveyToRevit.Revit.dll")) {
     $source = $packaged
