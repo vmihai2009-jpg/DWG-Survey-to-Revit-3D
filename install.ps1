@@ -6,9 +6,11 @@ $ErrorActionPreference = "Stop"
 $addins = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2025"
 $target = Join-Path $addins "SurveyToRevit"
 
-# Revit keeps the add-in's files open while it runs, so they cannot be replaced.
-while (Get-Process -Name "Revit" -ErrorAction SilentlyContinue) {
-    Write-Host "Revit is open. Save your work, close Revit completely, then press Enter to continue (or close this window to stop)." -ForegroundColor Yellow
+# Revit 2025 keeps the add-in's files open while it runs, so they cannot be replaced.
+# Other Revit versions (e.g. 2024) do not load these files and can stay open.
+function Get-Revit2025 { Get-Process -Name "Revit" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*2025*" } }
+while (Get-Revit2025) {
+    Write-Host "Revit 2025 is running (it may be hidden, check Task Manager). Save your work, close it completely, then press Enter (or close this window to stop)." -ForegroundColor Yellow
     Read-Host | Out-Null
 }
 
