@@ -42,7 +42,7 @@ public static class WindowFinder
             var pts = cluster.SelectMany(l => new[] { l.A, l.B }).ToList();
             var mid = new Vec2(pts.Average(p => p.X), pts.Average(p => p.Y));
 
-            // host: a parallel wall the window sits in
+            // host: a parallel wall the window sits in; the thickest (the façade, not a lining in front of it)
             int host = -1; double best = double.MaxValue;
             for (int k = 0; k < walls.Count; k++)
             {
@@ -51,7 +51,8 @@ public static class WindowFinder
                 double off = Math.Abs(SegmentCleaner.Offset(c, mid));
                 double along = SegmentCleaner.Along(c, mid);
                 if (off > walls[k].TypeThickness / 2 + 400 || along < 0 || along > c.Length) continue;
-                if (off < best) { best = off; host = k; }
+                double score = -walls[k].TypeThickness * 10 + off;
+                if (score < best) { best = score; host = k; }
             }
             if (host < 0) continue;
             var axis = walls[host].Centerline;

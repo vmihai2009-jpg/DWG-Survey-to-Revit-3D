@@ -13,6 +13,10 @@ public sealed class BuildOptions
     public bool Ceilings { get; set; } = true;
     /// <summary>Windows in the walls (needs walls).</summary>
     public bool Windows { get; set; } = true;
+    /// <summary>Doors in the walls (needs walls).</summary>
+    public bool Doors { get; set; } = true;
+    /// <summary>Rooms named from the survey's room labels (needs walls).</summary>
+    public bool Rooms { get; set; } = true;
     /// <summary>Areas the engine could not read become generic models (DirectShape) for review.</summary>
     public bool UnclearAsGenericModels { get; set; } = true;
     public double SlabThicknessMm { get; set; } = 300;
@@ -21,8 +25,9 @@ public sealed class BuildOptions
 /// <summary>
 /// Applies a <see cref="SurveyModel"/> to a Revit document: shared coordinates
 /// and true north, levels, DWG links in each level's plan view, walls, floor
-/// slabs, ceilings and generic models for unclear areas.
-/// Everything generated is tagged in Comments so a re-run replaces only it.
+/// slabs, ceilings, windows, doors, named rooms and generic models for unclear areas.
+/// Everything generated is on the Existing phase (it is a survey of what is there)
+/// and tagged in Comments so a re-run replaces only it.
 /// </summary>
 public sealed class ModelBuilder
 {
@@ -31,12 +36,21 @@ public sealed class ModelBuilder
     readonly SurveyModel _model;
     public List<string> Log { get; } = new();
 
-    public ModelBuilder(Document doc, SurveyModel model) { _doc = doc; _model = model; }
+    public ModelBuilder(Document doc, SurveyModel model)
+    {
+        _doc = doc; _model = model;
+        var phases = doc.Phases.Cast<Phase>().ToList();
+        _phase = phases.FirstOrDefault(p => p.Name.Contains("Existing", StringComparison.OrdinalIgnoreCase)) ?? phases.FirstOrDefault();
+    }
+
+    readonly Phase? _phase;
 
     static double Ft(double mm) => UnitConversion.MmToFeet(mm);
 
     public void Run(BuildOptions o)
     {
+        Log.Add(_phase == null ? "WARNING: the project has no phases; elements are on Revit's default phase."
+                               : $"All elements are created in the '{_phase.Name}' phase.");
         using var group = new TransactionGroup(_doc, "Build from survey");
         group.Start();
         SetCoordinates();
@@ -246,6 +260,7 @@ public sealed class ModelBuilder
                 }
                 done.Add($"{made} walls" + (skipped > 0 ? $" ({skipped} skipped)" : ""));
                 if (o.Windows && sl.Windows.Count > 0) done.Add(CreateWindows(sl, level, created));
+                if (o.Doors && sl.Doors.Count > 0) done.Add(CreateDoors(sl, level, created));
             }
 
             var loop = sl.Outline != null ? Loop(sl.Outline, level.Elevation) : null;
@@ -290,13 +305,23 @@ public sealed class ModelBuilder
                 }
                 done.Add($"{made} generic models for areas to check");
             }
+            if (o.Rooms && o.Walls && sl.RoomNames.Count > 0)
+            {
+                try { done.Add(CreateRooms(sl, level)); }
+                catch (Exception ex) { done.Add($"no rooms ({ex.Message})"); }
+            }
             Log.Add($"{sl.Name}: {string.Join(", ", done)}" + (removed > 0 ? $" (replacing {removed} elements from an earlier run)." : "."));
         }
         t.Commit();
     }
 
-    static void Mark(Element e, string levelCode, string what) =>
+    /// <summary>Tags a generated element (so a re-run replaces it) and puts it on the Existing phase.</summary>
+    void Mark(Element e, string levelCode, string what)
+    {
         e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set($"{Tag}|{levelCode}|{what}");
+        var phase = e.get_Parameter(BuiltInParameter.PHASE_CREATED);
+        if (_phase != null && phase != null && !phase.IsReadOnly) phase.Set(_phase.Id);
+    }
 
     /// <summary>Closed loop at the given height; edges too short for Revit are dropped.</summary>
     static CurveLoop? Loop(Polygon2 poly, double z)
@@ -317,7 +342,7 @@ public sealed class ModelBuilder
     int DeleteGenerated(string levelCode)
     {
         var prefix = $"{Tag}|{levelCode}|";
-        var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape), typeof(FamilyInstance), typeof(Opening) });
+        var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape), typeof(FamilyInstance), typeof(Opening), typeof(SpatialElement) });
         var ids = new FilteredElementCollector(_doc).WherePasses(classes).WhereElementIsNotElementType()
             .Where(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(prefix) == true)
             .Select(e => e.Id).ToList();
@@ -326,94 +351,177 @@ public sealed class ModelBuilder
     }
 
     /// <summary>
-    /// Windows hosted in the generated walls. Uses a window family already in the project
-    /// (a fixed window if there is one), else loads Revit's own fixed window from the library;
+    /// Windows hosted in the generated walls. Uses a wall-hosted window family already in the
+    /// project (a fixed window if there is one), else Revit's own fixed window from the library;
     /// a type per size is made ("Concept Window 1200x1500"). With no window family at all,
-    /// plain rectangular openings are cut instead.
+    /// plain rectangular openings are cut instead. Lining walls in front of the host are cut too.
     /// </summary>
     string CreateWindows(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created)
     {
-        var family = WindowFamily();
+        var (made, failed, real) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Windows, "Window",
+            sl.Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm)));
+        return real ? $"{made} windows" + (failed > 0 ? $" ({failed} did not fit)" : "")
+                    : $"{made} window openings (no window family found)";
+    }
+
+    /// <summary>Doors hosted in the generated walls, as windows: a single door family, a type per size ("Concept Door 900x2100").</summary>
+    string CreateDoors(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created)
+    {
+        var (made, failed, real) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Doors, "Door",
+            sl.Doors.Select(d => (d.HostIndex, d.Center, d.WidthMm, 0.0, d.HeightMm)));
+        return real ? $"{made} doors" + (failed > 0 ? $" ({failed} did not fit)" : "")
+                    : $"{made} door openings (no door family found)";
+    }
+
+    (int Made, int Failed, bool Real) PlaceHosted(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created,
+        BuiltInCategory category, string what, IEnumerable<(int Host, Vec2 Center, double Width, double Bottom, double Top)> items)
+    {
+        var family = HostedFamily(category, what);
         var symbols = new Dictionary<(double, double), FamilySymbol>();
         int made = 0, failed = 0;
-        foreach (var win in sl.Windows)
+        foreach (var (hostIndex, center, width, bottom, top) in items)
         {
-            var host = sl.Walls.Walls[win.HostIndex];
-            if (!created.TryGetValue(host, out var wall)) continue;
-            var c = new XYZ(Ft(win.Center.X), Ft(win.Center.Y), level.Elevation);
+            if (!created.TryGetValue(sl.Walls.Walls[hostIndex], out var wall)) continue;
+            var c = new XYZ(Ft(center.X), Ft(center.Y), level.Elevation);
             try
             {
                 if (family != null)
                 {
-                    double w = Math.Round(win.WidthMm / 50) * 50, h = Math.Round(win.HeightMm / 50) * 50;
-                    if (!symbols.TryGetValue((w, h), out var symbol)) symbols[(w, h)] = symbol = WindowType(family, w, h);
+                    double w = Math.Round(width / 50) * 50, h = Math.Round((top - bottom) / 50) * 50;
+                    if (!symbols.TryGetValue((w, h), out var symbol)) symbols[(w, h)] = symbol = HostedType(family, what, w, h);
                     var inst = _doc.Create.NewFamilyInstance(c, symbol, wall, level, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
-                    inst.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM)?.Set(Ft(win.SillMm));
-                    Mark(inst, sl.Code, "Window");
+                    if (category == BuiltInCategory.OST_Windows) inst.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM)?.Set(Ft(bottom));
+                    Mark(inst, sl.Code, what);
                 }
-                else
-                {
-                    var u = ((Line)((LocationCurve)wall.Location).Curve).Direction * Ft(win.WidthMm / 2);
-                    var opening = _doc.Create.NewOpening(wall, c - u + XYZ.BasisZ * Ft(win.SillMm), c + u + XYZ.BasisZ * Ft(win.HeadMm));
-                    Mark(opening, sl.Code, "Window opening");
-                }
+                else Cut(wall, c, width, bottom, top, sl.Code, what + " opening");
                 made++;
             }
-            catch { failed++; }
+            catch { failed++; continue; }
+            // a lining or second skin drawn as its own wall in front of the host is cut through too
+            foreach (var k in WallsAcross(sl.Walls.Walls, hostIndex, center, width))
+                if (created.TryGetValue(sl.Walls.Walls[k], out var other))
+                    try { Cut(other, c, width, bottom, top, sl.Code, what + " opening"); } catch { /* does not reach this wall */ }
         }
-        return family != null ? $"{made} windows" + (failed > 0 ? $" ({failed} did not fit)" : "")
-                              : $"{made} window openings (no window family found)";
+        return (made, failed, family != null);
     }
 
-    Family? _windowFamily;
-    bool _windowFamilySearched;
-
-    Family? WindowFamily()
+    void Cut(Wall wall, XYZ center, double widthMm, double bottomMm, double topMm, string code, string what)
     {
-        if (_windowFamilySearched) return _windowFamily;
-        _windowFamilySearched = true;
-        var windows = new FilteredElementCollector(_doc).OfClass(typeof(Family)).Cast<Family>()
-            .Where(f => f.FamilyCategory?.Id.Value == (long)BuiltInCategory.OST_Windows).ToList();
-        _windowFamily = windows.FirstOrDefault(f => f.Name.Contains("Fixed", StringComparison.OrdinalIgnoreCase)) ?? windows.FirstOrDefault();
-        if (_windowFamily != null) return _windowFamily;
-        foreach (var root in _doc.Application.GetLibraryPaths().Values.Where(Directory.Exists))
+        var u = ((Line)((LocationCurve)wall.Location).Curve).Direction * Ft(widthMm / 2);
+        var opening = _doc.Create.NewOpening(wall, center - u + XYZ.BasisZ * Ft(bottomMm), center + u + XYZ.BasisZ * Ft(topMm));
+        Mark(opening, code, what);
+    }
+
+    /// <summary>Other walls parallel to the host, touching or overlapping it, that the opening runs through.</summary>
+    static IEnumerable<int> WallsAcross(IReadOnlyList<WallCandidate> walls, int host, Vec2 center, double width)
+    {
+        var h = walls[host];
+        for (int k = 0; k < walls.Count; k++)
         {
-            string? file = null;
-            try
-            {
-                file = Directory.EnumerateFiles(root, "*Fixed*.rfa", SearchOption.AllDirectories)
-                    .FirstOrDefault(f => f.Contains("Window", StringComparison.OrdinalIgnoreCase));
-            }
-            catch { /* unreadable folder */ }
-            if (file != null && _doc.LoadFamily(file, out Family loaded))
-            {
-                Log.Add($"Window family loaded: {Path.GetFileName(file)}");
-                return _windowFamily = loaded;
-            }
+            if (k == host) continue;
+            var c = walls[k].Centerline;
+            if (SegmentCleaner.AngleDiffDeg(c.AngleDeg, h.Centerline.AngleDeg) > 5) continue;
+            if (Math.Abs(SegmentCleaner.Offset(c, center)) > (h.TypeThickness + walls[k].TypeThickness) / 2 + 100) continue;
+            double along = SegmentCleaner.Along(c, center);
+            if (along < width / 2 || along > c.Length - width / 2) continue;
+            yield return k;
         }
-        Log.Add("No window family in the project or Revit library: windows are cut as plain openings. Load a window family and run again for real windows.");
-        return null;
     }
 
-    FamilySymbol WindowType(Family family, double widthMm, double heightMm)
+    readonly Dictionary<BuiltInCategory, Family?> _families = new();
+
+    /// <summary>
+    /// A wall-hosted family of the category: one in the project (a fixed window or a single
+    /// door if there is one), else Revit's own from the library; null if there is none.
+    /// </summary>
+    Family? HostedFamily(BuiltInCategory category, string what)
     {
-        var name = $"Concept Window {widthMm:0}x{heightMm:0}";
-        var ids = family.GetFamilySymbolIds();
-        var all = ids.Select(id => (FamilySymbol)_doc.GetElement(id)).ToList();
+        if (_families.TryGetValue(category, out var cached)) return cached;
+        string prefer = category == BuiltInCategory.OST_Windows ? "Fixed" : "Single";
+        var inProject = new FilteredElementCollector(_doc).OfClass(typeof(Family)).Cast<Family>()
+            .Where(f => f.FamilyCategory?.Id.Value == (long)category && f.FamilyPlacementType == FamilyPlacementType.OneLevelBasedHosted)
+            .ToList();
+        var family = inProject.FirstOrDefault(f => f.Name.Contains(prefer, StringComparison.OrdinalIgnoreCase)) ?? inProject.FirstOrDefault();
+        if (family == null)
+            foreach (var root in _doc.Application.GetLibraryPaths().Values.Where(Directory.Exists))
+            {
+                List<string> files = new();
+                try
+                {
+                    files = Directory.EnumerateFiles(root, $"*{prefer}*.rfa", SearchOption.AllDirectories)
+                        .Where(f => f.Contains(what, StringComparison.OrdinalIgnoreCase)).Take(10).ToList();
+                }
+                catch { /* unreadable folder */ }
+                foreach (var file in files)
+                    if (_doc.LoadFamily(file, out Family loaded) && loaded.FamilyPlacementType == FamilyPlacementType.OneLevelBasedHosted)
+                    {
+                        Log.Add($"{what} family loaded: {Path.GetFileName(file)}");
+                        family = loaded;
+                        break;
+                    }
+                if (family != null) break;
+            }
+        if (family != null) Log.Add($"{what}s use the family '{family.Name}'.");
+        else Log.Add($"No wall-hosted {what.ToLowerInvariant()} family in the project or Revit library: {what.ToLowerInvariant()}s are cut as plain openings. Load one and run again for real {what.ToLowerInvariant()}s.");
+        return _families[category] = family;
+    }
+
+    FamilySymbol HostedType(Family family, string what, double widthMm, double heightMm)
+    {
+        var name = $"Concept {what} {widthMm:0}x{heightMm:0}";
+        var all = family.GetFamilySymbolIds().Select(id => (FamilySymbol)_doc.GetElement(id)).ToList();
         var symbol = all.FirstOrDefault(s => s.Name == name);
         if (symbol == null)
         {
             symbol = (FamilySymbol)all.First().Duplicate(name);
-            SetLength(symbol, Ft(widthMm), BuiltInParameter.WINDOW_WIDTH, BuiltInParameter.FAMILY_WIDTH_PARAM, "Width");
-            SetLength(symbol, Ft(heightMm), BuiltInParameter.WINDOW_HEIGHT, BuiltInParameter.FAMILY_HEIGHT_PARAM, "Height");
+            SetLength(symbol, Ft(widthMm), BuiltInParameter.WINDOW_WIDTH, BuiltInParameter.DOOR_WIDTH, BuiltInParameter.FAMILY_WIDTH_PARAM, "Width");
+            SetLength(symbol, Ft(heightMm), BuiltInParameter.WINDOW_HEIGHT, BuiltInParameter.DOOR_HEIGHT, BuiltInParameter.FAMILY_HEIGHT_PARAM, "Height");
         }
         if (!symbol.IsActive) { symbol.Activate(); _doc.Regenerate(); }
         return symbol;
     }
 
-    static void SetLength(Element e, double value, BuiltInParameter first, BuiltInParameter second, string name)
+    /// <summary>
+    /// Rooms where the survey names them: Revit finds the spaces the walls enclose on this
+    /// level (in the Existing phase); each one holding a survey room label becomes a room with
+    /// that name. Spaces with no label get no room.
+    /// </summary>
+    string CreateRooms(SurveyLevel sl, Level level)
     {
-        var p = e.get_Parameter(first) ?? e.get_Parameter(second) ?? e.LookupParameter(name);
+        if (_phase == null) return "no rooms (no phase)";
+        _doc.Regenerate();
+        var placed = new List<Autodesk.Revit.DB.Architecture.Room>();
+        foreach (PlanCircuit circuit in _doc.get_PlanTopology(level, _phase).Circuits)
+        {
+            if (circuit.IsRoomLocated) continue;
+            try { placed.Add(_doc.Create.NewRoom(_doc.Create.NewRoom(_phase), circuit)); }
+            catch { /* a sliver Revit refuses */ }
+        }
+        double z = level.Elevation + Ft(1000);
+        var names = new Dictionary<Autodesk.Revit.DB.Architecture.Room, List<string>>();
+        int outside = 0;
+        foreach (var (pos, name) in sl.RoomNames)
+        {
+            var room = placed.FirstOrDefault(r => r.IsPointInRoom(new XYZ(Ft(pos.X), Ft(pos.Y), z)));
+            if (room == null) { outside++; continue; }
+            if (!names.TryGetValue(room, out var list)) names[room] = list = new List<string>();
+            if (!list.Contains(name, StringComparer.OrdinalIgnoreCase)) list.Add(name);
+        }
+        var unnamed = placed.Where(r => !names.ContainsKey(r)).Select(r => r.Id).ToList();
+        if (unnamed.Count > 0) _doc.Delete(unnamed);
+        foreach (var (room, list) in names)
+        {
+            room.Name = string.Join(" / ", list);
+            room.UpperLimit = level;
+            room.LimitOffset = Ft(sl.CeilingHeightMm);
+            Mark(room, sl.Code, "Room");
+        }
+        return $"{names.Count} rooms" + (outside > 0 ? $" ({outside} labels not inside a closed space)" : "");
+    }
+
+    static void SetLength(Element e, double value, BuiltInParameter first, BuiltInParameter second, BuiltInParameter third, string name)
+    {
+        var p = e.get_Parameter(first) ?? e.get_Parameter(second) ?? e.get_Parameter(third) ?? e.LookupParameter(name);
         if (p != null && !p.IsReadOnly && p.StorageType == StorageType.Double) p.Set(value);
     }
 
@@ -421,13 +529,24 @@ public sealed class ModelBuilder
     {
         var name = $"Concept Slab {thicknessMm:0}mm";
         var all = new FilteredElementCollector(_doc).OfClass(typeof(FloorType)).Cast<FloorType>().ToList();
-        var found = all.FirstOrDefault(f => f.Name == name);
-        if (found != null) return found;
+        var type = all.FirstOrDefault(f => f.Name == name);
+        var structure = type?.GetCompoundStructure();
+        if (structure != null && Math.Abs(structure.GetWidth() - Ft(thicknessMm)) < 1e-6) return type!;
+        // Copy a floor type's own layer set and make it one layer of the slab thickness: a structure
+        // built from scratch has the wrong edge (end cap) settings for floors and Revit refuses it.
         var basic = all.First(f => !f.IsFoundationSlab && f.GetCompoundStructure() != null);
-        var type = (FloorType)basic.Duplicate(name);
-        type.SetCompoundStructure(CompoundStructure.CreateSingleLayerCompoundStructure(
-            MaterialFunctionAssignment.Structure, Ft(thicknessMm), ElementId.InvalidElementId));
-        Log.Add($"Floor type created: {name}");
+        if (type == null) { type = (FloorType)basic.Duplicate(name); Log.Add($"Floor type created: {name}"); }
+        try
+        {
+            var cs = basic.GetCompoundStructure();
+            var core = cs.GetLayers()[Math.Max(0, cs.GetFirstCoreLayerIndex())];
+            cs.SetLayers(new List<CompoundStructureLayer> { new(Ft(thicknessMm), MaterialFunctionAssignment.Structure, core.MaterialId) });
+            cs.SetNumberOfShellLayers(ShellLayerType.Exterior, 0);
+            cs.SetNumberOfShellLayers(ShellLayerType.Interior, 0);
+            cs.StructuralMaterialIndex = 0;
+            type.SetCompoundStructure(cs);
+        }
+        catch (Exception ex) { Log.Add($"WARNING: could not set {name} to {thicknessMm:0} mm ({ex.Message}); edit the type's structure by hand."); }
         return type;
     }
 

@@ -32,6 +32,10 @@ public sealed record SurveyLevel(
     public double CeilingHeightMm { get; set; }
     /// <summary>Windows found on this floor (hosted in <see cref="Walls"/>).</summary>
     public IReadOnlyList<WindowCandidate> Windows { get; set; } = Array.Empty<WindowCandidate>();
+    /// <summary>Doors found on this floor (hosted in <see cref="Walls"/>).</summary>
+    public IReadOnlyList<DoorCandidate> Doors { get; set; } = Array.Empty<DoorCandidate>();
+    /// <summary>Room names from the survey, at their label positions (model mm).</summary>
+    public IReadOnlyList<(Vec2 Position, string Name)> RoomNames { get; set; } = Array.Empty<(Vec2, string)>();
     /// <summary>Build this floor? (Editable before building.)</summary>
     public bool Include { get; set; } = true;
 }
@@ -95,6 +99,7 @@ public static class SurveyAnalyzer
         var frame = MakeFrame(chosen, tol);
         var levels = new List<SurveyLevel>();
         var windowInput = new Dictionary<SurveyLevel, (List<Segment2> Lines, List<(Vec2, string)> Texts)>(ReferenceEqualityComparer.Instance);
+        var doorInput = new Dictionary<SurveyLevel, List<Segment2>>(ReferenceEqualityComparer.Instance);
         foreach (var p in chosen)
         {
             var (order, name) = DrawingName.DescribeLevel(p.Name.LevelCode!);
@@ -124,6 +129,10 @@ public static class SurveyAnalyzer
             walls = walls with { Walls = facade, ThicknessGroups = facade.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
             var plan = raster with { Walls = walls };
             var level = new SurveyLevel(p.Name.LevelCode!, name, order, est?.FloorLevelMm ?? double.NaN, est, p, plan.Walls, plan.Outline, plan.Unclear);
+            doorInput[level] = openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList();
+            level.RoomNames = p.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.RoomName)
+                .Select(t => (frame.ToModel(t.Position), Name: System.Text.RegularExpressions.Regex.Replace(t.Value, @"\s+", " ").Trim()))
+                .Where(t => t.Name.Length >= 2).ToList();
             windowInput[level] = (openings.Where(o => rules.Classify(o.Layer) == LayerRole.Window).ToList(),
                                   p.Texts.Select(t => (frame.ToModel(t.Position), t.Value)).ToList());
             levels.Add(level);
@@ -138,6 +147,7 @@ public static class SurveyAnalyzer
             levels[i].CeilingHeightMm = DefaultCeilingHeight(levels[i].WallHeightMm);
             var (wl, tx) = windowInput[levels[i]];
             levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm);
+            levels[i].Doors = DoorFinder.Find(doorInput[levels[i]], levels[i].Walls.Walls, levels[i].Windows);
             if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
         }
 

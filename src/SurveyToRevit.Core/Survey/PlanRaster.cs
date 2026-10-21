@@ -129,7 +129,7 @@ public sealed class PlanRaster
                 var cells = Component(i, inside, compIn, ++id, queue);
                 if (biggest == null || cells.Count > biggest.Count) biggest = cells;
             }
-        var outline = biggest != null ? Outline(biggest, simplifyPx: 2) : null;
+        var outline = biggest != null ? BuildingOutline(biggest, queue) : null;
 
         var result = Empty();
         var material = solid;
@@ -144,6 +144,46 @@ public sealed class PlanRaster
             return false;
         }
         return new PlanResult(result, outline, unclear, rooms) { IsMaterial = IsMaterial };
+    }
+
+    // Thin strands (a stray line leaking into the outside) and parts touching only at a corner
+    // make the traced boundary cross itself. Opening then closing the shape by a few cells
+    // (50-200 mm) removes strands and fuses pinch points; the smallest change that works is kept.
+    Polygon2? BuildingOutline(List<int> cells, int[] queue)
+    {
+        Polygon2? last = null;
+        foreach (int r in new[] { 0, 2, 4, 8 })
+        {
+            var mask = new bool[_w * _h];
+            foreach (var c in cells) mask[c] = true;
+            if (r > 0)
+            {
+                mask = Dilate(Erode(mask, r), r); // opening: strands go
+                mask = Erode(Dilate(mask, r), r); // closing: pinch points fuse
+            }
+            var comp = new int[mask.Length];
+            List<int>? best = null;
+            int id = 0;
+            foreach (var c in cells)
+                if (mask[c] && comp[c] == 0)
+                {
+                    var part = Component(c, mask, comp, ++id, queue);
+                    if (best == null || part.Count > best.Count) best = part;
+                }
+            if (best == null) continue;
+            last = Outline(best, simplifyPx: 2);
+            if (last == null || last.IsSimple()) return last;
+        }
+        return last;
+    }
+
+    bool[] Erode(bool[] src, int r)
+    {
+        var inv = new bool[src.Length];
+        for (int i = 0; i < src.Length; i++) inv[i] = !src[i];
+        var grown = Dilate(inv, r);
+        for (int i = 0; i < grown.Length; i++) grown[i] = !grown[i];
+        return grown;
     }
 
     static WallDetectionResult Empty() => new(Array.Empty<WallCandidate>(), Array.Empty<Segment2>(), Array.Empty<double>(), 0, 0, Array.Empty<double>());

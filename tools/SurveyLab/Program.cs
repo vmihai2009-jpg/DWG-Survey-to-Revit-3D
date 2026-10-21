@@ -28,6 +28,10 @@ SurveyAnalyzer.PlanDebug = (code, w, h, cls) =>
 };
 var model = SurveyAnalyzer.Analyze(inputs);
 CheckGeometry(model);
+if (Environment.GetEnvironmentVariable("TEXTS") != null)
+    foreach (var l in model.Levels.Take(1))
+        foreach (var g in l.Plan.Texts.GroupBy(t => t.Layer))
+            Console.Error.WriteLine($"{g.Key}: {g.Count()} e.g. {string.Join(" | ", g.Select(t => t.Value.Replace("\n", "/")).Distinct().Take(12))}");
 var sb = new StringBuilder();
 sb.AppendLine(SurveyReport.Build(model));
 File.WriteAllText(Path.Combine(outDir, "report.txt"), sb.ToString());
@@ -64,6 +68,15 @@ static string Svg(SurveyLevel l, SurveyFrame f)
         var b = w.Center + c.Direction * (w.WidthMm / 2);
         sb.Append($"<line x1='{a.X:0}' y1='{-a.Y:0}' x2='{b.X:0}' y2='{-b.Y:0}' stroke='#00a0ff' stroke-width='250'/>");
     }
+    foreach (var d in l.Doors)
+    {
+        var c = l.Walls.Walls[d.HostIndex].Centerline;
+        var a = d.Center - c.Direction * (d.WidthMm / 2);
+        var b = d.Center + c.Direction * (d.WidthMm / 2);
+        sb.Append($"<line x1='{a.X:0}' y1='{-a.Y:0}' x2='{b.X:0}' y2='{-b.Y:0}' stroke='#e0007a' stroke-width='250'/>");
+    }
+    foreach (var (p, name) in l.RoomNames)
+        sb.Append($"<text x='{p.X:0}' y='{-p.Y:0}' font-size='400' fill='#333'>{System.Security.SecurityElement.Escape(name)}</text>");
     foreach (var u in l.Unclear)
         sb.Append($"<polygon points='{string.Join(" ", u.Outline.Vertices.Select(v => $"{v.X:0},{-v.Y:0}"))}' fill='#f5a623' fill-opacity='0.6'/>");
     sb.Append("</svg>");
@@ -108,6 +121,22 @@ static void CheckGeometry(SurveyModel model)
         int tiny = walls.Count(w => w.Centerline.Length < 10);
         double far = walls.Where(w => !Bad(w.Centerline.A) && !Bad(w.Centerline.B)).Select(w => Math.Max(w.Centerline.A.Length, w.Centerline.B.Length)).DefaultIfEmpty(0).Max();
         int badPoly = l.Unclear.Count(u => u.Outline.Vertices.Any(Bad) || u.Outline.Vertices.Count < 3) + (l.Outline?.Vertices.Any(Bad) == true ? 1 : 0);
+        if (l.Outline != null && SelfIntersects(l.Outline)) Console.Error.WriteLine($"{l.Code}: OUTLINE SELF-INTERSECTS");
         Console.Error.WriteLine($"{l.Code}: non-finite walls {nonFinite}, under 10 mm {tiny}, farthest point {far / 1000:0} m, bad polygons {badPoly}");
     }
+}
+
+static bool SelfIntersects(Polygon2 p)
+{
+    var v = p.Vertices; int n = v.Count;
+    for (int i = 0; i < n; i++)
+        for (int j = i + 1; j < n; j++)
+        {
+            if (j == i + 1 || (i == 0 && j == n - 1)) continue;
+            var s1 = new Segment2(v[i], v[(i + 1) % n]); var s2 = new Segment2(v[j], v[(j + 1) % n]);
+            double d1 = s1.Direction.Cross(s2.A - s1.A), d2 = s1.Direction.Cross(s2.B - s1.A);
+            double d3 = s2.Direction.Cross(s1.A - s2.A), d4 = s2.Direction.Cross(s1.B - s2.A);
+            if (d1 * d2 < 0 && d3 * d4 < 0 && s1.Length > 0 && s2.Length > 0) return true;
+        }
+    return false;
 }

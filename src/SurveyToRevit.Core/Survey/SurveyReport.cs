@@ -32,7 +32,7 @@ public static class SurveyReport
         {
             var w = l.Walls;
             sb.AppendLine($"  {l.Name}: {w.Walls.Count} walls, {w.Walls.Sum(x => x.Length) / 1000:0.0} m total, " +
-                          $"{w.ThicknessGroups.Count} wall types; floor outline {(l.Outline == null ? "not found" : $"{l.Outline.Area / 1e6:0} m²")}; {l.Unclear.Count} unclear areas (generic models); {l.Windows.Count} windows ({l.Windows.Count(x => x.HeightsFromSurvey)} with surveyed sill and head)");
+                          $"{w.ThicknessGroups.Count} wall types; floor outline {(l.Outline == null ? "not found" : $"{l.Outline.Area / 1e6:0} m²")}; {l.Unclear.Count} unclear areas (generic models); {l.Windows.Count} windows ({l.Windows.Count(x => x.HeightsFromSurvey)} with surveyed sill and head); {l.Doors.Count} doors; {l.RoomNames.Count} room names");
             foreach (var g in w.Walls.GroupBy(x => x.TypeName).OrderBy(g => g.First().TypeThickness))
                 sb.AppendLine($"      {g.Key,-22} {g.Count(),4} walls  {g.Sum(x => x.Length) / 1000,7:0.0} m");
         }

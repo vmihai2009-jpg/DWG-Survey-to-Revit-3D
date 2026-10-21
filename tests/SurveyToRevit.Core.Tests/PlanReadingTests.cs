@@ -105,4 +105,45 @@ public class PlanReadingTests
         var cross = Assert.Single(closed, w => w.Centerline.AngleDeg > 89);
         Assert.Equal(0, Math.Min(cross.Centerline.A.Y, cross.Centerline.B.Y), 0);
     }
+
+    [Fact]
+    public void Door_swing_gives_a_door_in_the_wall_it_is_hinged_on()
+    {
+        var walls = new List<WallCandidate> { W(0, 0, 10000, 0, 100) };
+        // leaf hinged at x=2000, drawn open at 60°, 900 long, swinging towards +x
+        var leaf = S(2000, 0, 2000 + 450, 779, "Door");
+        var d = Assert.Single(DoorFinder.Find(new[] { leaf }, walls));
+        Assert.Equal(900, d.WidthMm);
+        Assert.Equal(2450, d.Center.X, 0);
+        Assert.False(d.Double);
+    }
+
+    [Fact]
+    public void Two_leaves_meeting_in_one_opening_are_a_double_door()
+    {
+        var walls = new List<WallCandidate> { W(0, 0, 10000, 0, 200) };
+        var left = S(3000, 0, 3000, 800, "Door");   // square to the wall: side from where the wall is longer
+        var right = S(4600, 0, 4600 - 400, 693, "Door");
+        var d = Assert.Single(DoorFinder.Find(new[] { left, right }, walls));
+        Assert.True(d.Double);
+        Assert.Equal(1600, d.WidthMm);
+        Assert.Equal(3800, d.Center.X, 0);
+    }
+
+    [Fact]
+    public void Lines_along_the_wall_and_doors_on_windows_are_not_doors()
+    {
+        var walls = new List<WallCandidate> { W(0, 0, 10000, 0, 200) };
+        Assert.Empty(DoorFinder.Find(new[] { S(1000, 0, 1900, 0, "Door") }, walls));
+        var window = new WindowCandidate(0, new Vec2(2450, 0), 1200, 900, 2100, false);
+        Assert.Empty(DoorFinder.Find(new[] { S(2000, 0, 2450, 779, "Door") }, walls, new[] { window }));
+    }
+
+    [Fact]
+    public void Window_is_hosted_in_the_facade_not_the_lining_in_front_of_it()
+    {
+        var walls = new List<WallCandidate> { W(0, 0, 10000, 0, 450), W(0, 300, 10000, 300, 100) };
+        var win = Assert.Single(WindowFinder.Find(new[] { S(4000, 150, 5200, 150, "Window") }, walls, Array.Empty<(Vec2, string)>(), 3500));
+        Assert.Equal(0, win.HostIndex);
+    }
 }

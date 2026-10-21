@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace SurveyToRevit.Core.Survey;
 
-public enum LayerRole { Other, Wall, Window, Door, LevelText }
+public enum LayerRole { Other, Wall, Window, Door, LevelText, RoomName }
 
 /// <summary>
 /// Decides what each CAD layer holds from its name. Defaults cover Uniclass
@@ -15,6 +15,7 @@ public sealed class LayerRules
     public Regex Window { get; init; } = new(@"(^Ss_25_30_95|window|glaz|^A-GLAZ)", RegexOptions.IgnoreCase);
     public Regex Door { get; init; } = new(@"(^Ss_25_30_20|door)", RegexOptions.IgnoreCase);
     public Regex LevelText { get; init; } = new(@"(^Zz_60_45|[-_ ]level|^level|spot.?height|^A-ANNO-LEVL)", RegexOptions.IgnoreCase);
+    public Regex RoomName { get; init; } = new(@"(^Zz_20_10|room.?name|^A-ANNO-ROOM|^A-AREA-IDEN)", RegexOptions.IgnoreCase);
     /// <summary>Layers never used for walls even if they mention "wall" (e.g. headroom notes, text).</summary>
     public Regex Exclude { get; init; } = new(@"(^Zz_|text|anno|hatch|dim)", RegexOptions.IgnoreCase);
 
@@ -23,6 +24,7 @@ public sealed class LayerRules
     public LayerRole Classify(string layer)
     {
         if (LevelText.IsMatch(layer)) return LayerRole.LevelText;
+        if (RoomName.IsMatch(layer)) return LayerRole.RoomName;
         if (Exclude.IsMatch(layer)) return LayerRole.Other;
         if (Window.IsMatch(layer)) return LayerRole.Window;
         if (Door.IsMatch(layer)) return LayerRole.Door;

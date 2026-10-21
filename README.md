@@ -1,6 +1,6 @@
 # DWG Survey to Revit
 
-Revit 2025 add-in that turns 2D DWG building surveys into an editable concept model (walls, slabs, levels, windows). Early stage: see [PROJECT_STATUS.md](PROJECT_STATUS.md) for what works today.
+Revit 2025 add-in that turns 2D DWG building surveys into an editable concept model (walls, slabs, levels, windows, doors, rooms). Early stage: see [PROJECT_STATUS.md](PROJECT_STATUS.md) for what works today.
 
 ## Install (Windows, Revit 2025)
 
@@ -22,6 +22,8 @@ Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`
    - link each plan at its level (shared coordinates),
    - walls ("Concept Wall 150mm" etc.), joined across door gaps,
    - windows in the walls (sill and head from the survey texts where given),
+   - doors (from the door swings in the survey),
+   - rooms named from the survey's room labels,
    - floor slabs ("Concept Slab 300mm") from each floor's outline,
    - ceilings (one per floor, at the height in the table),
    - generic models (named "Survey - check") where the drawing could not be read.

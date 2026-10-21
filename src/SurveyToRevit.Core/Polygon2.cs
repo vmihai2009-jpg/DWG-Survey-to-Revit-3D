@@ -21,6 +21,21 @@ public sealed class Polygon2
 
     public double Area => Math.Abs(SignedArea);
 
+    /// <summary>True when no two edges cross (Revit refuses slab and ceiling boundaries that cross themselves).</summary>
+    public bool IsSimple()
+    {
+        int n = Vertices.Count;
+        for (int i = 0; i < n; i++)
+            for (int j = i + 2; j < n; j++)
+            {
+                if (i == 0 && j == n - 1) continue; // neighbours through the closing edge
+                Vec2 a = Vertices[i], b = Vertices[(i + 1) % n], c = Vertices[j], d = Vertices[(j + 1) % n];
+                double d1 = (b - a).Cross(c - a), d2 = (b - a).Cross(d - a), d3 = (d - c).Cross(a - c), d4 = (d - c).Cross(b - c);
+                if (d1 * d2 < 0 && d3 * d4 < 0) return false;
+            }
+        return true;
+    }
+
     /// <summary>
     /// Builds a polygon from linework that should form a closed loop, e.g. a
     /// polyline exploded into segments. Returns null and a reason if it does not close.

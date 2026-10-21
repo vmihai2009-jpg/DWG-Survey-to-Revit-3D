@@ -4,13 +4,15 @@ _Last updated: 2026-10-21_
 
 ## Current milestone
 
-**M4 – Concept model from survey (v0.4).** v0.4 = v0.3 plus windows, gap closing, crash fix and ribbon icon. Build from Survey now opens a window (floors, levels, ceiling heights, what to build) and creates walls, floor slabs, ceilings and generic models for unclear areas, on top of v0.2's coordinates, levels and links.
-Code compiles and the engine is tested on the real Swallow Place survey. v0.3 was run in Revit by Mihai and stopped with "The input curve is not bound": the link check read end points of circles in the DWG (circles have none). Fixed, and every element is now created on its own so one bad element is skipped and logged instead of cancelling the run. **v0.4 has not been run in Revit yet.**
+**M4 – Concept model from survey (v0.5).** v0.5 = v0.4 plus doors, named rooms, everything on the Existing phase, windows that cut through linings, and fixes for the failed Basement and Mezzanine floors. Build from Survey now opens a window (floors, levels, ceiling heights, what to build) and creates walls, floor slabs, ceilings and generic models for unclear areas, on top of v0.2's coordinates, levels and links.
+Code compiles and the engine is tested on the real Swallow Place survey. v0.3 was run in Revit by Mihai and stopped with "The input curve is not bound": the link check read end points of circles in the DWG (circles have none). Fixed, and every element is now created on its own so one bad element is skipped and logged instead of cancelling the run. v0.4 was run by Mihai: walls "much better"; windows did not cut openings; Basement floor failed ("wrong EndCap condition"), Mezzanine floor and ceiling failed (outline crossed itself). **v0.5 has not been run in Revit yet.**
 
 Acceptance (to check in Revit 2025):
 1. *Barr Gazetas → Survey to Revit → Build from Survey*, select all Swallow Place DWGs: the window lists 10 floors; Basement, Ground, Mezzanine and Seventh are highlighted.
 2. After *Build*: walls follow the linked plans (the link is now checked against the walls and moved onto them if off); slabs and ceilings on every floor; "Survey - check" generic models where the drawing was unclear.
 3. Running it again replaces only the generated elements on those floors.
+
+v0.5 adds: doors from the door swings on the door layer (a leaf line hinged at a wall gives the opening width and side; two leaves meeting = double door; 2100 mm high), as a wall-hosted single door family (types "Concept Door WxH"; plain openings if none); rooms named from the survey's room-name layer (Revit's enclosed spaces holding a label become rooms; unlabelled spaces get none); every element on the "Existing" phase (else the first phase); window/door families restricted to wall-hosted ones, windows hosted in the thickest nearby wall, and lining walls in front cut through; slab type made by copying a floor type's own layer set (fixes the Basement); floor outlines cleaned so they never cross themselves (fixes the Mezzanine).
 
 v0.4 adds: windows from the window layer (one per cluster of window lines, width along its wall, sill/head from "S 0.94"/"H 2.58" texts, otherwise 900 mm sill and 1500 mm high), hosted in the generated walls as a fixed window family (from the project, else Revit's library; types "Concept Window WxH" in 50 mm steps; plain openings if no family exists); walls joined across gaps up to 1500 mm and hanging ends run on to the next wall; ribbon icon.
 
@@ -40,26 +42,28 @@ Key decisions:
 - Base point E 528999 N 181190; rotation 12.61°.
 - Levels (m AOD): B 22.86, G 26.47*, GM 29.50*, 1st 32.36, 2nd 36.78, 3rd 40.60, 4th 43.95, 5th 47.30, 6th 50.21, 7th 54.25* (*flagged: split/unclear level).
 - Walls (v0.4): 1,344 walls, about 3.4 km, in 8 types (the reader before v0.3 found about 1.0 km in 14 types on the same drawings). Floor outlines on all 10 floors; 31 unclear areas → generic models; 258 windows, 178 with surveyed sill and head.
+- v0.5: 262 windows, 176 doors, 181 room labels; all 10 floor outlines are simple (non-crossing) polygons.
 
 ## Build and test status
 
 - Whole solution builds (Release) on Linux, .NET SDK 8.0.132, 0 errors.
-- `dotnet test`: 45 passed, 0 failed.
+- `dotnet test`: 49 passed, 0 failed.
 
 ## Known issues / limitations
 
 - Façade runs merge only where pieces line up; bays, splays and pilastered corners can still give several short pieces.
 - Single-line walls get 100 mm; some lines that are not walls (bay outlines, counters) may become walls. Marked Low confidence in Comments.
 - Slabs and ceilings follow each floor's outer outline (no voids for stairs, lifts or light wells yet). Ceiling heights are not readable from the survey (placeholders "X.XX"); default 2700 mm, editable in the window.
-- No doors yet (door openings are now filled by the continuous walls); curved walls ignored.
+- Doors: placed in the wall the leaf is hinged on; swing direction is not set (Revit default). Curved walls ignored.
+- Rooms only where the walls close a space; a label in an open-plan area with gaps gets no room (counted in the log).
 - Windows: a few may land on a thin wall next to the façade rather than the façade itself; widths are measured from the window linework.
 - The ground floor is split level (26.47 / 27.05); one level is used, flagged.
 
 ## Next single action
 
-Mihai: install v0.3 and run *Build from Survey* on a copy of the project; send screenshots of a typical floor (plan and 3D) and the log.
+Mihai: install v0.5 and run *Build from Survey* on a copy of the project; send screenshots of a typical floor (plan and 3D) and the log.
 
-Then: doors; voids in slabs at stairs and lifts.
+Then: voids in slabs at stairs and lifts; surroundings/height from open LiDAR (Environment Agency) if wanted.
 
 ## Open cost / dependency decisions
 
