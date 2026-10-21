@@ -34,8 +34,10 @@ public sealed record SurveyLevel(
     public double ElevationMm { get; set; } = ElevationMm;
     /// <summary>Wall height: up to the next level, or the default for the top level.</summary>
     public double WallHeightMm { get; set; }
-    /// <summary>Ceiling height above this floor (mm). Surveys rarely give it, so it is a default to adjust.</summary>
+    /// <summary>Ceiling height above this floor (mm): the surveyed one when the plan gives it ("u/s 2.52"), else a default to adjust.</summary>
     public double CeilingHeightMm { get; set; }
+    /// <summary>True when <see cref="CeilingHeightMm"/> comes from ceiling heights written on the plan.</summary>
+    public bool CeilingFromSurvey { get; set; }
     /// <summary>Windows found on this floor (hosted in <see cref="Walls"/>).</summary>
     public IReadOnlyList<WindowCandidate> Windows { get; set; } = Array.Empty<WindowCandidate>();
     /// <summary>Doors found on this floor (hosted in <see cref="Walls"/>).</summary>
@@ -64,6 +66,8 @@ public sealed class SurveyModel
 public static class SurveyAnalyzer
 {
     public const double DefaultTopWallHeightMm = 3000;
+    /// <summary>The least height between a floor and the floor above (mm).</summary>
+    public const double MinStoreyMm = 2000;
 
     /// <summary>Ceiling 2700 mm above the floor, or lower where the storey is low (at least 600 mm below the floor above).</summary>
     public static double DefaultCeilingHeight(double storeyMm) => Math.Round(Math.Min(2700, Math.Max(2100, storeyMm - 600)) / 10) * 10;
@@ -134,9 +138,13 @@ public static class SurveyAnalyzer
             facade = WallDetector.CloseGaps(facade, tol, openings);
             facade = CurvedWalls.Add(facade, arcs, tol, raster.IsMaterial, raster.Outline);
             facade = WallDetector.BridgeBends(facade, tol, openings);
+            facade = PierWalls.Fill(facade, raster.Leftover, tol);
+            facade = WallDetector.CloseFacade(facade, raster.Outline, tol);
             facade = facade.Where(w => w.Length >= tol.MinWallLength).ToList();
             walls = walls with { Walls = facade, ThicknessGroups = facade.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
-            var plan = raster with { Walls = walls };
+            // unclear pockets now filled by a pier wall are explained
+            var unclearLeft = raster.Unclear.Where(u => !facade.Any(w => w.FaceA == "pier" && FacadeWalls.Contains(u.Outline, w.Centerline.Mid))).ToList();
+            var plan = raster with { Walls = walls, Unclear = unclearLeft };
             var level = new SurveyLevel(p.Name.LevelCode!, name, order, est?.FloorLevelMm ?? double.NaN, est, p, plan.Walls, plan.Outline, plan.Unclear);
             doorInput[level] = openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList();
             level.RoomNames = p.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.RoomName)
@@ -148,15 +156,31 @@ public static class SurveyAnalyzer
             if (plan.Outline == null) notes.Add($"{name}: no closed building outline found; no floor slab.");
         }
         levels = levels.OrderBy(l => l.Order).ThenBy(l => l.ElevationMm).ToList();
+        // a floor can't sit less than a low storey above the one below it: a plan whose most common
+        // spot height is (e.g. a roof plan's terrace) takes its next best level that clears the floor below
+        for (int i = 1; i < levels.Count; i++)
+        {
+            var below = levels.Take(i).LastOrDefault(l => !double.IsNaN(l.ElevationMm) && l.Order < levels[i].Order && Math.Floor(l.Order) != Math.Floor(levels[i].Order));
+            if (below == null || double.IsNaN(levels[i].ElevationMm) || levels[i].ElevationMm - below.ElevationMm >= MinStoreyMm) continue;
+            var better = levels[i].Estimate?.OtherLevels.Where(o => o.LevelMm - below.ElevationMm >= MinStoreyMm).OrderByDescending(o => o.Count).ThenBy(o => o.LevelMm).FirstOrDefault();
+            double was = levels[i].ElevationMm;
+            levels[i].ElevationMm = better is { Count: > 0 } b ? b.LevelMm : below.ElevationMm + DefaultTopWallHeightMm;
+            notes.Add($"{levels[i].Name}: most spot heights ({was / 1000:0.00} m) are under {MinStoreyMm / 1000:0.0} m above {below.Name}; level set to {levels[i].ElevationMm / 1000:0.00} m" +
+                      (better is { Count: > 0 } ? " (its next most common spot height). Check it." : " (an assumed storey). Check it."));
+        }
 
         for (int i = 0; i < levels.Count; i++)
         {
             var next = levels.Skip(i + 1).FirstOrDefault(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm > levels[i].ElevationMm);
             levels[i].WallHeightMm = next != null ? next.ElevationMm - levels[i].ElevationMm : DefaultTopWallHeightMm;
-            levels[i].CeilingHeightMm = DefaultCeilingHeight(levels[i].WallHeightMm);
             var (wl, tx) = windowInput[levels[i]];
+            var heights = SurveyHeights.Read(tx);
+            // surveyed ceiling heights ("u/s 2.52") win over the default
+            var surveyedCeiling = SurveyHeights.CeilingHeight(heights, levels[i].WallHeightMm);
+            levels[i].CeilingFromSurvey = surveyedCeiling != null;
+            levels[i].CeilingHeightMm = surveyedCeiling ?? DefaultCeilingHeight(levels[i].WallHeightMm);
             levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm);
-            levels[i].Doors = DoorFinder.Find(doorInput[levels[i]], levels[i].Walls.Walls, levels[i].Windows);
+            levels[i].Doors = DoorFinder.Find(doorInput[levels[i]], levels[i].Walls.Walls, levels[i].Windows, heights: heights, storeyMm: levels[i].WallHeightMm);
             if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
         }
 
@@ -166,14 +190,14 @@ public static class SurveyAnalyzer
     }
 
     /// <summary>
-    /// Texts that sit inside rooms: names, spot heights, notes. Sill/head heights
-    /// ("S 0.94", "H 2.58") are left out because they are placed in window recesses.
+    /// Texts that sit inside rooms: names, spot heights, notes. Sill, head and door heights
+    /// ("S 0.94", "H 2.58", "dh 2.03") are left out because they are placed in window and door recesses.
     /// </summary>
     static bool IsRoomMarker(SurveyText t, LayerRules rules)
     {
         if (string.IsNullOrWhiteSpace(t.Value)) return false;
         if (rules.Classify(t.Layer) is LayerRole.Wall or LayerRole.Window or LayerRole.Door) return false;
-        return !System.Text.RegularExpressions.Regex.IsMatch(t.Value.Trim(), @"^(S|H|AH|ASH|D)\s*[\d.]|^(S|H)\s+Not", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return !SurveyHeights.IsOpeningNote(t.Value);
     }
 
     /// <summary>Frame from the ground floor (or lowest plan): centre of its walls rounded to 1 m, and its main wall direction.</summary>

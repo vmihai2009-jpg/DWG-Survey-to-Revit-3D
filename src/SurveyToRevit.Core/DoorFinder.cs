@@ -1,21 +1,22 @@
 namespace SurveyToRevit.Core;
 
 /// <summary>A door to place: on wall <see cref="HostIndex"/>, centred at <see cref="Center"/>, in mm.</summary>
-public sealed record DoorCandidate(int HostIndex, Vec2 Center, double WidthMm, double HeightMm, bool Double);
+public sealed record DoorCandidate(int HostIndex, Vec2 Center, double WidthMm, double HeightMm, bool Double, bool HeightFromSurvey = false);
 
 /// <summary>
 /// Doors from the door layers. Surveys draw a door as its leaf shown open: a line from
 /// the hinge, at the wall, swung into the room, as long as the leaf is wide. So a door
 /// line of leaf length with one end at a wall and running away from it is a leaf; the
 /// opening runs along the wall from the hinge. Two leaves meeting in one opening are a
-/// double door.
+/// double door. A door head height written nearby ("dh 2.03") is used; otherwise 2100 mm.
 /// </summary>
 public static class DoorFinder
 {
     public const double DefaultHeightMm = 2100;
 
     public static List<DoorCandidate> Find(IReadOnlyList<Segment2> doorLines, IReadOnlyList<WallCandidate> walls,
-        IEnumerable<WindowCandidate>? windows = null, double minLeaf = 500, double maxLeaf = 1300)
+        IEnumerable<WindowCandidate>? windows = null, double minLeaf = 500, double maxLeaf = 1300,
+        IReadOnlyList<HeightNote>? heights = null, double storeyMm = double.MaxValue, double textReach = 1500)
     {
         var leaves = new List<(int Host, double Hinge, int Side, double Width)>();
         foreach (var s in doorLines.Where(l => l.Length >= minLeaf && l.Length <= maxLeaf))
@@ -79,6 +80,9 @@ public static class DoorFinder
                       || wins.Any(w => w.HostIndex == d.HostIndex && w.Center.DistanceTo(d.Center) < (w.WidthMm + d.WidthMm) / 2);
             if (!clash) kept.Add(d);
         }
-        return kept;
+        // a surveyed door head ("dh 2.03") nearby sets the height
+        if (heights == null) return kept;
+        return kept.Select(d => SurveyHeights.Nearest(heights, HeightKind.DoorHead, d.Center, textReach) is double h && h >= 1500 && h <= storeyMm - 100
+            ? d with { HeightMm = Math.Round(h / 10) * 10, HeightFromSurvey = true } : d).ToList();
     }
 }

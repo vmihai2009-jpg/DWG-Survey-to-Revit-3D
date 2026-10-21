@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Text.RegularExpressions;
-
 namespace SurveyToRevit.Core;
 
 /// <summary>A window to place: on wall <see cref="HostIndex"/>, centred at <see cref="Center"/>; sizes in mm, heights above the floor.</summary>
@@ -12,13 +9,11 @@ public sealed record WindowCandidate(int HostIndex, Vec2 Center, double WidthMm,
 /// <summary>
 /// Windows from the window layer: touching window lines are one window; its width is
 /// their extent along the wall it sits in. Survey sill and head texts nearby
-/// ("S 0.94", "H 2.58", metres above the floor) give its heights; otherwise defaults.
+/// ("S 0.94", "H 2.58", "fs 0.92" + "sh 1.88"; see <see cref="SurveyHeights"/>) give its heights; otherwise defaults.
 /// </summary>
 public static class WindowFinder
 {
     public const double DefaultSillMm = 900, DefaultHeightMm = 1500;
-    static readonly Regex Sill = new(@"^\s*S\s*([0-9]+\.[0-9]+)", RegexOptions.IgnoreCase);
-    static readonly Regex Head = new(@"^\s*H\s*([0-9]+\.[0-9]+)", RegexOptions.IgnoreCase);
 
     public static List<WindowCandidate> Find(IReadOnlyList<Segment2> windowLines, IReadOnlyList<WallCandidate> walls,
         IReadOnlyList<(Vec2 Position, string Value)> texts, double storeyMm,
@@ -32,8 +27,7 @@ public static class WindowFinder
             for (int j = i + 1; j < lines.Count; j++)
                 if (Near(lines[i], lines[j], joinMm)) parent[Root(i)] = Root(j);
 
-        var sills = texts.Select(t => (t.Position, M: Sill.Match(t.Value))).Where(x => x.M.Success).Select(x => (x.Position, Mm: Metres(x.M))).ToList();
-        var heads = texts.Select(t => (t.Position, M: Head.Match(t.Value))).Where(x => x.M.Success).Select(x => (x.Position, Mm: Metres(x.M))).ToList();
+        var notes = SurveyHeights.Read(texts);
 
         var result = new List<WindowCandidate>();
         foreach (var cluster in Enumerable.Range(0, lines.Count).GroupBy(Root).Select(g => g.Select(i => lines[i]).ToList()))
@@ -62,8 +56,10 @@ public static class WindowFinder
             if (width < minWidth || width > maxWidth) continue;
             var center = WallGeometry.PointAt(hw, (lo + hi) / 2);
 
-            var s = Nearest(sills, center, textReach);
-            var h = Nearest(heads, center, textReach);
+            var s = SurveyHeights.Nearest(notes, HeightKind.Sill, center, textReach);
+            var h = SurveyHeights.Nearest(notes, HeightKind.Head, center, textReach);
+            // a window height (sill to head) instead of a head
+            if (h == null && s != null && SurveyHeights.Nearest(notes, HeightKind.OpeningHeight, center, textReach) is double oh) h = s + oh;
             double sill = s ?? DefaultSillMm;
             double head = h is double hv && hv > sill + 300 ? hv : sill + DefaultHeightMm;
             head = Math.Min(head, storeyMm - 150);
@@ -81,14 +77,6 @@ public static class WindowFinder
             if (!kept.Any(k => k.HostIndex == w.HostIndex && k.Center.DistanceTo(w.Center) < (k.WidthMm + w.WidthMm) / 2 + 100))
                 kept.Add(w);
         return kept;
-    }
-
-    static double Metres(Match m) => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) * 1000;
-
-    static double? Nearest(List<(Vec2 Position, double Mm)> items, Vec2 p, double reach)
-    {
-        var near = items.Where(i => i.Position.DistanceTo(p) <= reach).OrderBy(i => i.Position.DistanceTo(p)).ToList();
-        return near.Count == 0 ? null : near[0].Mm;
     }
 
     static bool Near(Segment2 a, Segment2 b, double d) =>

@@ -226,4 +226,52 @@ public class PlanReadingTests
     [InlineData("29463B-9 (SECTIONS & ELEVATIONS).dwg")]
     [InlineData("000002-PCL-ZZZ-ZZZ-M2-G-03000-P03-S3.dwg")]
     public void Sections_and_elevations_are_not_plans(string file) => Assert.Null(DrawingName.Parse(file).LevelCode);
+
+    [Fact]
+    public void Facade_corner_left_open_is_closed_even_next_to_a_thick_stub()
+    {
+        var top = W(0, 9700, 18500, 9700, 600);
+        var east = W(19800, 0, 19800, 8500, 200);
+        var stub = W(19300, 8000, 19800, 8000, 900); // a pier block across the east wall, just short of its end
+        var result = WallDetector.CloseFacade(new List<WallCandidate> { top, east, stub }, Box, new Tolerances());
+        var joins = result.Where(w => w.FaceA == "join").ToList();
+        Assert.Equal(2, joins.Count);
+        Assert.All(joins, j => Assert.True(j.Centerline.A.DistanceTo(new Vec2(19800, 9700)) < 1 || j.Centerline.B.DistanceTo(new Vec2(19800, 9700)) < 1));
+    }
+
+    [Fact]
+    public void Surveyed_heights_are_read_in_both_common_styles()
+    {
+        var p = new Vec2(0, 0);
+        var a = SurveyHeights.Read(new[] { (p, "S 0.94"), (p, "H 2.58"), (p, "dh 2.03"), (p, "u/s 2.52"), (p, "cl 21.50"), (p, "S 940") });
+        Assert.Equal(new[] { HeightKind.Sill, HeightKind.Head, HeightKind.DoorHead, HeightKind.Ceiling, HeightKind.Sill }, a.Select(n => n.Kind));
+        Assert.Equal(new[] { 940.0, 2580, 2030, 2520, 940 }, a.Select(n => n.Mm));
+        // with floor-to-sill ("fs") on the plan, "sh" is the window's height from sill to head
+        var b = SurveyHeights.Read(new[] { (p, "fs 0.92"), (p, "sh 1.88") });
+        Assert.Equal(new[] { HeightKind.Sill, HeightKind.OpeningHeight }, b.Select(n => n.Kind));
+        Assert.Single(SurveyHeights.Read(new[] { (p, "sh 0.90") }), n => n.Kind == HeightKind.Sill);
+    }
+
+    [Fact]
+    public void Window_with_floor_to_sill_and_window_height_gets_its_head_from_both()
+    {
+        var walls = new List<WallCandidate> { W(0, 300, 10000, 300, 600) };
+        var texts = new List<(Vec2, string)> { (new Vec2(2600, 900), "fs 0.92"), (new Vec2(2600, 1200), "sh 1.88") };
+        var w = Assert.Single(WindowFinder.Find(new[] { S(2000, 300, 3200, 300, "Window") }, walls, texts, 3500));
+        Assert.Equal(920, w.SillMm);
+        Assert.Equal(2800, w.HeadMm);
+        Assert.True(w.HeightsFromSurvey);
+    }
+
+    [Fact]
+    public void Door_takes_a_surveyed_head_height_and_ceiling_the_middle_surveyed_height()
+    {
+        var walls = new List<WallCandidate> { W(0, 0, 10000, 0, 100) };
+        var notes = SurveyHeights.Read(new[] { (new Vec2(2450, 300), "dh 2.03"), (new Vec2(5000, 3000), "u/s 2.52"), (new Vec2(6000, 3000), "u/s 2.10"), (new Vec2(7000, 3000), "u/s 2.60") });
+        var d = Assert.Single(DoorFinder.Find(new[] { S(2000, 0, 2450, 779, "Door") }, walls, heights: notes, storeyMm: 3000));
+        Assert.Equal(2030, d.HeightMm);
+        Assert.True(d.HeightFromSurvey);
+        Assert.Equal(2520, SurveyHeights.CeilingHeight(notes, 3000));
+        Assert.Null(SurveyHeights.CeilingHeight(notes, 2000)); // none fit under a floor 2 m above
+    }
 }

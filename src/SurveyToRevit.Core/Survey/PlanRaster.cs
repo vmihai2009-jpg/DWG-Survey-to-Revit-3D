@@ -11,6 +11,12 @@ public sealed record PlanResult(
 {
     /// <summary>Is this point (model mm) wall material?</summary>
     public Func<Vec2, bool>? IsMaterial { get; init; }
+
+    /// <summary>
+    /// Wall material (and unclear pockets) that no wall covers: given a "covered by a wall" test,
+    /// the remaining pieces as lists of cell centres (model mm), each at least 0.15 m².
+    /// </summary>
+    public Func<Func<Vec2, bool>, List<List<Vec2>>>? Leftover { get; init; }
 }
 
 /// <summary>
@@ -82,6 +88,7 @@ public sealed class PlanRaster
         var comp = new int[n];
         var solid = (bool[])solidLine.Clone();
         var unclear = new List<UnclearRegion>();
+        var unclearCell = new bool[n];
         int compId = 0;
         for (int i = 0; i < n; i++)
         {
@@ -96,7 +103,10 @@ public sealed class PlanRaster
                 foreach (var c in cells) label[c] = room;
             }
             else if (cells.Count * Px * Px > 0.25e6 && Outline(cells) is Polygon2 poly)
+            {
                 unclear.Add(new UnclearRegion(poly, $"enclosed space {width:0} mm wide, no label: shaft, duct or very thick wall?"));
+                foreach (var c in cells) unclearCell[c] = true;
+            }
         }
         // Thin strips that open into a room at their ends (partitions with door gaps) are wall too:
         // keep as room only what a square of the narrowest room width can reach (morphological opening).
@@ -143,7 +153,24 @@ public sealed class PlanRaster
                 if (In(x + dx, y + dy) && material[(y + dy) * _w + x + dx]) return true;
             return false;
         }
-        return new PlanResult(result, outline, unclear, rooms) { IsMaterial = IsMaterial };
+        List<List<Vec2>> Leftover(Func<Vec2, bool> covered)
+        {
+            var left = new bool[n];
+            for (int i = 0; i < n; i++)
+                left[i] = (material[i] || unclearCell[i]) && !covered(ToMm((i % _w, i / _w)));
+            var comp2 = new int[n];
+            var pieces = new List<List<Vec2>>();
+            int k = 0;
+            int minCells = (int)(0.15e6 / (Px * Px));
+            for (int i = 0; i < n; i++)
+                if (left[i] && comp2[i] == 0)
+                {
+                    var cells = Component(i, left, comp2, ++k, queue);
+                    if (cells.Count >= minCells) pieces.Add(cells.Select(c => ToMm((c % _w, c / _w))).ToList());
+                }
+            return pieces;
+        }
+        return new PlanResult(result, outline, unclear, rooms) { IsMaterial = IsMaterial, Leftover = Leftover };
     }
 
     // Thin strands (a stray line leaking into the outside) and parts touching only at a corner

@@ -21,11 +21,11 @@ Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`
 4. A window lists each floor found: tick the floors to build, correct a level or ceiling height if needed (highlighted floors need checking), and choose what to build:
    - link each plan at its level (shared coordinates),
    - walls ("Concept Wall 150mm" etc.), joined across door gaps,
-   - windows in the walls (sill and head from the survey texts where given),
-   - doors (from the door swings in the survey),
+   - windows in the walls (sill and head from the survey texts where given, e.g. "S 0.94"/"H 2.58" or "fs 0.92"/"sh 1.88"),
+   - doors (from the door swings in the survey; height from "dh 2.03" texts where given, else 2100 mm),
    - rooms named from the survey's room labels,
    - floor slabs ("Concept Slab 300mm") from each floor's outline,
-   - ceilings (one per floor, at the height in the table),
+   - ceilings (one per floor, at the height in the table: the survey's "u/s"/"CH" ceiling heights where given),
    - generic models (named "Survey - check") where the drawing could not be read.
    - surroundings, if LiDAR tiles were selected too (see below).
 5. **Build** sets project coordinates and north from the survey, creates the levels, then builds what was ticked. *Open report* shows the full analysis without changing anything.

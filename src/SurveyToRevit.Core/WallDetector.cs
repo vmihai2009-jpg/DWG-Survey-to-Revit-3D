@@ -387,6 +387,95 @@ public static class WallDetector
         return walls.Concat(bridges).ToList();
     }
 
+    /// <summary>
+    /// The façade should be closed. A free end of a façade or thick (300 mm+) wall facing a free
+    /// end of another such wall up to an opening's width away, with no wall already in the gap, is joined to it: where the two
+    /// directions cross close ahead of both ends (a corner, a pier between bays) both walls run on to
+    /// that point; otherwise a wall of the thinner type spans the gap. Curved walls join by their tangent.
+    /// </summary>
+    public static List<WallCandidate> CloseFacade(List<WallCandidate> walls, Polygon2? outline, Tolerances tol, double maxTurnDeg = 75)
+    {
+        if (outline == null) return walls;
+        bool IsFacade(WallCandidate w)
+        {
+            double along = WallGeometry.Length(w) / 2;
+            var m = WallGeometry.PointAt(w, along);
+            double a = WallGeometry.AngleDegAt(w, along) * Math.PI / 180;
+            var n = new Vec2(-Math.Sin(a), Math.Cos(a)) * (w.TypeThickness / 2 + 400);
+            return FacadeWalls.Contains(outline, m + n) != FacadeWalls.Contains(outline, m - n);
+        }
+        // an end is free when just beyond it (60 mm on) there is no other wall
+        bool Free(WallCandidate self, Vec2 ahead) => !walls.Any(o => !ReferenceEquals(o, self) && WallGeometry.Along(o, ahead) is double al
+            && al >= -10 && al <= WallGeometry.Length(o) + 10 && Math.Abs(WallGeometry.Offset(o, ahead)) <= o.TypeThickness / 2 + 10);
+        var ends = new List<(WallCandidate W, Vec2 P, Vec2 Out)>();
+        // façade walls, and thick (external, masonry) walls: on set-back floors the outline can be a terrace edge away
+        bool Main(WallCandidate w) => w.TypeThickness >= 300 || IsFacade(w);
+        double ToOutline(Vec2 p) => outline.Vertices.Select((v, i) => DistanceToSegment(p, new Segment2(v, outline.Vertices[(i + 1) % outline.Vertices.Count], "", ""))).Min();
+        // pier fills sit between openings: their ends are meant to be free
+        foreach (var w in walls.Where(w => w.FaceA != "pier" && (w.TypeThickness >= 150 || IsFacade(w))))
+        {
+            double len = WallGeometry.Length(w);
+            foreach (var (along, sign) in new[] { (0.0, -1.0), (len, 1.0) })
+            {
+                var p = WallGeometry.PointAt(w, along);
+                double a = WallGeometry.AngleDegAt(w, along) * Math.PI / 180;
+                var dir = new Vec2(Math.Cos(a), Math.Sin(a));
+                // point the direction out of the wall at this end
+                var inner = WallGeometry.PointAt(w, Math.Clamp(along - sign * 10, 0, len));
+                if ((p - inner).Dot(dir) < 0) dir = dir * -1;
+                if (Free(w, p + dir * 60)) ends.Add((w, p, dir));
+            }
+        }
+        double cos = Math.Cos(maxTurnDeg * Math.PI / 180);
+        var options = new List<(int X, int Y, double D)>();
+        for (int x = 0; x < ends.Count; x++)
+            for (int y = x + 1; y < ends.Count; y++)
+            {
+                if (ReferenceEquals(ends[x].W, ends[y].W)) continue;
+                // both sides façade or thick walls; or one of them, with a thinner (150 mm+) wall, at the
+                // building edge. Thin partitions inside are left as drawn.
+                bool mx = Main(ends[x].W), my = Main(ends[y].W);
+                if (!(mx && my || (mx || my) && Math.Min(ends[x].W.TypeThickness, ends[y].W.TypeThickness) >= 150
+                      && ToOutline((ends[x].P + ends[y].P) * 0.5) <= 1500)) continue;
+                double d = ends[x].P.DistanceTo(ends[y].P);
+                if (d < tol.JoinGap || d > tol.MaxOpeningWidth) continue;
+                var gap = (ends[y].P - ends[x].P) * (1 / d);
+                if (ends[x].Out.Dot(gap) < cos || ends[y].Out.Dot(gap * -1) < cos) continue;
+                // the join must run along the building edge, not across a room
+                if (!FacadeWalls.Contains(outline, (ends[x].P + ends[y].P) * 0.5)) continue;
+                // nothing to close where another wall already runs through the gap
+                var midGap = (ends[x].P + ends[y].P) * 0.5;
+                if (walls.Any(o => !ReferenceEquals(o, ends[x].W) && !ReferenceEquals(o, ends[y].W) && WallGeometry.Along(o, midGap) is double al
+                    && al >= 0 && al <= WallGeometry.Length(o) && Math.Abs(WallGeometry.Offset(o, midGap)) <= o.TypeThickness / 2 + 150)) continue;
+                options.Add((x, y, d));
+            }
+        var used = new bool[ends.Count];
+        var added = new List<WallCandidate>();
+        foreach (var (x, y, d) in options.OrderBy(o => o.D))
+        {
+            if (used[x] || used[y]) continue;
+            used[x] = used[y] = true;
+            var (wa, p, op) = ends[x]; var (wb, q, oq) = ends[y];
+            // where the two directions cross
+            double den = op.Cross(oq);
+            Vec2? corner = null;
+            if (Math.Abs(den) > 0.05)
+            {
+                double s = (q - p).Cross(oq) / den, t = (q - p).Cross(op) / den;
+                if (s > 0 && t > 0 && s <= d * 1.5 + 300 && t <= d * 1.5 + 300) corner = p + op * s;
+            }
+            WallCandidate Piece(Vec2 a, Vec2 b, WallCandidate like) =>
+                new(new Segment2(a, b, "facade join", "facade join"), like.MeasuredThickness, like.TypeThickness, Confidence.Low, "join", "join");
+            if (corner is Vec2 c)
+            {
+                if (p.DistanceTo(c) > tol.JoinGap) added.Add(Piece(p, c, wa));
+                if (q.DistanceTo(c) > tol.JoinGap) added.Add(Piece(q, c, wb));
+            }
+            else added.Add(Piece(p, q, wa.TypeThickness <= wb.TypeThickness ? wa : wb));
+        }
+        return walls.Concat(added).ToList();
+    }
+
     static double DistanceToSegment(Vec2 p, Segment2 s)
     {
         var d = s.B - s.A; double len2 = d.Dot(d);
