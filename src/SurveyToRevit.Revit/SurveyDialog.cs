@@ -22,14 +22,21 @@ public sealed class SurveyDialog : Form
     readonly CheckBox _floors = new() { Text = "Floor slabs, thickness (mm):", Checked = true, AutoSize = true };
     readonly NumericUpDown _slab = new() { Minimum = 50, Maximum = 1000, Increment = 50, Value = 300, Width = 70 };
     readonly CheckBox _ceilings = new() { Text = "Ceilings (height per floor in the table)", Checked = true, AutoSize = true };
+    readonly CheckBox _site = new() { Text = "Surroundings from LiDAR, radius (m):", AutoSize = true };
+    readonly NumericUpDown _radius = new() { Minimum = 50, Maximum = 500, Increment = 50, Value = 150, Width = 70 };
+    readonly int _lidarFiles;
     readonly CheckBox _generic = new() { Text = "Generic models where the drawing is unclear (to check)", Checked = true, AutoSize = true };
 
     public BuildOptions Options { get; } = new();
     public bool OpenReport { get; private set; }
+    /// <summary>Build the surroundings from the LiDAR files, and how far round the base point (m).</summary>
+    public bool Site => _lidarFiles > 0 && _site.Checked;
+    public double SiteRadiusM => (double)_radius.Value;
 
-    public SurveyDialog(SurveyModel model, int skippedFiles)
+    public SurveyDialog(SurveyModel model, int skippedFiles, int lidarFiles = 0)
     {
         _model = model;
+        _lidarFiles = lidarFiles;
         Text = "Survey to Revit";
         Font = new Font("Segoe UI", 9f);
         StartPosition = FormStartPosition.CenterScreen;
@@ -74,11 +81,21 @@ public sealed class SurveyDialog : Form
             }
         }
 
-        var options = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 120, FlowDirection = FlowDirection.TopDown, WrapContents = true, Padding = new Padding(8) };
+        var options = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 130, FlowDirection = FlowDirection.TopDown, WrapContents = true, Padding = new Padding(8) };
         var slabRow = new FlowLayoutPanel { AutoSize = true, Margin = Padding.Empty };
         slabRow.Controls.Add(_floors);
         slabRow.Controls.Add(_slab);
-        options.Controls.AddRange(new Control[] { _link, _walls, _windows, _doors, _rooms, slabRow, _ceilings, _generic });
+        var siteRow = new FlowLayoutPanel { AutoSize = true, Margin = Padding.Empty };
+        siteRow.Controls.Add(_site);
+        siteRow.Controls.Add(_radius);
+        _site.Checked = _site.Enabled = _radius.Enabled = lidarFiles > 0;
+        if (lidarFiles > 0) _site.Text = $"Surroundings from LiDAR ({lidarFiles} files; own workset), radius (m):";
+        else siteRow.Controls.Add(new Label
+        {
+            AutoSize = true, ForeColor = Color.DimGray, Padding = new Padding(0, 4, 0, 0),
+            Text = "To add these, select Environment Agency LiDAR DSM and DTM tiles (.tif), and footprints (.shp) if you have them, with the DWGs.",
+        });
+        options.Controls.AddRange(new Control[] { _link, _walls, _windows, _doors, _rooms, slabRow, _ceilings, _generic, siteRow });
         _walls.CheckedChanged += (_, _) => { _windows.Enabled = _doors.Enabled = _rooms.Enabled = _walls.Checked; };
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 44, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8, 6, 8, 6) };

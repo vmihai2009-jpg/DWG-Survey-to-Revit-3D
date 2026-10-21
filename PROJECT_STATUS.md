@@ -4,13 +4,15 @@ _Last updated: 2026-10-21_
 
 ## Current milestone
 
-**M4 – Concept model from survey (v0.5).** v0.5 = v0.4 plus doors, named rooms, everything on the Existing phase, windows that cut through linings, and fixes for the failed Basement and Mezzanine floors. Build from Survey now opens a window (floors, levels, ceiling heights, what to build) and creates walls, floor slabs, ceilings and generic models for unclear areas, on top of v0.2's coordinates, levels and links.
-Code compiles and the engine is tested on the real Swallow Place survey. v0.3 was run in Revit by Mihai and stopped with "The input curve is not bound": the link check read end points of circles in the DWG (circles have none). Fixed, and every element is now created on its own so one bad element is skipped and logged instead of cancelling the run. v0.4 was run by Mihai: walls "much better"; windows did not cut openings; Basement floor failed ("wrong EndCap condition"), Mezzanine floor and ceiling failed (outline crossed itself). **v0.5 has not been run in Revit yet.**
+**M4 – Concept model from survey (v0.6).** v0.6 = v0.5 plus surroundings from LiDAR (ground surface and neighbouring blocks on a "Context" workset). v0.5 = v0.4 plus doors, named rooms, everything on the Existing phase, windows that cut through linings, and fixes for the failed Basement and Mezzanine floors. Build from Survey now opens a window (floors, levels, ceiling heights, what to build) and creates walls, floor slabs, ceilings and generic models for unclear areas, on top of v0.2's coordinates, levels and links.
+Code compiles and the engine is tested on the real Swallow Place survey. v0.3 was run in Revit by Mihai and stopped with "The input curve is not bound": the link check read end points of circles in the DWG (circles have none). Fixed, and every element is now created on its own so one bad element is skipped and logged instead of cancelling the run. v0.4 was run by Mihai: walls "much better"; windows did not cut openings; Basement floor failed ("wrong EndCap condition"), Mezzanine floor and ceiling failed (outline crossed itself). **v0.5 and v0.6 have not been run in Revit yet.**
 
 Acceptance (to check in Revit 2025):
 1. *Barr Gazetas → Survey to Revit → Build from Survey*, select all Swallow Place DWGs: the window lists 10 floors; Basement, Ground, Mezzanine and Seventh are highlighted.
 2. After *Build*: walls follow the linked plans (the link is now checked against the walls and moved onto them if off); slabs and ceilings on every floor; "Survey - check" generic models where the drawing was unclear.
 3. Running it again replaces only the generated elements on those floors.
+
+v0.6 adds: surroundings. Select Environment Agency LiDAR tiles (DSM and DTM GeoTIFF or .asc, free, Open Government Licence) with the DWGs. Ground = toposolid from the DTM (5 m grid) within the chosen radius (default 150 m). Neighbours = blocks: with a footprint shapefile (e.g. OS MasterMap Topography buildings, if the office licenses it) its exact outlines at the LiDAR median roof height, split by the LiDAR where the roof steps more than 3 m; without one, outlines traced from the LiDAR (1 m grid, about ±0.5 m) where DSM − DTM ≥ 2.5 m on a smooth roof (trees drop out). The surveyed building and 3 m round it are never touched; its LiDAR roof height is only reported. Footprints with no LiDAR height are left out, not guessed. Everything goes on a "Context" workset (made if missing; the add-in never turns worksharing on), Existing phase, Mass category. OS OpenMap Local was considered and rejected: generalised for 1:10,000, several metres out.
 
 v0.5 adds: doors from the door swings on the door layer (a leaf line hinged at a wall gives the opening width and side; two leaves meeting = double door; 2100 mm high), as a wall-hosted single door family (types "Concept Door WxH"; plain openings if none); rooms named from the survey's room-name layer (Revit's enclosed spaces holding a label become rooms; unlabelled spaces get none); every element on the "Existing" phase (else the first phase); window/door families restricted to wall-hosted ones, windows hosted in the thickest nearby wall, and lining walls in front cut through; slab type made by copying a floor type's own layer set (fixes the Basement); floor outlines cleaned so they never cross themselves (fixes the Mezzanine).
 
@@ -47,7 +49,7 @@ Key decisions:
 ## Build and test status
 
 - Whole solution builds (Release) on Linux, .NET SDK 8.0.132, 0 errors.
-- `dotnet test`: 49 passed, 0 failed.
+- `dotnet test`: 60 passed, 0 failed. The LiDAR reader is tested on synthetic GeoTIFFs in every compression the EA uses (made with tifffile; not survey data). No real LiDAR has been run yet: the cloud build machine cannot reach the EA servers.
 
 ## Known issues / limitations
 
@@ -63,7 +65,7 @@ Key decisions:
 
 Mihai: install v0.5 and run *Build from Survey* on a copy of the project; send screenshots of a typical floor (plan and 3D) and the log.
 
-Then: voids in slabs at stairs and lifts; surroundings/height from open LiDAR (Environment Agency) if wanted.
+Then: façades of the surveyed building from the survey elevation drawings (currently skipped); voids in slabs at stairs and lifts.
 
 ## Open cost / dependency decisions
 

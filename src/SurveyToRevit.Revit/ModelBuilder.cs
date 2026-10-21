@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using SurveyToRevit.Core;
+using SurveyToRevit.Core.Site;
 using SurveyToRevit.Core.Survey;
 
 namespace SurveyToRevit.Revit;
@@ -20,6 +21,8 @@ public sealed class BuildOptions
     /// <summary>Areas the engine could not read become generic models (DirectShape) for review.</summary>
     public bool UnclearAsGenericModels { get; set; } = true;
     public double SlabThicknessMm { get; set; } = 300;
+    /// <summary>Surroundings from LiDAR (ground and neighbouring blocks); null for none.</summary>
+    public SiteContext? Site { get; set; }
 }
 
 /// <summary>
@@ -57,6 +60,7 @@ public sealed class ModelBuilder
         var levels = SetUpLevels();
         if (o.LinkPlans) LinkPlans(levels);
         BuildElements(levels, o);
+        if (o.Site != null) BuildSite(o.Site, levels.Values.Select(v => v.level).ToList());
         group.Assimilate();
     }
 
@@ -315,6 +319,98 @@ public sealed class ModelBuilder
         t.Commit();
     }
 
+    /// <summary>
+    /// Surroundings from LiDAR: a toposolid for the ground and a mass per neighbouring roof.
+    /// Replaces the surroundings of an earlier run; survey elements are not touched.
+    /// </summary>
+    void BuildSite(SiteContext site, List<Level> levels)
+    {
+        foreach (var note in site.Notes) Log.Add("Surroundings: " + note);
+        using var t = new Transaction(_doc, "Survey surroundings");
+        var options = t.GetFailureHandlingOptions();
+        options.SetFailuresPreprocessor(new WarningSwallower());
+        t.SetFailureHandlingOptions(options);
+        t.Start();
+        int removed = DeleteGenerated(SiteCode);
+        var done = new List<string>();
+        var workset = ContextWorkset();
+        void OnWorkset(Element e)
+        {
+            if (workset != null) e.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM)?.Set(workset.IntegerValue);
+        }
+
+        if (site.Ground.Count >= 3)
+        {
+            try
+            {
+                var level = levels.Count > 0 ? levels.OrderBy(l => l.Elevation).First()
+                          : new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().OrderBy(l => l.Elevation).First();
+                var points = site.Ground.Select(g => new XYZ(Ft(g.Position.X), Ft(g.Position.Y), Ft(g.ZMm))).ToList();
+                var type = new FilteredElementCollector(_doc).OfClass(typeof(ToposolidType)).FirstElementId();
+                var topo = Toposolid.Create(_doc, points, type, level.Id);
+                _doc.Regenerate();
+                // the points are meant above datum; if Revit took them as above the level, lift the surface back onto the LiDAR
+                var box = topo.get_BoundingBox(null);
+                double expectedTop = points.Max(p => p.Z);
+                if (box != null && Math.Abs(box.Max.Z - expectedTop) > Ft(100))
+                    ElementTransformUtils.MoveElement(_doc, topo.Id, new XYZ(0, 0, expectedTop - box.Max.Z));
+                Mark(topo, SiteCode, "Ground");
+                OnWorkset(topo);
+                done.Add($"ground surface from {points.Count} LiDAR points");
+            }
+            catch (Exception ex) { done.Add($"no ground surface ({ex.Message})"); }
+        }
+
+        var category = DirectShape.IsValidCategoryId(new ElementId(BuiltInCategory.OST_Mass), _doc) ? BuiltInCategory.OST_Mass : BuiltInCategory.OST_GenericModel;
+        int made = 0, failed = 0;
+        foreach (var b in site.Blocks)
+        {
+            double z = Ft(b.BaseMm), h = Ft(b.TopMm - b.BaseMm);
+            var outer = Loop(b.Outline, z);
+            if (outer == null) { failed++; continue; }
+            Solid? solid = null;
+            var holes = b.Holes.Select(x => Loop(x, z)).Where(x => x != null).Cast<CurveLoop>().ToList();
+            foreach (var loops in new[] { holes.Prepend(outer).ToList(), new List<CurveLoop> { outer } })
+            {
+                try { solid = GeometryCreationUtilities.CreateExtrusionGeometry(loops, XYZ.BasisZ, h); break; }
+                catch { /* retry without courtyards */ }
+            }
+            if (solid == null) { failed++; continue; }
+            var ds = DirectShape.CreateElement(_doc, new ElementId(category));
+            ds.SetShape(new List<GeometryObject> { solid });
+            ds.Name = "Context - LiDAR";
+            Mark(ds, SiteCode, $"Context block {b.TopMm / 1000:0.0} m");
+            OnWorkset(ds);
+            made++;
+        }
+        done.Add($"{made} neighbouring blocks" + (failed > 0 ? $" ({failed} could not be made)" : ""));
+        t.Commit();
+        Log.Add($"Surroundings: {string.Join(", ", done)}" + (removed > 0 ? $" (replacing {removed} elements from an earlier run)." : "."));
+    }
+
+    const string SiteCode = "SITE";
+    const string ContextWorksetName = "Context";
+
+    /// <summary>The "Context" workset (made if missing) in a workshared project; null otherwise (worksharing is never turned on by the add-in).</summary>
+    WorksetId? ContextWorkset()
+    {
+        if (!_doc.IsWorkshared)
+        {
+            Log.Add("Surroundings: the project is not workshared, so they cannot go on their own workset; turn on worksharing and run again to separate them.");
+            return null;
+        }
+        var existing = new FilteredWorksetCollector(_doc).OfKind(WorksetKind.UserWorkset)
+            .FirstOrDefault(w => w.Name.Equals(ContextWorksetName, StringComparison.OrdinalIgnoreCase));
+        if (existing != null) return existing.Id;
+        try
+        {
+            var made = Workset.Create(_doc, ContextWorksetName);
+            Log.Add($"Surroundings: workset '{ContextWorksetName}' created.");
+            return made.Id;
+        }
+        catch (Exception ex) { Log.Add($"Surroundings: could not create the '{ContextWorksetName}' workset ({ex.Message}); they stay on the active workset."); return null; }
+    }
+
     /// <summary>Tags a generated element (so a re-run replaces it) and puts it on the Existing phase.</summary>
     void Mark(Element e, string levelCode, string what)
     {
@@ -342,7 +438,7 @@ public sealed class ModelBuilder
     int DeleteGenerated(string levelCode)
     {
         var prefix = $"{Tag}|{levelCode}|";
-        var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape), typeof(FamilyInstance), typeof(Opening), typeof(SpatialElement) });
+        var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape), typeof(FamilyInstance), typeof(Opening), typeof(SpatialElement), typeof(Toposolid) });
         var ids = new FilteredElementCollector(_doc).WherePasses(classes).WhereElementIsNotElementType()
             .Where(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(prefix) == true)
             .Select(e => e.Id).ToList();

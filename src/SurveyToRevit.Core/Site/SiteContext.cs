@@ -1,0 +1,362 @@
+using System.Text.RegularExpressions;
+using SurveyToRevit.Core.Survey;
+
+namespace SurveyToRevit.Core.Site;
+
+/// <summary>A neighbouring building as a block: footprint (and courtyards) in model mm, base and top in mm above datum.</summary>
+public sealed record ContextBlock(Polygon2 Outline, IReadOnlyList<Polygon2> Holes, double BaseMm, double TopMm);
+
+/// <summary>The surroundings read from LiDAR: ground points and neighbour blocks, in model coordinates (mm).</summary>
+public sealed class SiteContext
+{
+    public required IReadOnlyList<(Vec2 Position, double ZMm)> Ground { get; init; }
+    public required IReadOnlyList<ContextBlock> Blocks { get; init; }
+    /// <summary>LiDAR roof top over the surveyed building (mm above datum), for comparison only.</summary>
+    public double? SurveyedRoofTopMm { get; init; }
+    public required IReadOnlyList<string> Notes { get; init; }
+}
+
+/// <summary>
+/// Surroundings from Environment Agency LiDAR. The DTM (bare ground) gives the ground;
+/// DSM minus DTM gives what stands on it. Cells standing 2.5 m or more on a smooth
+/// surface (roofs, flat or pitched; trees are rough and drop out) are buildings, split
+/// where the roof height jumps, each part becoming a block from the ground to its median
+/// roof height. The survey always comes first: nothing is made on or near the surveyed
+/// building (its floor outlines plus a margin); its LiDAR roof height is only reported.
+/// With a footprint shapefile (e.g. OS MasterMap Topography buildings), its exact outlines
+/// are used instead, each raised to its LiDAR roof height; a footprint whose roof steps
+/// is split by the LiDAR. Footprints with no LiDAR heights are left out rather than guessed.
+/// </summary>
+public static class SiteContextBuilder
+{
+    public const double MinBuildingHeightM = 2.5, RoofStepM = 1.5, SurveyMarginM = 3, MinBlockM2 = 20, MinCourtyardM2 = 10;
+    static readonly Regex Dsm = new(@"dsm|surface|first.?return", RegexOptions.IgnoreCase);
+    static readonly Regex Dtm = new(@"dtm|terrain", RegexOptions.IgnoreCase);
+
+    /// <summary>LiDAR tiles (.tif, .asc) and footprint shapefiles (.shp) for the surroundings.</summary>
+    public static bool IsSiteFile(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() is ".tif" or ".tiff" or ".asc" or ".shp";
+
+    /// <summary>"DSM", "DTM", "Footprints", or null when a grid's file name does not say which it is.</summary>
+    public static string? Kind(string path)
+    {
+        if (Path.GetExtension(path).Equals(".shp", StringComparison.OrdinalIgnoreCase)) return "Footprints";
+        var name = Path.GetFileNameWithoutExtension(path);
+        bool s = Dsm.IsMatch(name), t = Dtm.IsMatch(name);
+        return s == t ? null : s ? "DSM" : "DTM";
+    }
+
+    public static SiteContext Build(IEnumerable<string> files, SurveyFrame frame, IEnumerable<Polygon2> surveyedOutlines,
+        double radiusM = 150, double groundStepM = 5)
+    {
+        var notes = new List<string>();
+        double cx = frame.BasePoint.X / 1000, cy = frame.BasePoint.Y / 1000;
+        double minX = cx - radiusM, maxX = cx + radiusM, minY = cy - radiusM, maxY = cy + radiusM;
+        var dsm = new List<GeoRaster>();
+        var dtm = new List<GeoRaster>();
+        var footprints = new List<Shapefile.Shape>();
+        foreach (var f in files)
+        {
+            var kind = Kind(f);
+            if (kind == null) { notes.Add($"{Path.GetFileName(f)}: name does not say DSM or DTM; not used."); continue; }
+            try
+            {
+                if (kind == "Footprints") { footprints.AddRange(Shapefile.ReadPolygons(f, minX, minY, maxX, maxY)); continue; }
+                var r = GeoRaster.Read(f, minX, minY, maxX, maxY);
+                if (r == null) { notes.Add($"{Path.GetFileName(f)}: does not cover the site; not used."); continue; }
+                (kind == "DSM" ? dsm : dtm).Add(r);
+            }
+            catch (Exception ex) { notes.Add($"{Path.GetFileName(f)}: could not be read ({ex.Message})."); }
+        }
+
+        int n = (int)Math.Round(2 * radiusM);
+        double At(List<GeoRaster> list, int c, int r)
+        {
+            double x = minX + c + 0.5, y = maxY - r - 0.5;
+            foreach (var g in list) { var v = g.At(x, y); if (!double.IsNaN(v)) return v; }
+            return double.NaN;
+        }
+        var top = new double[n * n];
+        var ground = new double[n * n];
+        for (int r = 0; r < n; r++)
+            for (int c = 0; c < n; c++) { top[r * n + c] = At(dsm, c, r); ground[r * n + c] = At(dtm, c, r); }
+        Vec2 Model(double x, double y) => frame.ToModel(new Vec2(x * 1000, y * 1000));
+
+        // ground points on a coarser grid, inside the circle
+        var groundPts = new List<(Vec2, double)>();
+        int step = Math.Max(1, (int)Math.Round(groundStepM));
+        for (int r = step / 2; r < n; r += step)
+            for (int c = step / 2; c < n; c += step)
+            {
+                double z = ground[r * n + c], x = minX + c + 0.5, y = maxY - r - 0.5;
+                if (double.IsNaN(z) || Math.Pow(x - cx, 2) + Math.Pow(y - cy, 2) > radiusM * radiusM) continue;
+                groundPts.Add((Model(x, y), Math.Round(z * 1000 / 10) * 10));
+            }
+        int missing = top.Count(double.IsNaN) * 100 / top.Length;
+        if (dtm.Count == 0) notes.Add("No DTM (bare ground) tile: no ground surface, and buildings cannot be separated from the ground.");
+        if (dsm.Count == 0) notes.Add("No DSM (surface) tile: no neighbouring buildings.");
+        if (missing > 5 && dsm.Count > 0) notes.Add($"{missing}% of the area has no LiDAR data (outside the tiles or not flown).");
+
+        // the surveyed building and a margin around it are left alone
+        var outlines = surveyedOutlines.Where(o => o.Vertices.Count >= 3).ToList();
+        var survey = new bool[n * n];
+        var roofs = new List<double>();
+        foreach (var o in outlines)
+        {
+            double oMinX = o.Vertices.Min(v => v.X) - SurveyMarginM * 1000, oMaxX = o.Vertices.Max(v => v.X) + SurveyMarginM * 1000;
+            double oMinY = o.Vertices.Min(v => v.Y) - SurveyMarginM * 1000, oMaxY = o.Vertices.Max(v => v.Y) + SurveyMarginM * 1000;
+            for (int r = 0; r < n; r++)
+                for (int c = 0; c < n; c++)
+                {
+                    var p = Model(minX + c + 0.5, maxY - r - 0.5);
+                    if (p.X < oMinX || p.X > oMaxX || p.Y < oMinY || p.Y > oMaxY) continue;
+                    bool inside = FacadeWalls.Contains(o, p);
+                    if (inside || DistanceToEdges(o, p) < SurveyMarginM * 1000) survey[r * n + c] = true;
+                }
+        }
+        if (outlines.Count > 0)
+        {
+            var main = outlines.OrderByDescending(o => o.Area).First();
+            for (int r = 0; r < n; r++)
+                for (int c = 0; c < n; c++)
+                    if (!double.IsNaN(top[r * n + c]) && FacadeWalls.Contains(main, Model(minX + c + 0.5, maxY - r - 0.5))) roofs.Add(top[r * n + c]);
+        }
+        double? roofTop = roofs.Count > 20 ? Math.Round(Percentile(roofs, 0.98) * 100) * 10 : null;
+
+        // buildings: tall enough and smooth
+        var mask = new bool[n * n];
+        if (dsm.Count > 0 && dtm.Count > 0)
+            for (int r = 1; r < n - 1; r++)
+                for (int c = 1; c < n - 1; c++)
+                {
+                    int i = r * n + c;
+                    if (survey[i] || double.IsNaN(top[i]) || double.IsNaN(ground[i])) continue;
+                    if (top[i] - ground[i] < MinBuildingHeightM) continue;
+                    double lap = 4 * top[i] - top[i - 1] - top[i + 1] - top[i - n] - top[i + n];
+                    mask[i] = !double.IsNaN(lap) && Math.Abs(lap) < 1.0;
+                }
+        mask = Grow(Shrink(Grow(mask, n), n), n);     // close ridges and gutters
+        mask = Grow(Shrink(mask, n), n);              // drop strands and lone trees
+        for (int i = 0; i < mask.Length; i++) if (survey[i]) mask[i] = false;
+
+        var blocks = new List<ContextBlock>();
+        int skipped = 0;
+        if (footprints.Count > 0)
+        {
+            int noHeight = 0, split = 0;
+            foreach (var fp in footprints)
+            {
+                var cells = Cells(fp.Outer, n, minX, maxY);
+                if (cells.Count == 0 || cells.Count(i => survey[i]) * 2 >= cells.Count) continue; // the surveyed building: survey wins
+                var tops = cells.Select(i => top[i]).Where(v => !double.IsNaN(v)).ToList();
+                var bases = cells.Select(i => ground[i]).Where(v => !double.IsNaN(v)).ToList();
+                if (tops.Count < cells.Count / 2 || bases.Count == 0) { noHeight++; continue; }
+                double topM = Percentile(tops, 0.5), baseM = bases.Min();
+                if (topM - baseM < MinBuildingHeightM) continue;
+                if (Percentile(tops, 0.85) - Percentile(tops, 0.15) > 3 && cells.Count >= 2 * MinBlockM2)
+                {
+                    // roof steps: let the LiDAR split this footprint
+                    var inside = new bool[n * n];
+                    foreach (var i in cells) inside[i] = !double.IsNaN(top[i]) && top[i] - ground[i] >= MinBuildingHeightM;
+                    int before = blocks.Count;
+                    skipped += Roofs(inside, top, ground, n, minX, maxY, Model, blocks);
+                    if (blocks.Count > before) { split++; continue; }
+                }
+                var outline = new Polygon2(fp.Outer.Select(v => Model(v.X, v.Y)));
+                if (!outline.IsSimple() || outline.Area < 5e6) continue;
+                var holes = fp.Holes.Select(h => new Polygon2(h.Select(v => Model(v.X, v.Y)))).Where(h => h.IsSimple() && h.Area >= MinCourtyardM2 * 1e6).ToList();
+                blocks.Add(new ContextBlock(outline, holes, Math.Floor(baseM * 10) * 100, Math.Round(topM * 10) * 100));
+            }
+            notes.Add($"Footprints: {footprints.Count} outlines in the area; {split} with stepped roofs split by the LiDAR; {noHeight} without LiDAR heights left out.");
+        }
+        else skipped = Roofs(mask, top, ground, n, minX, maxY, Model, blocks);
+        if (skipped > 0) notes.Add($"{skipped} small roof shapes too irregular to outline were left out.");
+        notes.Insert(0, $"LiDAR: {dsm.Count} DSM and {dtm.Count} DTM tiles over a {2 * radiusM:0} m square around the base point; " +
+                        $"{groundPts.Count} ground points, {blocks.Count} neighbouring blocks{(footprints.Count > 0 ? " from the footprints" : " traced from the LiDAR")} (the surveyed building and {SurveyMarginM:0} m around it are left to the survey).");
+        if (roofTop is double rt) notes.Add($"LiDAR roof top over the surveyed building: {rt / 1000:0.00} m above datum (for comparison only; the survey levels are used).");
+        return new SiteContext { Ground = groundPts, Blocks = blocks, SurveyedRoofTopMm = roofTop, Notes = notes };
+    }
+
+    /// <summary>Splits the masked cells into roofs of one height and adds a block for each; returns how many could not be outlined.</summary>
+    static int Roofs(bool[] mask, double[] top, double[] ground, int n, double minX, double maxY, Func<double, double, Vec2> model, List<ContextBlock> blocks)
+    {
+        var region = new int[n * n];
+        Array.Fill(region, -1);
+        int skipped = 0, next = 0;
+        var queue = new Queue<int>();
+        for (int s = 0; s < mask.Length; s++)
+        {
+            if (!mask[s] || region[s] >= 0) continue;
+            var cells = new List<int>();
+            region[s] = next; queue.Enqueue(s);
+            while (queue.Count > 0)
+            {
+                int i = queue.Dequeue(); cells.Add(i);
+                int r = i / n, c = i % n;
+                foreach (var j in new[] { c > 0 ? i - 1 : -1, c < n - 1 ? i + 1 : -1, r > 0 ? i - n : -1, r < n - 1 ? i + n : -1 })
+                    if (j >= 0 && mask[j] && region[j] < 0 && Math.Abs(top[j] - top[i]) < RoofStepM) { region[j] = next; queue.Enqueue(j); }
+            }
+            int id = next++;
+            if (cells.Count < MinBlockM2) continue;
+            var loops = Boundary(cells, region, id, n);
+            var outer = loops.OrderByDescending(l => SignedArea(l)).First();
+            var outline = ToPolygon(outer, minX, maxY, model);
+            if (outline == null || !outline.IsSimple()) { skipped++; continue; }
+            var holes = loops.Where(l => l != outer && -SignedArea(l) >= MinCourtyardM2)
+                .Select(l => ToPolygon(l, minX, maxY, model)).Where(h => h != null && h.IsSimple()).Cast<Polygon2>().ToList();
+            var heights = cells.Select(i => top[i]).ToList();
+            var bases = cells.Select(i => ground[i]).Where(z => !double.IsNaN(z)).ToList();
+            if (bases.Count == 0) continue;
+            double topMm = Math.Round(Percentile(heights, 0.5) * 10) * 100;
+            double baseMm = Math.Floor(bases.Min() * 10) * 100;
+            if (topMm - baseMm < MinBuildingHeightM * 1000) continue;
+            blocks.Add(new ContextBlock(outline, holes, baseMm, topMm));
+        }
+        return skipped;
+    }
+
+    /// <summary>Grid cells whose centres fall inside a ring given in grid metres.</summary>
+    static List<int> Cells(IReadOnlyList<Vec2> ring, int n, double minX, double maxY)
+    {
+        var poly = new Polygon2(ring);
+        int c0 = Math.Max(0, (int)Math.Floor(ring.Min(v => v.X) - minX)), c1 = Math.Min(n - 1, (int)Math.Ceiling(ring.Max(v => v.X) - minX));
+        int r0 = Math.Max(0, (int)Math.Floor(maxY - ring.Max(v => v.Y))), r1 = Math.Min(n - 1, (int)Math.Ceiling(maxY - ring.Min(v => v.Y)));
+        var cells = new List<int>();
+        for (int r = r0; r <= r1; r++)
+            for (int c = c0; c <= c1; c++)
+                if (FacadeWalls.Contains(poly, new Vec2(minX + c + 0.5, maxY - r - 0.5))) cells.Add(r * n + c);
+        return cells;
+    }
+
+    static bool[] Grow(bool[] m, int n) => Morph(m, n, true);
+    static bool[] Shrink(bool[] m, int n) => Morph(m, n, false);
+
+    static bool[] Morph(bool[] m, int n, bool grow)
+    {
+        var o = new bool[m.Length];
+        for (int r = 0; r < n; r++)
+            for (int c = 0; c < n; c++)
+            {
+                bool any = false, all = true;
+                for (int dr = -1; dr <= 1; dr++)
+                    for (int dc = -1; dc <= 1; dc++)
+                    {
+                        int rr = r + dr, cc = c + dc;
+                        bool v = rr >= 0 && cc >= 0 && rr < n && cc < n && m[rr * n + cc];
+                        any |= v; all &= v;
+                    }
+                o[r * n + c] = grow ? any : all;
+            }
+        return o;
+    }
+
+    /// <summary>
+    /// The region's boundary as closed loops of cell corners (column, -row), interior on the left:
+    /// the outer loop runs anticlockwise, courtyards clockwise. Where two loops touch at a corner
+    /// the walk turns left, so they stay separate.
+    /// </summary>
+    static List<List<(int X, int Y)>> Boundary(List<int> cells, int[] region, int id, int n)
+    {
+        bool In(int c, int r) => c >= 0 && r >= 0 && c < n && r < n && region[r * n + c] == id;
+        var edges = new Dictionary<(int, int), List<(int, int)>>();
+        void Add((int, int) a, (int, int) b) { if (!edges.TryGetValue(a, out var l)) edges[a] = l = new(); l.Add(b); }
+        foreach (var i in cells)
+        {
+            int r = i / n, c = i % n;
+            if (!In(c, r + 1)) Add((c, -r - 1), (c + 1, -r - 1));
+            if (!In(c + 1, r)) Add((c + 1, -r - 1), (c + 1, -r));
+            if (!In(c, r - 1)) Add((c + 1, -r), (c, -r));
+            if (!In(c - 1, r)) Add((c, -r), (c, -r - 1));
+        }
+        var loops = new List<List<(int X, int Y)>>();
+        while (edges.Count > 0)
+        {
+            var start = edges.Keys.First();
+            var loop = new List<(int X, int Y)>();
+            var at = start;
+            (int X, int Y) dir = (0, 0);
+            for (int guard = 0; guard < 4 * cells.Count + 8; guard++)
+            {
+                if (!edges.TryGetValue(at, out var outs)) break;
+                var to = outs.Count == 1 ? outs[0] : outs.OrderByDescending(o => Cross(dir, (o.Item1 - at.Item1, o.Item2 - at.Item2))).First();
+                outs.Remove(to);
+                if (outs.Count == 0) edges.Remove(at);
+                loop.Add(at);
+                dir = (to.Item1 - at.Item1, to.Item2 - at.Item2);
+                at = to;
+                if (at == start) break;
+            }
+            if (loop.Count >= 4) loops.Add(loop);
+        }
+        return loops;
+    }
+
+    static int Cross((int X, int Y) a, (int X, int Y) b) => a.X * b.Y - a.Y * b.X;
+
+    static double SignedArea(List<(int X, int Y)> l)
+    {
+        double s = 0;
+        for (int i = 0; i < l.Count; i++) { var a = l[i]; var b = l[(i + 1) % l.Count]; s += (double)a.X * b.Y - (double)b.X * a.Y; }
+        return s / 2;
+    }
+
+    /// <summary>Corner loop → simplified polygon in model mm (corners within 0.5 m of a straight run are dropped).</summary>
+    static Polygon2? ToPolygon(List<(int X, int Y)> loop, double minX, double maxY, Func<double, double, Vec2> model)
+    {
+        var pts = loop.Select(p => new Vec2(minX + p.X, maxY + p.Y)).ToList();
+        var kept = SimplifyClosed(pts, 0.5);
+        if (kept.Count < 3) return null;
+        var poly = new Polygon2(kept.Select(p => model(p.X, p.Y)));
+        return poly.Area < MinBlockM2 * 1e6 / 2 ? null : poly;
+    }
+
+    static List<Vec2> SimplifyClosed(List<Vec2> pts, double tol)
+    {
+        // split at the two points farthest apart, simplify each half (Douglas–Peucker)
+        int a = 0, b = 0; double best = -1;
+        for (int i = 0; i < pts.Count; i++) { double d = pts[i].DistanceTo(pts[0]); if (d > best) { best = d; b = i; } }
+        var keep = new bool[pts.Count];
+        keep[a] = keep[b] = true;
+        void Rec(int i, int j)
+        {
+            int k = -1; double far = tol;
+            for (int m = i + 1; m < j; m++)
+            {
+                double d = DistanceToLine(pts[m % pts.Count], pts[i % pts.Count], pts[j % pts.Count]);
+                if (d > far) { far = d; k = m; }
+            }
+            if (k < 0) return;
+            keep[k % pts.Count] = true;
+            Rec(i, k); Rec(k, j);
+        }
+        Rec(a, b); Rec(b, pts.Count);
+        return pts.Where((_, i) => keep[i]).ToList();
+    }
+
+    static double DistanceToLine(Vec2 p, Vec2 a, Vec2 b)
+    {
+        var d = b - a; double len = Math.Sqrt(d.Dot(d));
+        if (len < 1e-9) return p.DistanceTo(a);
+        return Math.Abs(d.X * (p.Y - a.Y) - d.Y * (p.X - a.X)) / len;
+    }
+
+    static double DistanceToEdges(Polygon2 poly, Vec2 p)
+    {
+        double best = double.MaxValue;
+        var v = poly.Vertices;
+        for (int i = 0; i < v.Count; i++)
+        {
+            var a = v[i]; var b = v[(i + 1) % v.Count];
+            var d = b - a; double len2 = d.Dot(d);
+            double t = len2 == 0 ? 0 : Math.Clamp((p - a).Dot(d) / len2, 0, 1);
+            best = Math.Min(best, p.DistanceTo(a + d * t));
+        }
+        return best;
+    }
+
+    static double Percentile(List<double> values, double q)
+    {
+        var s = values.OrderBy(v => v).ToList();
+        return s[(int)Math.Clamp(Math.Round(q * (s.Count - 1)), 0, s.Count - 1)];
+    }
+}

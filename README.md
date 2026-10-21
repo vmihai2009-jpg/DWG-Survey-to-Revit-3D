@@ -27,8 +27,16 @@ Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`
    - floor slabs ("Concept Slab 300mm") from each floor's outline,
    - ceilings (one per floor, at the height in the table),
    - generic models (named "Survey - check") where the drawing could not be read.
+   - surroundings, if LiDAR tiles were selected too (see below).
 5. **Build** sets project coordinates and north from the survey, creates the levels, then builds what was ticked. *Open report* shows the full analysis without changing anything.
 6. A log is saved in `%TEMP%\SurveyToRevit`.
+
+### Surroundings (optional)
+
+1. Download the free LiDAR for the site from the [Defra Survey Data Download](https://environment.data.gov.uk/DefraDataDownload/?Mode=survey): draw a box round the site and download the **LIDAR Composite DSM 1m** and **LIDAR Composite DTM 1m** tiles. Unzip them.
+2. In *Build from Survey*, select the DWGs and the `.tif` tiles together (keep "DSM"/"DTM" in the file names).
+3. Optionally add a building footprint shapefile (`.shp`, British National Grid), e.g. OS MasterMap Topography buildings, for exact outlines.
+4. Tick *Surroundings from LiDAR* and choose the radius. The ground and neighbouring blocks go on a "Context" workset (workshared projects) in the Existing phase. The surveyed building is never changed by this.
 
 Running it again replaces only the elements it created before on those floors. Undo reverses the whole run.
 

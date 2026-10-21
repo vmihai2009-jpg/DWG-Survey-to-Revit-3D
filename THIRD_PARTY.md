@@ -21,3 +21,7 @@ Reference projects reviewed (no code copied):
 Tried and dropped: NetTopologySuite (BSD-3) to trace exact faces from the linework; the survey linework has too many small gaps for exact faces, so the grid method was kept and the dependency removed.
 
 Development only: LibreDWG (GPL-3.0) was used once to inspect the survey files; it is not part of the product.
+
+Development only: tifffile (BSD-3) and imagecodecs (BSD-3) made the small synthetic GeoTIFF test grids in `tests/SurveyToRevit.Core.Tests/Fixtures`; they are not part of the product. The GeoTIFF, ASCII grid and shapefile readers are written here from the published formats.
+
+Data (downloaded by the user, not shipped): Environment Agency LIDAR Composite DSM/DTM 1m, Open Government Licence v3.0 ("© Environment Agency copyright and/or database right"). OS MasterMap Topography, if used, is under the user's own OS licence.
