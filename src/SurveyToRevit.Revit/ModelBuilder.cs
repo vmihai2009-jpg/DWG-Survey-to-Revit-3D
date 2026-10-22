@@ -638,14 +638,14 @@ public sealed class ModelBuilder
                 var curves = new CurveArray();
                 var loop = Loop(r.Outline, level.Elevation) ?? throw new InvalidOperationException("outline too small");
                 foreach (var c in loop) curves.Append(c);
-                var roof = _doc.Create.NewFootPrintRoof(curves, level, type, out _);
+                var roof = _doc.Create.NewFootPrintRoof(curves, level, type, out ModelCurveArray footprint);
                 roof.get_Parameter(BuiltInParameter.ROOF_LEVEL_OFFSET_PARAM)?.Set(top - thick - level.Elevation);
                 Mark(roof, RoofCode, r.Note);
                 native++;
             }
             catch (Exception ex)
             {
-                firstError ??= ex.Message;
+                firstError ??= ex.Message + (ex is ArgumentException ae && ae.ParamName != null ? $" [{ae.ParamName}]" : "") + $" at {ex.TargetSite?.Name}";
                 try
                 {
                     var loop = Loop(r.Outline, top - Ft(300));
@@ -727,7 +727,21 @@ public sealed class ModelBuilder
     /// </summary>
     static CurveLoop? Loop(Polygon2 poly, double z)
     {
-        var vs = poly.Vertices.Select(v => (X: v.X, Y: v.Y)).ToArray();
+        // drop points on a straight run and spikes (the outline running out and straight back)
+        var list = poly.Vertices.Select(v => (X: v.X, Y: v.Y)).ToList();
+        for (bool changed = true; changed && list.Count > 3;)
+        {
+            changed = false;
+            for (int i = 0; i < list.Count && list.Count > 3; i++)
+            {
+                var p = list[(i + list.Count - 1) % list.Count]; var c = list[i]; var q = list[(i + 1) % list.Count];
+                double len = Math.Max(1e-6, Math.Sqrt((q.X - p.X) * (q.X - p.X) + (q.Y - p.Y) * (q.Y - p.Y)));
+                double cross = (c.X - p.X) * (q.Y - p.Y) - (c.Y - p.Y) * (q.X - p.X);
+                if (Math.Abs(cross) / len < 1) { list.RemoveAt(i); changed = true; i--; }
+            }
+        }
+        var raw = list.ToArray();
+        var vs = raw.ToArray();
         for (int pass = 0; pass < 2; pass++)
             for (int i = 0; i < vs.Length; i++)
             {
@@ -736,6 +750,8 @@ public sealed class ModelBuilder
                 if (Math.Abs(dy) > 0 && Math.Abs(dy) < 30 && Math.Abs(dy) < Math.Abs(dx) * 0.0175) { double y = (vs[i].Y + vs[j].Y) / 2; vs[i].Y = y; vs[j].Y = y; }
                 else if (Math.Abs(dx) > 0 && Math.Abs(dx) < 30 && Math.Abs(dx) < Math.Abs(dy) * 0.0175) { double x = (vs[i].X + vs[j].X) / 2; vs[i].X = x; vs[j].X = x; }
             }
+        // squaring must never make the outline cross itself (narrow notches): then keep it as drawn
+        if (SelfCrossing(vs)) vs = raw;
         var pts = new List<XYZ>();
         foreach (var v in vs)
         {
@@ -747,6 +763,22 @@ public sealed class ModelBuilder
         var loop = new CurveLoop();
         for (int i = 0; i < pts.Count; i++) loop.Append(Line.CreateBound(pts[i], pts[(i + 1) % pts.Count]));
         return loop;
+    }
+
+    static bool SelfCrossing((double X, double Y)[] v)
+    {
+        static double Cr((double X, double Y) o, (double X, double Y) a, (double X, double Y) b) => (a.X - o.X) * (b.Y - o.Y) - (a.Y - o.Y) * (b.X - o.X);
+        int n = v.Length;
+        for (int i = 0; i < n; i++)
+            for (int j = i + 2; j < n; j++)
+            {
+                if (i == 0 && j == n - 1) continue;
+                var a = v[i]; var b = v[(i + 1) % n]; var c = v[j]; var d = v[(j + 1) % n];
+                if (Cr(a, b, c) * Cr(a, b, d) <= 0 && Cr(c, d, a) * Cr(c, d, b) <= 0 &&
+                    Math.Max(Math.Min(a.X, b.X), Math.Min(c.X, d.X)) <= Math.Min(Math.Max(a.X, b.X), Math.Max(c.X, d.X)) &&
+                    Math.Max(Math.Min(a.Y, b.Y), Math.Min(c.Y, d.Y)) <= Math.Min(Math.Max(a.Y, b.Y), Math.Max(c.Y, d.Y))) return true;
+            }
+        return false;
     }
 
     int DeleteGenerated(string levelCode)

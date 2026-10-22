@@ -180,6 +180,8 @@ public static class SurveyAnalyzer
             facade = facade.Where(w => w.Length >= tol.MinWallLength).ToList();
             // walls drawn on glazed-screen layers become curtain walls
             facade = facade.Select(w => rules.Classify(w.Centerline.Layer) == LayerRole.CurtainWall ? w with { Curtain = true } : w).ToList();
+            // glazed screens the pair reader left (single lines, thin pairs)
+            facade.AddRange(GlassScreens.Find(lines.Where(l => rules.Classify(l.Layer) == LayerRole.CurtainWall).ToList(), facade));
             walls = walls with { Walls = facade, ThicknessGroups = facade.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
             // unclear pockets now filled by a pier wall are explained
             var unclearLeft = raster.Unclear.Where(u => !facade.Any(w => w.FaceA == "pier" && FacadeWalls.Contains(u.Outline, w.Centerline.Mid))).ToList();
@@ -242,11 +244,17 @@ public static class SurveyAnalyzer
             levels[i].CeilingHeightMm = surveyedCeiling ?? DefaultCeilingHeight(levels[i].WallHeightMm);
             levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm, outline: levels[i].Outline);
             var doorWalls = new List<WallCandidate>();
-            levels[i].Doors = DoorFinder.Find(doorInput[levels[i]], levels[i].Walls.Walls, levels[i].Windows, heights: heights, storeyMm: levels[i].WallHeightMm,
-                arcs: levels[i].Plan.DoorArcs.Select(frame.ToModel).ToList(), added: doorWalls, wallSizes: tol.WallTypeSizes);
+            // door linework far from the building (a stray block, a copy on the sheet border) is not a door here
+            var nearBuilding = Near(levels[i].Walls.Walls, 3000);
+            levels[i].Doors = DoorFinder.Find(doorInput[levels[i]].Where(s => nearBuilding(s.A) && nearBuilding(s.B)).ToList(), levels[i].Walls.Walls, levels[i].Windows, heights: heights, storeyMm: levels[i].WallHeightMm,
+                arcs: levels[i].Plan.DoorArcs.Select(frame.ToModel).Where(a => nearBuilding(a.Center)).ToList(), added: doorWalls, wallSizes: tol.WallTypeSizes);
             if (doorWalls.Count > 0)
             {
-                var all = levels[i].Walls.Walls.Concat(doorWalls).ToList();
+                var before = levels[i].Walls.Walls.Concat(doorWalls).ToList(); // the list the doors' and windows' host numbers refer to
+                var all = GlassScreens.CutForDoors(levels[i].Walls.Walls.ToList(), doorWalls).Concat(doorWalls).ToList();
+                var at = all.Select((w, k) => (w, k)).GroupBy(x => x.w, ReferenceEqualityComparer.Instance).ToDictionary(g => g.Key!, g => g.First().k, ReferenceEqualityComparer.Instance);
+                levels[i].Doors = levels[i].Doors.Where(d => at.ContainsKey(before[d.HostIndex])).Select(d => d with { HostIndex = at[before[d.HostIndex]] }).ToList();
+                levels[i].Windows = levels[i].Windows.Where(w => at.ContainsKey(before[w.HostIndex])).Select(w => w with { HostIndex = at[before[w.HostIndex]] }).ToList();
                 levels[i].Walls = levels[i].Walls with { Walls = all, ThicknessGroups = all.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
             }
             if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
@@ -274,6 +282,17 @@ public static class SurveyAnalyzer
         if (noHeight > 0) notes.Add($"{noHeight} roof areas have no spot height inside them and were left out.");
         if (roofPlans.Count == 0 && roofs.Count == 0) notes.Add("No roof plan or roof layer: no roofs built.");
         return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections };
+    }
+
+    /// <summary>Inside the box the walls span (their middle 98%, so one stray wall cannot stretch it), grown by a margin.</summary>
+    static Func<Vec2, bool> Near(IReadOnlyList<WallCandidate> walls, double margin)
+    {
+        var pts = walls.SelectMany(w => new[] { w.Centerline.A, w.Centerline.B }).ToList();
+        if (pts.Count < 10) return _ => true;
+        var xs = pts.Select(p => p.X).OrderBy(x => x).ToList(); var ys = pts.Select(p => p.Y).OrderBy(y => y).ToList();
+        int lo = (int)(0.01 * (pts.Count - 1)), hi = (int)(0.99 * (pts.Count - 1));
+        double x0 = xs[lo] - margin, x1 = xs[hi] + margin, y0 = ys[lo] - margin, y1 = ys[hi] + margin;
+        return p => p.X >= x0 && p.X <= x1 && p.Y >= y0 && p.Y <= y1;
     }
 
     /// <summary>

@@ -140,6 +140,19 @@ public class PlanReadingTests
     }
 
     [Fact]
+    public void Single_line_glazed_screen_is_a_curtain_wall_cut_by_its_door()
+    {
+        var walls = new List<WallCandidate> { W(0, 0, 0, 5000, 200) };
+        var screen = Assert.Single(GlassScreens.Find(new[] { S(100, 3000, 4000, 3000, "PartGlass"), S(100, 3040, 4000, 3040, "PartGlass") }, walls));
+        Assert.True(screen.Curtain);
+        Assert.Equal(3020, screen.Centerline.A.Y, 0);
+        // a glass line lying along an existing wall is not a second wall
+        Assert.Empty(GlassScreens.Find(new[] { S(0, 500, 0, 4000, "PartGlass") }, walls));
+        var cut = GlassScreens.CutForDoors(new List<WallCandidate> { screen }, new[] { W(1500, 3020, 2500, 3020, 100) });
+        Assert.Equal(2, cut.Count);
+    }
+
+    [Fact]
     public void Window_is_hosted_in_the_facade_not_the_lining_in_front_of_it()
     {
         var walls = new List<WallCandidate> { W(0, 0, 10000, 0, 450), W(0, 300, 10000, 300, 100) };
