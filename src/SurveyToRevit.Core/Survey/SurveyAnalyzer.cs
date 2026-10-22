@@ -50,6 +50,8 @@ public sealed record SurveyLevel(
     public IReadOnlyList<Polygon2> StairVoids { get; set; } = Array.Empty<Polygon2>();
     /// <summary>Is this point (model mm) in a room the drawing encloses?</summary>
     public Func<Vec2, bool>? IsRoom { get; set; }
+    /// <summary>Is this point drawn wall material (the plan's grid reading)?</summary>
+    public Func<Vec2, bool>? IsMaterial { get; set; }
     /// <summary>Windows found on this floor (hosted in <see cref="Walls"/>).</summary>
     public IReadOnlyList<WindowCandidate> Windows { get; set; } = Array.Empty<WindowCandidate>();
     /// <summary>Doors found on this floor (hosted in <see cref="Walls"/>).</summary>
@@ -188,6 +190,7 @@ public static class SurveyAnalyzer
             var plan = raster with { Walls = walls, Unclear = unclearLeft };
             var level = new SurveyLevel(p.Name.LevelCode!, name, order, est?.FloorLevelMm ?? double.NaN, est, p, plan.Walls, plan.Outline, plan.Unclear);
             level.IsRoom = raster.IsRoom;
+            level.IsMaterial = raster.IsMaterial;
             if (raster.Leftover != null)
                 level.Leftover = raster.Leftover(pt => facade.Any(w => RoomBounds.Gap(w, pt) <= 30))
                     .Where(cells => cells.Count > 0 && !unclearLeft.Any(u => FacadeWalls.Contains(u.Outline, cells[cells.Count / 2]))) // unclear areas have their own generic model
@@ -242,7 +245,14 @@ public static class SurveyAnalyzer
             }
             levels[i].CeilingFromSurvey = surveyedCeiling != null;
             levels[i].CeilingHeightMm = surveyedCeiling ?? DefaultCeilingHeight(levels[i].WallHeightMm);
-            levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm, outline: levels[i].Outline, ceilingMm: levels[i].CeilingHeightMm);
+            var windowWalls = new List<WallCandidate>();
+            levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm, outline: levels[i].Outline, ceilingMm: levels[i].CeilingHeightMm,
+                added: windowWalls, isMaterial: levels[i].IsMaterial, wallSizes: tol.WallTypeSizes);
+            if (windowWalls.Count > 0)
+            {
+                var withWindows = levels[i].Walls.Walls.Concat(windowWalls).ToList();
+                levels[i].Walls = levels[i].Walls with { Walls = withWindows, ThicknessGroups = withWindows.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
+            }
             var doorWalls = new List<WallCandidate>();
             // door linework far from the building (a stray block, a copy on the sheet border) is not a door here
             var nearBuilding = Near(levels[i].Walls.Walls, 3000);

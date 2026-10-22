@@ -170,6 +170,43 @@ public static class DoorFinder
             if (!clash) doors.Add(d);
         }
 
+        // 6. a leaf drawn standing open at a gap between two wall ends (a thin box or a line, no swing):
+        // the opening runs square to the leaf from its hinge to the far jamb, a leaf's length away
+        if (added != null)
+            foreach (var g in Enumerable.Range(0, doorLines.Count).GroupBy(Root))
+            {
+                var group = g.Select(i => doorLines[i]).ToList();
+                if (group.Any(usedLeaves.Contains)) continue;
+                var main = group.OrderByDescending(l => l.Length).First();
+                if (main.Length < 500 || main.Length > maxLeaf) continue;
+                var dir = main.Direction; var nrm = dir.Perp();
+                var pts = group.SelectMany(l => new[] { l.A, l.B }).ToList();
+                double b0 = pts.Min(p => (p - main.A).Dot(nrm)), b1 = pts.Max(p => (p - main.A).Dot(nrm));
+                if (b1 - b0 > 100) continue;
+                double len = main.Length;
+                bool NearWall(Vec2 p, double reach) => all.Any(w => !w.Curtain && WallGeometry.Along(w, p) >= -reach && WallGeometry.Along(w, p) <= WallGeometry.Length(w) + reach
+                                                                  && Math.Abs(WallGeometry.Offset(w, p)) <= w.TypeThickness / 2 + reach);
+                bool InWall(Vec2 p) => all.Any(w => Body(w, p));
+                (Vec2 H, Vec2 C)? best = null;
+                foreach (var h in new[] { main.A, main.B })
+                {
+                    if (!NearWall(h, 150)) continue;
+                    foreach (var u in new[] { nrm, nrm * -1 })
+                    {
+                        var c = h + u * len;
+                        if (NearWall(c, 250) && !InWall(h + u * (len / 2)) && !InWall(h + u * (len / 4)) && !InWall(h + u * (3 * len / 4))) { best = (h, c); break; }
+                    }
+                    if (best != null) break;
+                }
+                if (best is not (Vec2 H, Vec2 C)) continue;
+                var mid = (H + C) * 0.5; double width = Math.Round(len / 10) * 10;
+                if (doors.Any(d => d.Center.DistanceTo(mid) < (d.WidthMm + width) / 2)) continue;
+                var wall = AcrossOpening(H, C, all, wallSizes);
+                added.Add(wall); all.Add(wall);
+                var center = wall.Centerline.Mid;
+                doors.Add(new DoorCandidate(all.Count - 1, WallGeometry.PointAt(wall, Math.Clamp(WallGeometry.Along(wall, mid), width / 2, Math.Max(width / 2, wall.Centerline.Length - width / 2))), width, DefaultHeightMm, false));
+            }
+
         // a surveyed door head ("dh 2.03") nearby sets the height
         if (heights == null) return doors;
         return doors.Select(d => SurveyHeights.Nearest(heights, HeightKind.DoorHead, d.Center, textReach) is double h && h >= 1500 && h <= storeyMm - 100

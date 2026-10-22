@@ -153,6 +153,22 @@ public class PlanReadingTests
     }
 
     [Fact]
+    public void Level_comes_from_the_sheet_title_when_the_file_name_has_none()
+    {
+        Assert.Equal("00", DrawingName.Parse("16382-02.dwg", new[] { "Ground Floor Plan" }).LevelCode);
+        Assert.Equal("04", DrawingName.Parse("16382-06.dwg", new[] { "Fourth Floor Plan and Attic" }).LevelCode);
+        Assert.Null(DrawingName.Parse("16382-10.dwg", new[] { "Sections 1 and 3" }).LevelCode);
+    }
+
+    [Fact]
+    public void Cill_and_height_notes_give_sill_and_window_height()
+    {
+        var notes = SurveyHeights.Read(new[] { (new Vec2(0, 0), "c800"), (new Vec2(0, 0), "h2400") });
+        Assert.Contains(notes, n => n.Kind == HeightKind.Sill && n.Mm == 800);
+        Assert.Contains(notes, n => n.Kind == HeightKind.OpeningHeight && n.Mm == 2400);
+    }
+
+    [Fact]
     public void Window_is_hosted_in_the_facade_not_the_lining_in_front_of_it()
     {
         var walls = new List<WallCandidate> { W(0, 0, 10000, 0, 450), W(0, 300, 10000, 300, 100) };

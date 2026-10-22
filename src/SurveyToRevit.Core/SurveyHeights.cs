@@ -12,15 +12,16 @@ public sealed record HeightNote(Vec2 Position, HeightKind Kind, double Mm);
 /// Heights surveyors write on plans next to openings and in rooms, read the same way for any
 /// survey. Each is a short abbreviation then a height above the floor, in metres ("S 0.94",
 /// "u/s 2.52") or, without a decimal point, millimetres ("S 940"):
-///   sill: S, SL, SILL, CILL, FS (floor to sill)       head: H, HH, HD, HEAD, AH (arch head)
+///   sill: S, SL, SILL, CILL, C, FS (floor to sill)    head: H, HH, HD, HEAD, AH (arch head)
 ///   sill to head: OH, and SH when the same plan also has FS (a floor-to-sill and window-height
-///   pair, as on older London surveys); otherwise SH is a sill height
+///   pair, as on older London surveys); otherwise SH is a sill height. Likewise H when the plan
+///   writes cills as C ("c800 h2400")
 ///   door head: DH, D, DOOR                            ceiling: U/S, US, CH, CLG, CEILING
 /// Absolute levels (CL cover levels, FFL spot heights) are not relative heights and are left out.
 /// </summary>
 public static class SurveyHeights
 {
-    static readonly Regex Note = new(@"^\s*(u/s|us|ch|clg|ceiling|sill|cill|sl|fs|sh|s|hh|hd|head|ah|h|dh|door|d|oh)\.?\s*[:=]?\s*(\d+(?:\.\d+)?)\s*m?\s*$",
+    static readonly Regex Note = new(@"^\s*(u/s|us|ch|clg|ceiling|sill|cill|sl|fs|sh|s|c|hh|hd|head|ah|h|dh|door|d|oh)\.?\s*[:=]?\s*(\d+(?:\.\d+)?)\s*m?\s*$",
         RegexOptions.IgnoreCase);
 
     public static List<HeightNote> Read(IEnumerable<(Vec2 Position, string Value)> texts)
@@ -36,11 +37,14 @@ public static class SurveyHeights
             if (mm <= 0 || mm > 8000) continue; // not a height above this floor
             found.Add((p, m.Groups[1].Value.ToLowerInvariant(), mm));
         }
-        // "SH" next to "FS" is the window's height (sill to head), not its sill
+        // "SH" next to "FS" is the window's height (sill to head), not its sill; likewise "H" on a
+        // plan that writes cills as "C" ("c800 h2400": floor to cill, cill to head)
         bool shIsHeight = found.Any(f => f.Key == "fs");
+        bool hIsHeight = found.Any(f => f.Key == "c");
         return found.Select(f => new HeightNote(f.P, f.Key switch
         {
-            "s" or "sl" or "sill" or "cill" or "fs" => HeightKind.Sill,
+            "s" or "sl" or "sill" or "cill" or "fs" or "c" => HeightKind.Sill,
+            "h" when hIsHeight => HeightKind.OpeningHeight,
             "sh" => shIsHeight ? HeightKind.OpeningHeight : HeightKind.Sill,
             "oh" => HeightKind.OpeningHeight,
             "h" or "hh" or "hd" or "head" or "ah" => HeightKind.Head,

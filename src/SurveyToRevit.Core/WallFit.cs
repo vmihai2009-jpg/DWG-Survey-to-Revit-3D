@@ -51,6 +51,8 @@ public static class WallFit
         if (extra[0] == 0 && extra[1] == 0) return w;
         if (extra[0] + extra[1] > room) return w;
         double thick = w.TypeThickness + extra[0] + extra[1];
+        // a short wall at a corner reads the corner's whole mass as its depth: left as drawn
+        if (thick > 0.5 * c.Length) return w;
         double type = WallDetector.SnapThickness(thick, tol.WallTypeSizes);
         var shift = n * ((extra[0] - extra[1]) / 2);
         return w with { Centerline = c with { A = c.A + shift, B = c.B + shift }, MeasuredThickness = thick, TypeThickness = type };

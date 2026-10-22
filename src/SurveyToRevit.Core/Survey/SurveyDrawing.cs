@@ -36,6 +36,16 @@ public sealed class SurveyDrawing
         Texts.Where(t => rules.Classify(t.Layer) == LayerRole.LevelText)
              .Select(t => LevelEstimator.ParseMm(t.Value)).OfType<double>();
 
+    /// <summary>The sheet's own words (title block, usually in paper space): "Ground Floor Plan", "Sections 1 and 3".</summary>
+    static List<string> SheetTitles(ACadSharp.CadDocument doc)
+    {
+        var titles = new List<string>();
+        foreach (var br in doc.BlockRecords.Where(b => b.Name.StartsWith("*Paper_Space", StringComparison.OrdinalIgnoreCase)))
+            foreach (var e in br.Entities)
+                if ((e is TextEntity t ? t.Value : e is MText m ? m.Value : null) is string v && v.Length <= 80) titles.Add(v);
+        return titles;
+    }
+
     public static SurveyDrawing Read(string path, LayerRules? rules = null)
     {
         rules ??= LayerRules.Default;
@@ -120,7 +130,7 @@ public sealed class SurveyDrawing
             SmallWallArcs = scaled.Where(a => a.role is LayerRole.Wall && !(a.arc.Radius >= 1000 && a.arc.Length >= 200)).Select(a => a.arc).ToList(),
             WallArcs = scaled.Where(a => a.role is LayerRole.Wall or LayerRole.CurtainWall && a.arc.Radius >= 1000 && a.arc.Length >= 200).Select(a => a.arc with { Layer = a.arc.Layer }).ToList(),
             Path = path,
-            Name = DrawingName.Parse(path),
+            Name = DrawingName.Parse(path, SheetTitles(doc)),
             MmPerUnit = mmPerUnit,
             UnitsNote = note,
             WallLines = walls.Select(Seg).ToList(),

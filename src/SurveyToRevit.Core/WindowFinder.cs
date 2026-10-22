@@ -18,9 +18,47 @@ public static class WindowFinder
 {
     public const double DefaultSillMm = 900, DefaultHeightMm = 1500;
 
+    /// <summary>
+    /// A wall through a window that has none: the window's line, run on into the masonry at both
+    /// ends (piers), as deep as that masonry. Null unless there is masonry at both ends.
+    /// </summary>
+    static WallCandidate? Spanning(Segment2 main, List<Vec2> pts, Func<Vec2, bool> isMaterial, IReadOnlyList<double>? sizes)
+    {
+        var dir = main.Direction; var n = dir.Perp();
+        double lo = pts.Min(p => (p - main.A).Dot(dir)), hi = pts.Max(p => (p - main.A).Dot(dir));
+        double off = pts.Average(p => (p - main.A).Dot(n));
+        Vec2 At(double a, double o) => main.A + dir * a + n * (off + o);
+        // masonry within 600 mm beyond each end, on the window's line or across its depth
+        double? Reach(double from, double step)
+        {
+            for (double d = 0; d <= 600; d += 25)
+                for (double o = -150; o <= 150; o += 50)
+                    if (isMaterial(At(from + step * d, o))) return from + step * d;
+            return null;
+        }
+        if (Reach(lo, -1) is not double a0 || Reach(hi, 1) is not double a1) return null;
+        // depth of the masonry each side of the window line, just inside each pier; the shallower end
+        (double plus, double minus) Depth(double a)
+        {
+            double plus = 0, minus = 0;
+            while (plus < 900 && isMaterial(At(a, plus + 15))) plus += 15;
+            while (minus < 900 && isMaterial(At(a, -minus - 15))) minus += 15;
+            return (plus, minus);
+        }
+        var d0 = Depth(a0 - 100); var d1 = Depth(a1 + 100);
+        double p = Math.Min(d0.plus, d1.plus), m = Math.Min(d0.minus, d1.minus);
+        double thick = Math.Max(100, p + m);
+        if (thick > 1000) return null;
+        double shift = (p - m) / 2;
+        var c = new Segment2(At(a0 - 100, shift), At(a1 + 100, shift), "window opening", "window opening");
+        double type = sizes != null && sizes.Count > 0 ? WallDetector.SnapThickness(thick, sizes) : thick;
+        return new WallCandidate(c, thick, type, Confidence.Low, "window opening", "window opening");
+    }
+
     public static List<WindowCandidate> Find(IReadOnlyList<Segment2> windowLines, IReadOnlyList<WallCandidate> walls,
         IReadOnlyList<(Vec2 Position, string Value)> texts, double storeyMm,
-        double joinMm = 150, double textReach = 2000, double minWidth = 300, double maxWidth = 4000, Polygon2? outline = null, double? ceilingMm = null)
+        double joinMm = 150, double textReach = 2000, double minWidth = 300, double maxWidth = 4000, Polygon2? outline = null, double? ceilingMm = null,
+        List<WallCandidate>? added = null, Func<Vec2, bool>? isMaterial = null, IReadOnlyList<double>? wallSizes = null)
     {
         var lines = windowLines.Where(l => l.Length >= 20).ToList();
         // touching lines → one window (union-find)
@@ -32,6 +70,7 @@ public static class WindowFinder
 
         var notes = SurveyHeights.Read(texts);
 
+        var all = walls.ToList();
         var found = new List<(int Host, Vec2 Center, double Width, double? Sill, double? Head, Vec2? Out)>();
         foreach (var cluster in Enumerable.Range(0, lines.Count).GroupBy(Root).Select(g => g.Select(i => lines[i]).ToList()))
         {
@@ -42,9 +81,9 @@ public static class WindowFinder
             // host: a parallel wall the window sits in, that holds the whole window if one does;
             // then the thickest (the façade, not a lining in front of it)
             int host = -1; double best = double.MaxValue;
-            for (int k = 0; k < walls.Count; k++)
+            for (int k = 0; k < all.Count; k++)
             {
-                var w = walls[k];
+                var w = all[k];
                 if (w.Curtain) continue;
                 double off = Math.Abs(WallGeometry.Offset(w, mid));
                 double along = WallGeometry.Along(w, mid), len = WallGeometry.Length(w);
@@ -56,8 +95,22 @@ public static class WindowFinder
                 double score = (held >= 0.9 ? 0 : 1e7) - w.TypeThickness * 10 + off;
                 if (score < best) { best = score; host = k; }
             }
+            // only the building's own windows (not a neighbour's drawn along the street)
+            bool ours = outline == null || new[] { 0.0, 300, -300, 600, -600 }.Any(o => FacadeWalls.Contains(outline, mid + main.Direction.Perp() * o));
+            // and in an outside wall (façade or lightwell), not glazing in the middle of a floor (a rooflight)
+            bool outer = outline == null || Enumerable.Range(1, 15).Any(k => !FacadeWalls.Contains(outline, mid + main.Direction.Perp() * (k * 100))
+                                                                         || !FacadeWalls.Contains(outline, mid - main.Direction.Perp() * (k * 100)));
+            if (host < 0 && added != null && isMaterial != null && main.Length >= minWidth && ours && outer)
+            {
+                // a window set between piers with no wall drawn through it (the piers read as odd shapes):
+                // a wall through the window, as deep as the masonry at its ends
+                if (Spanning(main, pts, isMaterial, wallSizes) is WallCandidate span)
+                {
+                    added.Add(span); all.Add(span); host = all.Count - 1;
+                }
+            }
             if (host < 0) continue;
-            var hw = walls[host];
+            var hw = all[host];
             var proj = pts.Select(p => WallGeometry.Along(hw, p)).ToList();
             double lo = Math.Max(proj.Min(), 0), hi = Math.Min(proj.Max(), WallGeometry.Length(hw));
             double width = Math.Round((hi - lo) / 10) * 10;

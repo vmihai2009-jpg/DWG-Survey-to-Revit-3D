@@ -10,7 +10,19 @@ namespace SurveyToRevit.Core.Survey;
 /// </summary>
 public sealed record DrawingName(string FileName, string? LevelCode)
 {
-    public static DrawingName Parse(string path)
+    /// <param name="sheetTitles">words on the sheet (title block): used when the file name says no level ("16382-02")</param>
+    public static DrawingName Parse(string path, IEnumerable<string>? sheetTitles = null)
+    {
+        var parsed = Parse(path);
+        if (parsed.LevelCode != null || sheetTitles == null) return parsed;
+        // a sheet titled "... Plan" names its floor; one titled as a section or elevation is not a plan
+        var titles = sheetTitles.Select(t => Regex.Replace(t, @"\\[A-Za-z][^;]*;|[{}]|\\P", " ")).ToList();
+        if (titles.Any(t => Regex.IsMatch(t, @"\b(sections?|elevations?)\b", RegexOptions.IgnoreCase))) return parsed;
+        var level = titles.Where(t => Regex.IsMatch(t, @"\bplan\b", RegexOptions.IgnoreCase)).Select(FromWords).FirstOrDefault(c => c != null);
+        return level == null ? parsed : parsed with { LevelCode = level };
+    }
+
+    static DrawingName Parse(string path)
     {
         var name = Path.GetFileNameWithoutExtension(path);
         var parts = name.Split('-');

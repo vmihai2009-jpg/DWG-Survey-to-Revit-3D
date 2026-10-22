@@ -93,10 +93,14 @@ public static class RoofsAndDetails
             if (piece.Count == 0) continue;
             var grid = ShapeGrid.Around(piece, 25, 100);
             var mask = grid.Mark(piece);
+            // masonry in a window or door opening is the wall's (a generic model cannot be cut): taken
+            // out, which also parts the piers either side of a window into their own shapes
+            var inOpening = openings.SelectMany(o => o).ToList();
+            for (int i = 0; i < mask.Length; i++)
+                if (mask[i]) { var c = grid.Centre(i); if (inOpening.Any(q => Math.Abs(q.X - c.X) <= 60 && Math.Abs(q.Y - c.Y) <= 60)) mask[i] = false; }
             if (!grid.Grow(mask, -2).Any(x => x)) continue;
             foreach (var p in grid.Outlines(mask, 0.03e6).Where(p => p.Area <= 25e6))
-                if (!openings.Any(o => o.Any(q => FacadeWalls.Contains(p, q))))
-                    result.Add(new DetailShape(LayerRole.Wall, p, 0, storey));
+                result.Add(new DetailShape(LayerRole.Wall, p, 0, storey));
         }
         return result;
     }
@@ -105,9 +109,9 @@ public static class RoofsAndDetails
     static List<Vec2> OpeningPoints(WallCandidate host, Vec2 center, double width)
     {
         var dir = host.Arc == null ? host.Centerline.Direction : (center - host.Arc.Center).Perp().Normalized();
-        var n = dir.Perp(); double half = host.TypeThickness / 2 + 300;
+        var n = dir.Perp(); double half = host.TypeThickness / 2 + 100;
         var pts = new List<Vec2>();
-        for (double a = -width / 2 + 50; a <= width / 2 - 50; a += 100)
+        for (double a = -width / 2 + 100; a <= width / 2 - 100; a += 100)
             for (double b = -half; b <= half; b += 50) pts.Add(center + dir * a + n * b);
         return pts;
     }
