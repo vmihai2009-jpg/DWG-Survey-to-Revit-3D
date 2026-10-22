@@ -11,6 +11,8 @@
     <RootNamespace>SurveyToRevit.Revit</RootNamespace>
     <PlatformTarget>x64</PlatformTarget>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <!-- Release number: the Update button compares it with the zip it finds -->
+    <Version>0.12.3</Version>
   </PropertyGroup>
 
   <ItemGroup>

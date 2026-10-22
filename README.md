@@ -13,6 +13,8 @@ Revit 2025 add-in that turns 2D DWG building surveys into an editable concept mo
 
 Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`.
 
+**Updating (from v0.12.3):** save the new release zip into Downloads (no need to unzip), click **Update** on the Survey to Revit panel, confirm, then restart Revit. Nothing needs uninstalling. The button's tooltip shows the installed version.
+
 ## Use
 
 1. Open a Revit project (try a copy first).

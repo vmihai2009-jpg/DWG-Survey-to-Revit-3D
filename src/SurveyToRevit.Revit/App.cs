@@ -34,6 +34,14 @@ public class App : IExternalApplication
             Image = Icon("icon16.png"),
             LargeImage = Icon("icon32.png"),
         });
+        panel.AddItem(new PushButtonData("UpdateAddin", "Update", Assembly.GetExecutingAssembly().Location,
+            typeof(UpdateCommand).FullName)
+        {
+            ToolTip = $"Installed: v{UpdateCommand.Installed.ToString(3)}. Installs a newer release: download the SurveyToRevit zip " +
+                      "into Downloads (no need to unzip), click here, then restart Revit. Nothing to uninstall.",
+            Image = Icon("icon16.png"),
+            LargeImage = Icon("icon32.png"),
+        });
         return Result.Succeeded;
     }
 

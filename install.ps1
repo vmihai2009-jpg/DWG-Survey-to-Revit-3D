@@ -41,6 +41,10 @@ Set-Content -Path (Join-Path $addins "SurveyToRevit.addin") -Value $manifest -En
 
 # Tidy up earlier installs; anything still in use is left for next time.
 Get-ChildItem $root -File -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
-Get-ChildItem $root -Directory | Where-Object { $_.Name -ne $stamp } | ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+# A folder Revit is still using (the copy running now) cannot be renamed: it is left whole for next time.
+Get-ChildItem $root -Directory | Where-Object { $_.Name -ne $stamp } | ForEach-Object {
+    $old = $_.FullName + ".old"
+    try { Rename-Item $_.FullName $old -ErrorAction Stop; Remove-Item $old -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+}
 
 Write-Host "Installed to $target. Start Revit 2025; look for the 'Survey to Revit' panel on the Barr Gazetas tab." -ForegroundColor Green
