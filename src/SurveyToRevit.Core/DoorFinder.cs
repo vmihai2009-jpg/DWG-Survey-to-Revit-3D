@@ -1,7 +1,13 @@
 namespace SurveyToRevit.Core;
 
 /// <summary>A door to place: on wall <see cref="HostIndex"/>, centred at <see cref="Center"/>, in mm.</summary>
-public sealed record DoorCandidate(int HostIndex, Vec2 Center, double WidthMm, double HeightMm, bool Double, bool HeightFromSurvey = false);
+public sealed record DoorCandidate(int HostIndex, Vec2 Center, double WidthMm, double HeightMm, bool Double, bool HeightFromSurvey = false)
+{
+    /// <summary>Where the leaf is hung (a single door), when the survey shows it.</summary>
+    public Vec2? Hinge { get; init; }
+    /// <summary>A point the open leaf reaches: the door opens into the side of the wall this point is on.</summary>
+    public Vec2? Swing { get; init; }
+}
 
 /// <summary>
 /// Doors from the door layers, read the way an architect reads a door symbol. A door is drawn
@@ -32,11 +38,11 @@ public static class DoorFinder
         var pool = lines.Where(l => l.Length <= 250).SelectMany(l => new[] { l.A, l.B }).ToList();
 
         // 1. openings from leaf + swing: hinge H, leaf tip T, swing end C with |HC| = |HT|
-        var openings = new List<(Vec2 H, Vec2 C, double R)>();
+        var openings = new List<(Vec2 H, Vec2 C, double R, Vec2 T)>();
         var usedLeaves = new HashSet<Segment2>();
         foreach (var s in doorLines.Where(l => l.Length >= minLeaf && l.Length <= maxLeaf))
         {
-            (Vec2 H, Vec2 C, int score)? best = null;
+            (Vec2 H, Vec2 C, Vec2 T, int score)? best = null;
             foreach (var (h, t) in new[] { (s.A, s.B), (s.B, s.A) })
             {
                 double r = s.Length, tolR = Math.Max(30, 0.04 * r);
@@ -51,16 +57,16 @@ public static class DoorFinder
                     score++;
                     if (ang >= 25 && ang > maxAng) { maxAng = ang; c = p; }
                 }
-                if (c is Vec2 cc && (best == null || score > best.Value.score)) best = (h, cc, score);
+                if (c is Vec2 cc && (best == null || score > best.Value.score)) best = (h, cc, t, score);
             }
             if (best is not { } b) continue;
             usedLeaves.Add(s);
             if (!openings.Any(o => o.H.DistanceTo(b.H) < 50 && o.C.DistanceTo(b.C) < 50))
-                openings.Add((b.H, b.C, b.H.DistanceTo(b.C)));
+                openings.Add((b.H, b.C, b.H.DistanceTo(b.C), b.T));
         }
 
         // 2. two swings closing on one point: one double opening from hinge to hinge
-        var merged = new List<(Vec2 A, Vec2 B, bool Double)>();
+        var merged = new List<(Vec2 A, Vec2 B, bool Double, Vec2? Hinge, Vec2 Tip)>();
         var done = new bool[openings.Count];
         for (int i = 0; i < openings.Count; i++)
         {
@@ -76,15 +82,15 @@ public static class DoorFinder
                 var d1 = (o.C - o.H).Normalized(); var d2 = (q.H - q.C).Normalized();
                 if (d1.Dot(d2) > Math.Cos(15 * Math.PI / 180)) partner = j;
             }
-            if (partner >= 0) { done[partner] = true; merged.Add((o.H, openings[partner].H, true)); }
-            else merged.Add((o.H, o.C, false));
+            if (partner >= 0) { done[partner] = true; merged.Add((o.H, openings[partner].H, true, null, o.T)); }
+            else merged.Add((o.H, o.C, false, o.H, o.T));
         }
 
         // 3. each opening in the wall running through it, or in a wall made across it
         var all = walls.ToList();
         var doors = new List<DoorCandidate>();
         var wins = windows?.ToList() ?? new List<WindowCandidate>();
-        foreach (var (a, b, dbl) in merged.OrderByDescending(m => m.A.DistanceTo(m.B)))
+        foreach (var (a, b, dbl, hinge, tip) in merged.OrderByDescending(m => m.A.DistanceTo(m.B)))
         {
             var mid = (a + b) * 0.5;
             double width = Math.Round(a.DistanceTo(b) / 10) * 10;
@@ -112,7 +118,7 @@ public static class DoorFinder
             double at = Math.Clamp(WallGeometry.Along(hw, mid), width / 2, Math.Max(width / 2, WallGeometry.Length(hw) - width / 2));
             var center = WallGeometry.PointAt(hw, at);
             if (wins.Any(w => w.HostIndex == host && w.Center.DistanceTo(center) < (w.WidthMm + width) / 2)) continue;
-            doors.Add(new DoorCandidate(host, center, width, DefaultHeightMm, dbl));
+            doors.Add(new DoorCandidate(host, center, width, DefaultHeightMm, dbl) { Hinge = hinge, Swing = tip });
         }
 
         // 4. doors with no swing (sliding and folding doors, shutters): door linework that is a long,
@@ -204,7 +210,8 @@ public static class DoorFinder
                 var wall = AcrossOpening(H, C, all, wallSizes);
                 added.Add(wall); all.Add(wall);
                 var center = wall.Centerline.Mid;
-                doors.Add(new DoorCandidate(all.Count - 1, WallGeometry.PointAt(wall, Math.Clamp(WallGeometry.Along(wall, mid), width / 2, Math.Max(width / 2, wall.Centerline.Length - width / 2))), width, DefaultHeightMm, false));
+                doors.Add(new DoorCandidate(all.Count - 1, WallGeometry.PointAt(wall, Math.Clamp(WallGeometry.Along(wall, mid), width / 2, Math.Max(width / 2, wall.Centerline.Length - width / 2))), width, DefaultHeightMm, false)
+                    { Hinge = H, Swing = H.DistanceTo(main.A) < H.DistanceTo(main.B) ? main.B : main.A });
             }
 
         // a surveyed door head ("dh 2.03") nearby sets the height
@@ -251,7 +258,7 @@ public static class DoorFinder
     // the leaf alone: a line of leaf length hinged at a wall and running away from it
     static List<DoorCandidate> LeafDoors(IReadOnlyList<Segment2> doorLines, IReadOnlyList<WallCandidate> walls)
     {
-        var leaves = new List<(int Host, double Hinge, int Side, double Width)>();
+        var leaves = new List<(int Host, double Hinge, int Side, double Width, Vec2 Free)>();
         foreach (var s in doorLines)
         {
             // hinge end: on a wall; the leaf runs away from that wall at an angle
@@ -270,7 +277,7 @@ public static class DoorFinder
             double toFree = WallGeometry.Along(hostWall, best.free) - best.hinge;
             // the leaf swings away from the opening's far jamb; a leaf drawn square to the wall is ambiguous: take the side with more wall
             int side = Math.Abs(toFree) > 50 ? Math.Sign(toFree) : (best.hinge < WallGeometry.Length(hostWall) / 2 ? 1 : -1);
-            leaves.Add((best.host, best.hinge, side, Math.Round(s.Length / 10) * 10));
+            leaves.Add((best.host, best.hinge, side, Math.Round(s.Length / 10) * 10, best.free));
         }
 
         // pair leaves of double doors: same wall, hinges a pair of leaf widths apart, opening towards each other
@@ -295,12 +302,13 @@ public static class DoorFinder
                 used[partner] = true;
                 var b = leaves[partner];
                 double mid = (a.Hinge + b.Hinge) / 2, width = Math.Round(Math.Abs(b.Hinge - a.Hinge) / 10) * 10;
-                doors.Add(new DoorCandidate(a.Host, WallGeometry.PointAt(hw, mid), width, DefaultHeightMm, true));
+                doors.Add(new DoorCandidate(a.Host, WallGeometry.PointAt(hw, mid), width, DefaultHeightMm, true) { Swing = a.Free });
             }
             else
             {
                 double mid = Math.Clamp(a.Hinge + a.Side * a.Width / 2, a.Width / 2, Math.Max(a.Width / 2, WallGeometry.Length(hw) - a.Width / 2));
-                doors.Add(new DoorCandidate(a.Host, WallGeometry.PointAt(hw, mid), a.Width, DefaultHeightMm, false));
+                doors.Add(new DoorCandidate(a.Host, WallGeometry.PointAt(hw, mid), a.Width, DefaultHeightMm, false)
+                    { Hinge = WallGeometry.PointAt(hw, a.Hinge), Swing = a.Free });
             }
         }
 

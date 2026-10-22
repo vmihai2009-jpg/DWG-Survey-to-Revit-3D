@@ -1,11 +1,11 @@
 using System.Diagnostics;
-using OpenFileDialog = System.Windows.Forms.OpenFileDialog;
 using DialogResult = System.Windows.Forms.DialogResult;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using SurveyToRevit.Core.Site;
 using SurveyToRevit.Core.Survey;
+using SurveyToRevit.Shared;
 
 namespace SurveyToRevit.Revit;
 
@@ -22,16 +22,17 @@ public class BuildFromSurveyCommand : IExternalCommand
         var doc = data.Application.ActiveUIDocument?.Document;
         if (doc == null || doc.IsFamilyDocument) { message = "Open a project first."; return Result.Failed; }
 
-        using var pick = new OpenFileDialog
+        IReadOnlyList<string> files;
+        using (var start = new StartDialog(doc.Title))
         {
-            Title = "Select the survey DWGs (floor plans; other sheets are ignored), and LiDAR tiles for the surroundings if wanted",
-            Filter = "Survey DWGs, LiDAR tiles, footprints (*.dwg;*.tif;*.tiff;*.asc;*.shp)|*.dwg;*.tif;*.tiff;*.asc;*.shp|AutoCAD drawings (*.dwg)|*.dwg",
-            Multiselect = true,
-        };
-        if (pick.ShowDialog() != DialogResult.OK || pick.FileNames.Length == 0) return Result.Cancelled;
+            if (start.ShowDialog() != DialogResult.OK || start.Files.Count == 0) return Result.Cancelled;
+            files = start.Files;
+        }
+        try { var settings = UserSettings.Load(); settings.LastSurveyFolder = Path.GetDirectoryName(files[0]); settings.Save(); }
+        catch { /* only a convenience for next time */ }
 
-        var lidar = pick.FileNames.Where(SiteContextBuilder.IsSiteFile).ToList();
-        var dwgs = pick.FileNames.Where(f => !SiteContextBuilder.IsSiteFile(f)).ToList();
+        var lidar = files.Where(SiteContextBuilder.IsSiteFile).ToList();
+        var dwgs = files.Where(f => !SiteContextBuilder.IsSiteFile(f)).ToList();
         if (dwgs.Count == 0) { message = "Select the survey DWGs too: the surroundings are placed from the survey's coordinates."; return Result.Failed; }
 
         SurveyModel model;
@@ -86,8 +87,9 @@ public class BuildFromSurveyCommand : IExternalCommand
 
     static string SaveText(string kind, string text)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "SurveyToRevit");
-        Directory.CreateDirectory(dir);
+        var dir = UserSettings.Load().Reports;
+        try { Directory.CreateDirectory(dir); }
+        catch { dir = UserSettings.DefaultReports; Directory.CreateDirectory(dir); } // e.g. a network drive that is not connected
         var path = Path.Combine(dir, $"survey-{kind}_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
         File.WriteAllText(path, text);
         return path;

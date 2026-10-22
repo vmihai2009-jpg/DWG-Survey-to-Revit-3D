@@ -801,27 +801,38 @@ public sealed class ModelBuilder
     string CreateWindows(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created)
     {
         var (made, failed, real) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Windows, "Window",
-            sl.Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward)));
+            sl.Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward, (Vec2?)null, (Vec2?)null)));
         return real ? $"{made} windows" + (failed > 0 ? $" ({failed} did not fit)" : "")
                     : $"{made} window openings (no window family found)";
     }
 
-    /// <summary>Doors hosted in the generated walls, as windows: a single door family, a type per size ("Concept Door 900x2100").</summary>
+    /// <summary>
+    /// Doors hosted in the generated walls, as windows: a single door family, and a double one for double
+    /// doors (the single one if there is none), a type per size ("Concept Door 900x2100"). Each is turned
+    /// to open into the side and hang on the jamb the survey's swing shows.
+    /// </summary>
     string CreateDoors(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created)
     {
         var (made, failed, real) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Doors, "Door",
-            sl.Doors.Select(d => (d.HostIndex, d.Center, d.WidthMm, 0.0, d.HeightMm, (Vec2?)null)));
-        return real ? $"{made} doors" + (failed > 0 ? $" ({failed} did not fit)" : "")
-                    : $"{made} door openings (no door family found)";
+            sl.Doors.Where(d => !d.Double).Select(d => (d.HostIndex, d.Center, d.WidthMm, 0.0, d.HeightMm, (Vec2?)null, d.Hinge, d.Swing)));
+        var doubles = sl.Doors.Where(d => d.Double).ToList();
+        int made2 = 0, failed2 = 0;
+        if (doubles.Count > 0)
+            (made2, failed2, _) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Doors, "Double Door",
+                doubles.Select(d => (d.HostIndex, d.Center, d.WidthMm, 0.0, d.HeightMm, (Vec2?)null, (Vec2?)null, d.Swing)));
+        return (real ? $"{made} doors" : $"{made} door openings (no door family found)")
+               + (made2 > 0 ? $", {made2} double doors" : "")
+               + (failed + failed2 > 0 ? $" ({failed + failed2} did not fit)" : "");
     }
 
     (int Made, int Failed, bool Real) PlaceHosted(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created,
-        BuiltInCategory category, string what, IEnumerable<(int Host, Vec2 Center, double Width, double Bottom, double Top, Vec2? Outward)> items)
+        BuiltInCategory category, string what,
+        IEnumerable<(int Host, Vec2 Center, double Width, double Bottom, double Top, Vec2? Outward, Vec2? Hinge, Vec2? Swing)> items)
     {
         var family = HostedFamily(category, what);
         var symbols = new Dictionary<(double, double), FamilySymbol>();
         int made = 0, failed = 0;
-        foreach (var (hostIndex, center, width, bottom, top, outward) in items)
+        foreach (var (hostIndex, center, width, bottom, top, outward, hinge, swing) in items)
         {
             if (!created.TryGetValue(sl.Walls.Walls[hostIndex], out var wall) || sl.Walls.Walls[hostIndex].Curtain) continue;
             var c = new XYZ(Ft(center.X), Ft(center.Y), level.Elevation);
@@ -835,16 +846,19 @@ public sealed class ModelBuilder
                     if (category == BuiltInCategory.OST_Windows) inst.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM)?.Set(Ft(bottom));
                     // the window's outer face to the outside of the building
                     if (outward is Vec2 o && inst.CanFlipFacing && inst.FacingOrientation.DotProduct(new XYZ(o.X, o.Y, 0)) < 0) inst.flipFacing();
+                    // a door: open to the side, and hang on the jamb, the survey's swing shows
+                    if (category == BuiltInCategory.OST_Doors && (hinge != null || swing != null)) TurnDoor(inst, level, c, hinge, swing);
                     Mark(inst, sl.Code, what);
                 }
                 else Cut(wall, c, width, bottom, top, sl.Code, what + " opening");
                 made++;
             }
             catch { failed++; continue; }
-            // a lining or second skin drawn as its own wall in front of the host is cut through too
-            foreach (var k in WallsAcross(sl.Walls.Walls, hostIndex, center, width))
+            // a lining or second skin drawn as its own wall, or the next wall when the opening runs past its host's end
+            foreach (var (k, at, w) in OpeningCuts.Across(sl.Walls.Walls, hostIndex, center, width))
                 if (created.TryGetValue(sl.Walls.Walls[k], out var other))
-                    try { Cut(other, c, width, bottom, top, sl.Code, what + " opening"); } catch { /* does not reach this wall */ }
+                    try { Cut(other, new XYZ(Ft(at.X), Ft(at.Y), level.Elevation), w, bottom, top, sl.Code, what + " opening"); }
+                    catch { /* does not reach this wall */ }
         }
         return (made, failed, family != null);
     }
@@ -859,24 +873,66 @@ public sealed class ModelBuilder
         Mark(opening, code, what);
     }
 
-    /// <summary>Other walls parallel to the host, touching or overlapping it, that the opening runs through.</summary>
-    static IEnumerable<int> WallsAcross(IReadOnlyList<WallCandidate> walls, int host, Vec2 center, double width)
+    readonly Dictionary<string, Family?> _families = new();
+    readonly Dictionary<ElementId, (int Hinge, int Swing, int HingeAfterFacing)?> _swingOf = new();
+
+    /// <summary>
+    /// Turns a door to open into the side of the wall the survey's leaf is on, hung on the survey's hinge
+    /// jamb. Families differ in which way their swing is drawn, so the first door of each family is
+    /// measured from its plan swing arc (and once more flipped) before any are turned.
+    /// </summary>
+    void TurnDoor(FamilyInstance door, Level level, XYZ at, Vec2? hinge, Vec2? swing)
     {
-        var h = walls[host];
-        if (h.Arc != null) yield break;
-        for (int k = 0; k < walls.Count; k++)
+        if (!_swingOf.TryGetValue(door.Symbol.Family.Id, out var how)) _swingOf[door.Symbol.Family.Id] = how = MeasureSwing(door, level, at);
+        if (how is not var (hingeSign, swingSign, hingeAfterFacing)) return;
+        // where the hinge and the leaf are now, in plan
+        var hingeNow = door.HandOrientation * hingeSign;
+        var swingNow = door.FacingOrientation * swingSign;
+        if (swing is Vec2 s && door.CanFlipFacing && swingNow.DotProduct(new XYZ(Ft(s.X), Ft(s.Y), at.Z) - at) < 0)
         {
-            if (k == host || walls[k].Arc != null) continue;
-            var c = walls[k].Centerline;
-            if (SegmentCleaner.AngleDiffDeg(c.AngleDeg, h.Centerline.AngleDeg) > 5) continue;
-            if (Math.Abs(SegmentCleaner.Offset(c, center)) > (h.TypeThickness + walls[k].TypeThickness) / 2 + 100) continue;
-            double along = SegmentCleaner.Along(c, center);
-            if (along < width / 2 || along > c.Length - width / 2) continue;
-            yield return k;
+            door.flipFacing();
+            hingeNow = hingeNow * hingeAfterFacing;
         }
+        if (hinge is Vec2 h && door.CanFlipHand && hingeNow.DotProduct(new XYZ(Ft(h.X), Ft(h.Y), at.Z) - at) < 0) door.flipHand();
     }
 
-    readonly Dictionary<BuiltInCategory, Family?> _families = new();
+    /// <summary>
+    /// For a door family: the hinge's side along the door's hand direction and the leaf's side along its facing
+    /// (+1 or -1), read from the swing arc in a plan view; and whether flipping the facing also moves the hinge
+    /// to the other jamb (-1) or not (+1). Null when the family draws no swing arc.
+    /// </summary>
+    (int, int, int)? MeasureSwing(FamilyInstance door, Level level, XYZ at)
+    {
+        var view = new FilteredElementCollector(_doc).OfClass(typeof(ViewPlan)).Cast<ViewPlan>()
+            .FirstOrDefault(v => !v.IsTemplate && v.ViewType == ViewType.FloorPlan && v.GenLevel?.Id == level.Id);
+        if (view == null) return null;
+        Arc? Swing()
+        {
+            _doc.Regenerate();
+            var found = new List<Arc>();
+            void Walk(GeometryElement? g)
+            {
+                if (g == null) return;
+                foreach (var o in g)
+                    if (o is Arc a) found.Add(a);
+                    else if (o is GeometryInstance gi) Walk(gi.GetInstanceGeometry());
+            }
+            Walk(door.get_Geometry(new Options { View = view }));
+            return found.OrderByDescending(a => a.Radius).FirstOrDefault();
+        }
+        var before = Swing();
+        if (before == null || !door.CanFlipFacing) return null;
+        int hinge = Math.Sign((before.Center - at).DotProduct(door.HandOrientation));
+        int leaf = Math.Sign((before.Evaluate(0.5, true) - at).DotProduct(door.FacingOrientation));
+        var hingeWorld = before.Center - at;
+        door.flipFacing();
+        var after = Swing();
+        door.flipFacing();
+        int moves = after != null && (after.Center - at).DotProduct(hingeWorld) < 0 ? -1 : 1;
+        if (hinge == 0 || leaf == 0) return null;
+        Log.Add($"Door family '{door.Symbol.Family.Name}': swing read from its plan symbol.");
+        return (hinge, leaf, moves);
+    }
 
     /// <summary>
     /// A wall-hosted family of the category: one in the project (a fixed window or a single
@@ -884,12 +940,14 @@ public sealed class ModelBuilder
     /// </summary>
     Family? HostedFamily(BuiltInCategory category, string what)
     {
-        if (_families.TryGetValue(category, out var cached)) return cached;
-        string prefer = category == BuiltInCategory.OST_Windows ? "Fixed" : "Single";
+        if (_families.TryGetValue(what, out var cached)) return cached;
+        bool dbl = what.StartsWith("Double", StringComparison.OrdinalIgnoreCase);
+        string prefer = category == BuiltInCategory.OST_Windows ? "Fixed" : dbl ? "Double" : "Single";
         var inProject = new FilteredElementCollector(_doc).OfClass(typeof(Family)).Cast<Family>()
             .Where(f => f.FamilyCategory?.Id.Value == (long)category && f.FamilyPlacementType == FamilyPlacementType.OneLevelBasedHosted)
+            .Where(f => dbl || !f.Name.Contains("Double", StringComparison.OrdinalIgnoreCase))
             .ToList();
-        var family = inProject.FirstOrDefault(f => f.Name.Contains(prefer, StringComparison.OrdinalIgnoreCase)) ?? inProject.FirstOrDefault();
+        var family = inProject.FirstOrDefault(f => f.Name.Contains(prefer, StringComparison.OrdinalIgnoreCase)) ?? (dbl ? null : inProject.FirstOrDefault());
         if (family == null)
             foreach (var root in _doc.Application.GetLibraryPaths().Values.Where(Directory.Exists))
             {
@@ -897,7 +955,7 @@ public sealed class ModelBuilder
                 try
                 {
                     files = Directory.EnumerateFiles(root, $"*{prefer}*.rfa", SearchOption.AllDirectories)
-                        .Where(f => f.Contains(what, StringComparison.OrdinalIgnoreCase)).Take(10).ToList();
+                        .Where(f => f.Contains(dbl ? "Door" : what, StringComparison.OrdinalIgnoreCase)).Take(10).ToList();
                 }
                 catch { /* unreadable folder */ }
                 foreach (var file in files)
@@ -910,8 +968,13 @@ public sealed class ModelBuilder
                 if (family != null) break;
             }
         if (family != null) Log.Add($"{what}s use the family '{family.Name}'.");
+        else if (dbl)
+        {
+            Log.Add("No double door family in the project or Revit library: double doors use the single door family. Load one and run again for real double doors.");
+            family = HostedFamily(category, "Door");
+        }
         else Log.Add($"No wall-hosted {what.ToLowerInvariant()} family in the project or Revit library: {what.ToLowerInvariant()}s are cut as plain openings. Load one and run again for real {what.ToLowerInvariant()}s.");
-        return _families[category] = family;
+        return _families[what] = family;
     }
 
     FamilySymbol HostedType(Family family, string what, double widthMm, double heightMm)

@@ -41,6 +41,9 @@ public sealed class SurveyDialog : Form
     {
         _model = model;
         _lidarFiles = lidarFiles;
+        var settings = SurveyToRevit.Shared.UserSettings.Load();
+        _slab.Value = Math.Clamp(settings.SlabMm, (int)_slab.Minimum, (int)_slab.Maximum);
+        _radius.Value = Math.Clamp(settings.SiteRadiusM, (int)_radius.Minimum, (int)_radius.Maximum);
         Text = "Survey to Revit";
         Font = new Font("Segoe UI", 9f);
         StartPosition = FormStartPosition.CenterScreen;

@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Revit 2025 add-in. Revit 2025 runs on .NET 8 (Windows).
+  <!-- The Survey to Revit "engine": the tools themselves. Revit does not load this directly; the launcher
+       (SurveyToRevit.Launcher) loads the newest installed copy on each click.
+       Revit 2025 add-in. Revit 2025 runs on .NET 8 (Windows).
        The Revit API reference assemblies come from NuGet so the project builds
        without Revit installed; at run time Revit supplies its own copies. -->
   <PropertyGroup>
@@ -11,8 +13,8 @@
     <RootNamespace>SurveyToRevit.Revit</RootNamespace>
     <PlatformTarget>x64</PlatformTarget>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <!-- Release number: the Update button compares it with the zip it finds -->
-    <Version>0.12.6</Version>
+    <!-- Release number: the Updater compares it with the zips it finds, and names the install folder after it -->
+    <Version>0.13.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,7 +25,7 @@
   <ItemGroup>
     <!-- File picker. Referenced directly (rather than UseWindowsForms) so the add-in also builds on Linux CI. -->
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
-    <!-- Ribbon button images (Revit's ribbon takes WPF images). -->
+    <!-- Revit's UI API refers to WPF types. -->
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
   </ItemGroup>
 
@@ -32,12 +34,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Resources\icon16.png" LogicalName="icon16.png" />
-    <EmbeddedResource Include="Resources\icon32.png" LogicalName="icon32.png" />
+    <Compile Include="..\Shared\UserSettings.cs" Link="UserSettings.cs" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="SurveyToRevit.addin" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="Resources\icon96.png" LogicalName="icon96.png" />
   </ItemGroup>
 
 </Project>

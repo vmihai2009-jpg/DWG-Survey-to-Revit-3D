@@ -28,6 +28,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- the launcher's install and loading logic has no Revit in it, so it is tested here -->
+    <Compile Include="..\..\src\SurveyToRevit.Launcher\Releases.cs" Link="Launcher\Releases.cs" />
+    <Compile Include="..\..\src\SurveyToRevit.Launcher\Installer.cs" Link="Launcher\Installer.cs" />
+    <Compile Include="..\..\src\SurveyToRevit.Launcher\EngineContext.cs" Link="Launcher\EngineContext.cs" />
+    <Compile Include="..\..\src\Shared\UserSettings.cs" Link="Launcher\UserSettings.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\SurveyToRevit.Core\SurveyToRevit.Core.csproj" />
   </ItemGroup>
 

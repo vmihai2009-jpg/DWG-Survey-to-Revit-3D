@@ -13,13 +13,17 @@ Revit 2025 add-in that turns 2D DWG building surveys into an editable concept mo
 
 Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`.
 
-**Updating (from v0.12.3):** save the new release zip into Downloads (no need to unzip), click **Update** on the Survey to Revit panel, confirm, then restart Revit. Nothing needs uninstalling. The button's tooltip shows the installed version.
+**Updating (from v0.13):** save the new release zip into Downloads (or the folder set in **Settings**; no need to unzip), click **Updater** on the Survey to Revit panel and choose *Install*. It works straight away, with no Revit restart: the next click on *Build from Survey* runs the new version. When the panel shows **Update ready**, a newer zip is waiting.
+
+**Coming from v0.12.x:** v0.13 changes how the add-in is installed, so do this once: put the v0.13 zip in Downloads, click the old **Update** button, then restart Revit. After that, updates no longer need a restart.
+
+**Settings** (on the panel): where the Updater looks for zips, whether to show *Update ready*, which installed version runs (to go back to an earlier one), how many older versions to keep, the default slab thickness and LiDAR radius, and where reports are saved. Saved per user in `%AppData%\SurveyToRevit\settings.json`.
 
 ## Use
 
 1. Open a Revit project (try a copy first).
 2. *Barr Gazetas* tab → *Survey to Revit* panel → **Build from Survey**.
-3. Select the survey DWGs (all of them is fine: elevations, sections and duplicate plans are skipped).
+3. The start window shows the version and the three steps. Add the survey DWGs (by file, a whole folder, or drag and drop; all of them is fine: elevations, sections and duplicate plans are skipped), and LiDAR tiles if wanted, then *Next*.
 4. A window lists each floor found: tick the floors to build, correct a level or ceiling height if needed (highlighted floors need checking), and choose what to build:
    - link each plan at its level (shared coordinates),
    - walls ("Concept Wall 160mm" etc., in 20 mm steps), joined across door gaps; façades as thick as the masonry drawn; no two walls in the same place; glazed screens as curtain walls,
@@ -56,7 +60,9 @@ dotnet test                 # geometry tests, no Revit needed
 ```
 
 - `src/SurveyToRevit.Core` – Revit-free geometry engine (mm).
-- `src/SurveyToRevit.Revit` – Revit add-in.
+- `src/SurveyToRevit.Launcher` – what Revit loads at start-up: the ribbon panel, Updater and Settings. Each tool click loads the newest installed engine (`src/SurveyToRevit.Revit` + Core) into its own load context from memory, so updates need no restart. Keep it small; its version only changes when it does.
+- `src/SurveyToRevit.Revit` – the engine's Revit side (commands, dialogs, model builder).
+- `src/Shared` – settings file shared by both.
 - `tests/SurveyToRevit.Core.Tests` – synthetic-plan tests.
 - `tools/SurveyLab` – `dotnet run --project tools/SurveyLab -- <folder of DWGs> --out <dir>` runs the engine without Revit and writes a report, SVG wall previews, the wall-material map per floor and a loose-ends check of the linework.
 

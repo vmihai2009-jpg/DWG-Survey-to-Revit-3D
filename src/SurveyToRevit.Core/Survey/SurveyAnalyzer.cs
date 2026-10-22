@@ -267,6 +267,19 @@ public static class SurveyAnalyzer
                 levels[i].Windows = levels[i].Windows.Where(w => at.ContainsKey(before[w.HostIndex])).Select(w => w with { HostIndex = at[before[w.HostIndex]] }).ToList();
                 levels[i].Walls = levels[i].Walls with { Walls = all, ThicknessGroups = all.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
             }
+            var filling = OpeningCuts.FillingOpenings(levels[i].Walls.Walls,
+                levels[i].Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm)).Concat(levels[i].Doors.Select(d => (d.HostIndex, d.Center, d.WidthMm))));
+            if (filling.Count > 0)
+            {
+                var old = levels[i].Walls.Walls;
+                var map = new int[old.Count];
+                var kept = new List<WallCandidate>();
+                for (int k = 0; k < old.Count; k++) { map[k] = filling.Contains(k) ? -1 : kept.Count; if (map[k] >= 0) kept.Add(old[k]); }
+                levels[i].Doors = levels[i].Doors.Select(d => d with { HostIndex = map[d.HostIndex] }).ToList();
+                levels[i].Windows = levels[i].Windows.Select(w => w with { HostIndex = map[w.HostIndex] }).ToList();
+                levels[i].Walls = levels[i].Walls with { Walls = kept, ThicknessGroups = kept.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
+                notes.Add($"{levels[i].Name}: {filling.Count} short walls across window or door openings (their reveals) left out.");
+            }
             if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
         }
 
