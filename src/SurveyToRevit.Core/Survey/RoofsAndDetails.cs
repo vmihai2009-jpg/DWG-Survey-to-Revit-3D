@@ -84,6 +84,10 @@ public static class RoofsAndDetails
         // shapes on the wall layers that no wall fits (a corner pier, a round or half-round column,
         // a stepped buttress): generic models filled to the drawn outline, full storey. Thin slivers
         // (under 100 mm across everywhere) are left, as are pieces too big to be one shape.
+        // a generic model cannot be cut by a window or door, so masonry where one stands is left to the wall
+        var openings = l.Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm)).Concat(l.Doors.Select(d => (d.HostIndex, d.Center, d.WidthMm)))
+            .Where(o => o.HostIndex >= 0 && o.HostIndex < l.Walls.Walls.Count)
+            .Select(o => OpeningPoints(l.Walls.Walls[o.HostIndex], o.Center, o.WidthMm)).ToList();
         foreach (var piece in l.Leftover)
         {
             if (piece.Count == 0) continue;
@@ -91,9 +95,21 @@ public static class RoofsAndDetails
             var mask = grid.Mark(piece);
             if (!grid.Grow(mask, -2).Any(x => x)) continue;
             foreach (var p in grid.Outlines(mask, 0.03e6).Where(p => p.Area <= 25e6))
-                result.Add(new DetailShape(LayerRole.Wall, p, 0, storey));
+                if (!openings.Any(o => o.Any(q => FacadeWalls.Contains(p, q))))
+                    result.Add(new DetailShape(LayerRole.Wall, p, 0, storey));
         }
         return result;
+    }
+
+    // points across an opening's full width and through the wall's depth (and a little beyond, for reveals)
+    static List<Vec2> OpeningPoints(WallCandidate host, Vec2 center, double width)
+    {
+        var dir = host.Arc == null ? host.Centerline.Direction : (center - host.Arc.Center).Perp().Normalized();
+        var n = dir.Perp(); double half = host.TypeThickness / 2 + 300;
+        var pts = new List<Vec2>();
+        for (double a = -width / 2 + 50; a <= width / 2 - 50; a += 100)
+            for (double b = -half; b <= half; b += 50) pts.Add(center + dir * a + n * b);
+        return pts;
     }
 
     // lines near each other (within reach) as groups, so each grid stays small

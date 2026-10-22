@@ -20,7 +20,7 @@ public static class WindowFinder
 
     public static List<WindowCandidate> Find(IReadOnlyList<Segment2> windowLines, IReadOnlyList<WallCandidate> walls,
         IReadOnlyList<(Vec2 Position, string Value)> texts, double storeyMm,
-        double joinMm = 150, double textReach = 2000, double minWidth = 300, double maxWidth = 4000, Polygon2? outline = null)
+        double joinMm = 150, double textReach = 2000, double minWidth = 300, double maxWidth = 4000, Polygon2? outline = null, double? ceilingMm = null)
     {
         var lines = windowLines.Where(l => l.Length >= 20).ToList();
         // touching lines → one window (union-find)
@@ -81,6 +81,8 @@ public static class WindowFinder
             double sill = f.Sill ?? usualSill ?? DefaultSillMm;
             double head = f.Head is double hv && hv > sill + 300 ? hv
                         : usualHead is double uh && uh > sill + 300 ? uh : sill + DefaultHeightMm;
+            // a head the survey did not see ("H Not Visible": hidden above the ceiling) is not guessed above the ceiling
+            if (f.Head == null && ceilingMm is double cl && cl > sill + 300) head = Math.Min(head, cl);
             head = Math.Min(head, storeyMm - 150);
             if (head - sill < 300) continue;
             result.Add(new WindowCandidate(f.Host, f.Center, f.Width, Math.Round(sill / 10) * 10, Math.Round(head / 10) * 10, f.Sill != null && f.Head != null)

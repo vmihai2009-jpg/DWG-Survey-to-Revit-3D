@@ -242,7 +242,7 @@ public static class SurveyAnalyzer
             }
             levels[i].CeilingFromSurvey = surveyedCeiling != null;
             levels[i].CeilingHeightMm = surveyedCeiling ?? DefaultCeilingHeight(levels[i].WallHeightMm);
-            levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm, outline: levels[i].Outline);
+            levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm, outline: levels[i].Outline, ceilingMm: levels[i].CeilingHeightMm);
             var doorWalls = new List<WallCandidate>();
             // door linework far from the building (a stray block, a copy on the sheet border) is not a door here
             var nearBuilding = Near(levels[i].Walls.Walls, 3000);
