@@ -12,7 +12,8 @@ public sealed record DoorCandidate(int HostIndex, Vec2 Center, double WidthMm, d
 /// closing on one point are a double door (leaf-and-a-half too). The door goes in the wall that
 /// runs through the opening; where no wall does (a door between two wall ends, as in a lobby),
 /// a wall is made across the opening, jamb to jamb, to hold it. A leaf with no swing drawn
-/// falls back to the leaf alone. A door head height written nearby ("dh 2.03") is used;
+/// falls back to the leaf alone; a long narrow band of door linework with no swing is a sliding
+/// or folding door across its length. A door head height written nearby ("dh 2.03") is used;
 /// otherwise 2100 mm.
 /// </summary>
 public static class DoorFinder
@@ -26,7 +27,9 @@ public static class DoorFinder
         IReadOnlyList<Arc2>? arcs = null, List<WallCandidate>? added = null, IReadOnlyList<double>? wallSizes = null)
     {
         var lines = doorLines.Concat((arcs ?? Array.Empty<Arc2>()).Where(a => a.Radius >= minLeaf && a.Radius <= maxLeaf * 1.05).SelectMany(a => a.Tessellate(100))).ToList();
-        var pool = lines.SelectMany(l => new[] { l.A, l.B }).ToList();
+        // where a swing can end: ends of the short pieces a swing is drawn with (arc chords, polyline
+        // segments), not ends of long jamb or frame lines that happen to lie a leaf's length away
+        var pool = lines.Where(l => l.Length <= 250).SelectMany(l => new[] { l.A, l.B }).ToList();
 
         // 1. openings from leaf + swing: hinge H, leaf tip T, swing end C with |HC| = |HT|
         var openings = new List<(Vec2 H, Vec2 C, double R)>();
@@ -112,7 +115,54 @@ public static class DoorFinder
             doors.Add(new DoorCandidate(host, center, width, DefaultHeightMm, dbl));
         }
 
-        // 4. leaves drawn without a swing
+        // 4. doors with no swing (sliding and folding doors, shutters): door linework that is a long,
+        // narrow band across an opening (a line, or a thin box of lines), 600 mm to 4 m long
+        var parent = Enumerable.Range(0, doorLines.Count).ToArray();
+        int Root(int i) => parent[i] == i ? i : parent[i] = Root(parent[i]);
+        for (int i = 0; i < doorLines.Count; i++)
+            for (int j = i + 1; j < doorLines.Count; j++)
+                if (Math.Min(Math.Min(doorLines[i].A.DistanceTo(doorLines[j].A), doorLines[i].A.DistanceTo(doorLines[j].B)),
+                             Math.Min(doorLines[i].B.DistanceTo(doorLines[j].A), doorLines[i].B.DistanceTo(doorLines[j].B))) < 30) parent[Root(i)] = Root(j);
+        foreach (var g in Enumerable.Range(0, doorLines.Count).GroupBy(Root))
+        {
+            var group = g.Select(i => doorLines[i]).ToList();
+            if (group.Any(usedLeaves.Contains)) continue;
+            var main = group.OrderByDescending(l => l.Length).First();
+            if (main.Length < 600 || main.Length > 4000) continue;
+            var dir = main.Direction; var nrm = dir.Perp();
+            var pts = group.SelectMany(l => new[] { l.A, l.B }).ToList();
+            double a0 = pts.Min(p => (p - main.A).Dot(dir)), a1 = pts.Max(p => (p - main.A).Dot(dir));
+            double b0 = pts.Min(p => (p - main.A).Dot(nrm)), b1 = pts.Max(p => (p - main.A).Dot(nrm));
+            if (b1 - b0 > 250 || a1 - a0 > 4000) continue;
+            var a = main.A + dir * a0 + nrm * ((b0 + b1) / 2); var b = main.A + dir * a1 + nrm * ((b0 + b1) / 2);
+            var mid = (a + b) * 0.5; double width = Math.Round(a.DistanceTo(b) / 10) * 10;
+            if (doors.Any(d => d.Center.DistanceTo(mid) < (d.WidthMm + width) / 2)) continue;
+            int host = -1; double bestOff = double.MaxValue;
+            for (int k = 0; k < all.Count; k++)
+            {
+                var w = all[k];
+                if (w.Curtain) continue;
+                double along = WallGeometry.Along(w, mid), off = Math.Abs(WallGeometry.Offset(w, mid));
+                if (off > w.TypeThickness / 2 + 150 || along < width / 2 - 100 || along > WallGeometry.Length(w) - width / 2 + 100) continue;
+                if (SegmentCleaner.AngleDiffDeg(WallGeometry.AngleDegAt(w, Math.Clamp(along, 0, WallGeometry.Length(w))), main.AngleDeg) > 8) continue;
+                if (off < bestOff) { bestOff = off; host = k; }
+            }
+            // a lone line exactly on a wall's centre line is linework along the wall, not a door panel
+            if (host >= 0 && group.Count < 3 && bestOff < 20) continue;
+            if (host < 0)
+            {
+                if (added == null) continue;
+                var wall = AcrossOpening(a, b, all, wallSizes);
+                added.Add(wall); all.Add(wall); host = all.Count - 1;
+            }
+            var hw = all[host];
+            double at = Math.Clamp(WallGeometry.Along(hw, mid), width / 2, Math.Max(width / 2, WallGeometry.Length(hw) - width / 2));
+            var center = WallGeometry.PointAt(hw, at);
+            if (wins.Any(w => w.HostIndex == host && w.Center.DistanceTo(center) < (w.WidthMm + width) / 2)) continue;
+            doors.Add(new DoorCandidate(host, center, width, DefaultHeightMm, width > 1500));
+        }
+
+        // 5. leaves drawn without a swing
         foreach (var d in LeafDoors(doorLines.Where(l => !usedLeaves.Contains(l) && l.Length >= 500 && l.Length <= maxLeaf).ToList(), all))
         {
             bool clash = doors.Any(k => k.Center.DistanceTo(d.Center) < (k.WidthMm + d.WidthMm) / 2)
@@ -140,6 +190,14 @@ public static class DoorFinder
                 if (hit != null) { hits.Add(hit); return q + dir * Math.Min(hit.TypeThickness / 2, 50); }
             }
             return p;
+        }
+        // square to the building where it nearly is (swing ends are drawn by hand)
+        double ang = Math.Atan2(u.Y, u.X) * 180 / Math.PI, snap = Math.Round(ang / 90) * 90;
+        if (Math.Abs(ang - snap) <= 6)
+        {
+            var mid = (a + b) * 0.5; double half = a.DistanceTo(b) / 2;
+            u = new Vec2(Math.Cos(snap * Math.PI / 180), Math.Sin(snap * Math.PI / 180));
+            a = mid - u * half; b = mid + u * half;
         }
         var s = Run(a, u * -1); var e = Run(b, u);
         double t = hits.Count > 0 ? Math.Clamp(hits.Min(h => h.TypeThickness), 100, 300) : 100;

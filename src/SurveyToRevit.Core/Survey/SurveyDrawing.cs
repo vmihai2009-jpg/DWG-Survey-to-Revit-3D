@@ -22,6 +22,8 @@ public sealed class SurveyDrawing
     public required IReadOnlyList<Segment2> OpeningLines { get; init; }
     /// <summary>Curved lines (arcs, bulged polyline pieces) on wall layers, radius 1 m or more.</summary>
     public IReadOnlyList<Arc2> WallArcs { get; init; } = Array.Empty<Arc2>();
+    /// <summary>Small arcs and circles on wall layers (round columns, half-round pilasters): shapes, not walls.</summary>
+    public IReadOnlyList<Arc2> SmallWallArcs { get; init; } = Array.Empty<Arc2>();
     /// <summary>Door swing arcs (centre at the hinge, radius = leaf width).</summary>
     public IReadOnlyList<Arc2> DoorArcs { get; init; } = Array.Empty<Arc2>();
     public required IReadOnlyList<SurveyText> Texts { get; init; }
@@ -82,7 +84,7 @@ public sealed class SurveyDrawing
                 case Arc arc when role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role):
                     arcs.Add((role, new Arc2(new Vec2(arc.Center.X, arc.Center.Y), arc.Radius, arc.StartAngle, arc.EndAngle, layer)));
                     break;
-                case Circle circle when LayerRules.IsFeature(role):
+                case Circle circle when LayerRules.IsFeature(role) || role is LayerRole.Wall:
                     // round columns, rooflights: a full turn
                     arcs.Add((role, new Arc2(new Vec2(circle.Center.X, circle.Center.Y), circle.Radius, 0, 2 * Math.PI, layer)));
                     break;
@@ -115,6 +117,7 @@ public sealed class SurveyDrawing
             FeatureLines = features.Select(Seg).Concat(scaled.Where(a => LayerRules.IsFeature(a.role))
                 .SelectMany(a => a.arc.Tessellate(Math.Max(20, Math.Min(250, a.arc.Length / 16)))).Select(x => x with { Source = System.IO.Path.GetFileName(path) })).ToList(),
             DoorArcs = scaled.Where(a => a.role == LayerRole.Door).Select(a => a.arc).ToList(),
+            SmallWallArcs = scaled.Where(a => a.role is LayerRole.Wall && !(a.arc.Radius >= 1000 && a.arc.Length >= 200)).Select(a => a.arc).ToList(),
             WallArcs = scaled.Where(a => a.role is LayerRole.Wall or LayerRole.CurtainWall && a.arc.Radius >= 1000 && a.arc.Length >= 200).Select(a => a.arc with { Layer = a.arc.Layer }).ToList(),
             Path = path,
             Name = DrawingName.Parse(path),

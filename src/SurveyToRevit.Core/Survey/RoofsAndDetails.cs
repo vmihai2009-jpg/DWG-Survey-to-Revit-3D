@@ -81,6 +81,18 @@ public static class RoofsAndDetails
                     result.Add(new DetailShape(role, p, bottom, height));
             }
         }
+        // shapes on the wall layers that no wall fits (a corner pier, a round or half-round column,
+        // a stepped buttress): generic models filled to the drawn outline, full storey. Thin slivers
+        // (under 100 mm across everywhere) are left, as are pieces too big to be one shape.
+        foreach (var piece in l.Leftover)
+        {
+            if (piece.Count == 0) continue;
+            var grid = ShapeGrid.Around(piece, 25, 100);
+            var mask = grid.Mark(piece);
+            if (!grid.Grow(mask, -2).Any(x => x)) continue;
+            foreach (var p in grid.Outlines(mask, 0.03e6).Where(p => p.Area <= 25e6))
+                result.Add(new DetailShape(LayerRole.Wall, p, 0, storey));
+        }
         return result;
     }
 

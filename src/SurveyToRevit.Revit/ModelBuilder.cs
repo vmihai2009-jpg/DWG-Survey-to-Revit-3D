@@ -505,7 +505,7 @@ public sealed class ModelBuilder
 
     static readonly Dictionary<LayerRole, string> DetailNames = new()
     {
-        [LayerRole.Wall] = "Survey - wall fill", [LayerRole.Column] = "Survey - column", [LayerRole.Chimney] = "Survey - chimney",
+        [LayerRole.Wall] = "Survey - pier", [LayerRole.Column] = "Survey - column", [LayerRole.Chimney] = "Survey - chimney",
         [LayerRole.Fitting] = "Survey - fitting", [LayerRole.Balcony] = "Survey - balcony", [LayerRole.Rooflight] = "Survey - rooflight",
         [LayerRole.Railing] = "Survey - railing",
     };

@@ -167,7 +167,7 @@ public static class SurveyAnalyzer
             var code = p.Name.LevelCode!;
             // The grid reading says where wall material is (robust to gaps in the linework);
             // walls are then the drawn face pairs with wall material between them (exact thickness).
-            var raster = new PlanRaster { Debug = PlanDebug == null ? null : (w, h, c) => PlanDebug(code, w, h, c) }.Analyze(lines.Concat(arcs.SelectMany(a => a.Tessellate(100))).ToList(), openings, markers, tol);
+            var raster = new PlanRaster { Debug = PlanDebug == null ? null : (w, h, c) => PlanDebug(code, w, h, c) }.Analyze(lines.Concat(arcs.SelectMany(a => a.Tessellate(100))).Concat(p.SmallWallArcs.Select(frame.ToModel).SelectMany(a => a.Tessellate(40))).ToList(), openings, markers, tol);
             var walls = WallDetector.Detect(lines, tol, openings, markers, raster.IsMaterial);
             var found = WallDetector.FromSingleLines(walls.UnpairedSegments, walls.Walls.ToList(), raster.Outline, tol, rules.FacesOnly.IsMatch);
             var facade = FacadeWalls.Consolidate(found, raster.Outline, tol);
@@ -189,7 +189,9 @@ public static class SurveyAnalyzer
             if (raster.Leftover != null)
                 level.Leftover = raster.Leftover(pt => facade.Any(w => RoomBounds.Gap(w, pt) <= 30))
                     .Where(cells => cells.Count > 0 && !unclearLeft.Any(u => FacadeWalls.Contains(u.Outline, cells[cells.Count / 2]))) // unclear areas have their own generic model
-                    .Where(cells => !IsDoorSwing(cells, openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList())).ToList();
+                    .Where(cells => !IsDoorSwing(cells, openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList()))
+                    // drawn material only (not the outline's fill where it bridges a concave façade)
+                    .Where(cells => raster.IsMaterial == null || cells.Count(raster.IsMaterial) >= 0.7 * cells.Count).ToList();
             level.Stairs = StairFinder.Find(p.FeatureLines.Where(f => rules.Classify(f.Layer) == LayerRole.Stair).Select(frame.ToModel).ToList(),
                 p.Texts.Select(t => (frame.ToModel(t.Position), t.Value)).ToList());
             doorInput[level] = openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList();
@@ -292,7 +294,7 @@ public static class SurveyAnalyzer
         var near = doorLines.Where(d => Math.Max(d.A.X, d.B.X) >= x0 && Math.Min(d.A.X, d.B.X) <= x1 && Math.Max(d.A.Y, d.B.Y) >= y0 && Math.Min(d.A.Y, d.B.Y) <= y1).ToList();
         if (near.Count == 0) return false;
         int touching = cells.Count(c => near.Any(d => Dist(c, d) <= 60));
-        return touching >= cells.Count * 0.15;
+        return touching >= cells.Count * 0.05;
     }
 
     static double Dist(Vec2 p, Segment2 s)

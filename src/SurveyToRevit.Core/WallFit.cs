@@ -17,8 +17,8 @@ public static class WallFit
     }
 
     /// <summary>
-    /// Widens an outside wall inwards to the material behind it (inside, closed pockets such as
-    /// WC cubicles can read as material, so only façades are widened): the material depth is sampled
+    /// Widens an outside wall to the material along both its faces (inside the building closed
+    /// pockets such as WC cubicles can read as material, so only façades are widened): the material depth is sampled
     /// every 100 mm (away from the ends, where cross walls join) and the median is taken, so
     /// window reveals and the odd notch do not count.
     /// </summary>
@@ -27,15 +27,13 @@ public static class WallFit
         if (w.Arc != null || w.Curtain || w.Centerline.Length < 800) return w;
         var c = w.Centerline;
         var n = c.Direction.Perp();
-        if (WindowFinder.Outward(w, c.Length / 2, outline) is not Vec2 outward) return w;
-        int inward = outward.Dot(n) > 0 ? 1 : 0; // the side (0: +n, 1: -n) facing into the building
+        if (!IsFacade(c.Mid, n, w.TypeThickness / 2, outline)) return w;
         double half = w.TypeThickness / 2;
         double room = tol.MaxWallThickness - w.TypeThickness;
         if (room < minExtra) return w;
         var extra = new double[2];
         for (int side = 0; side < 2; side++)
         {
-            if (side != inward) continue;
             double sign = side == 0 ? 1 : -1;
             var depths = new List<double>();
             for (double t = 300; t <= c.Length - 300; t += 100)
@@ -105,6 +103,18 @@ public static class WallFit
             }
         }
         return kept;
+    }
+
+    // the outline's edge lies within 1.5 m of the wall on one side only
+    static bool IsFacade(Vec2 mid, Vec2 n, double half, Polygon2 outline)
+    {
+        bool plus = false, minus = false;
+        for (double d = half + 100; d <= half + 1500; d += 100)
+        {
+            plus |= !FacadeWalls.Contains(outline, mid + n * d);
+            minus |= !FacadeWalls.Contains(outline, mid - n * d);
+        }
+        return plus != minus;
     }
 
     static bool Inside(WallCandidate w, Vec2 p)

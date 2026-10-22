@@ -97,6 +97,17 @@ public sealed class PlanRaster
         {
             if (!pocket[i] || comp[i] != 0) continue;
             var cells = Component(i, pocket, comp, ++compId, queue);
+            // a pocket open to the outside with no line between (left by the gap closing where a
+            // façade is concave) is outside
+            int edge = 0, open = 0;
+            foreach (var c in cells)
+                foreach (int nb in new[] { c - 1, c + 1, c - _w, c + _w })
+                {
+                    if (nb < 0 || nb >= n || pocket[nb]) continue;
+                    edge++;
+                    if (label[nb] == -1 && !line[nb]) open++;
+                }
+            if (open > 0.15 * edge) { foreach (var c in cells) label[c] = -1; continue; }
             double width = (2 * cells.Max(c => pocketDist[c]) - 1) * Px;
             if (width <= tol.MaxWallThickness)
                 foreach (var c in cells) solid[c] = true;
@@ -164,7 +175,7 @@ public sealed class PlanRaster
             var comp2 = new int[n];
             var pieces = new List<List<Vec2>>();
             int k = 0;
-            int minCells = (int)(0.15e6 / (Px * Px));
+            int minCells = (int)(0.03e6 / (Px * Px));
             for (int i = 0; i < n; i++)
                 if (left[i] && comp2[i] == 0)
                 {

@@ -40,7 +40,7 @@ public static class PierWalls
             // a pier is a compact block: a long strip is a missed wall run (left for the unclear-area
             // check), and a ragged shape that fills little of its box is not a wall piece at all
             if (length > tol.MaxOpeningWidth) continue;
-            if (cells.Count * cell * cell < 0.6 * length * thick) continue;
+            if (cells.Count * cell * cell < 0.9 * length * thick) continue; // round or odd shapes are left for generic models
             var mid = c + u * ((a0 + a1) / 2) + v * ((b0 + b1) / 2);
             var line = new Segment2(mid - u * (length / 2), mid + u * (length / 2), "pier", "pier");
             // a chunky pier still takes a standard type (the largest), so it adds no new wall type
