@@ -244,21 +244,17 @@ public sealed class ModelBuilder
     void BuildElements(Dictionary<SurveyLevel, (Level level, ViewPlan? view)> levels, BuildOptions o)
     {
         var ordered = levels.OrderBy(kv => kv.Value.level.Elevation).ToList();
-        using var t = new Transaction(_doc, "Survey model");
-        var options = t.GetFailureHandlingOptions();
-        options.SetFailuresPreprocessor(new WarningSwallower());
-        t.SetFailureHandlingOptions(options);
-        t.Start();
         var wallTypes = new Dictionary<double, WallType>();
         for (int i = 0; i < ordered.Count; i++)
         {
             var (sl, (level, view)) = (ordered[i].Key, ordered[i].Value);
             var above = i + 1 < ordered.Count ? ordered[i + 1].Value.level : null;
-            int removed = DeleteGenerated(sl.Code);
+            int removed = 0;
             var done = new List<string>();
+            Step($"{sl.Name}: clearing an earlier run", done, () => removed = DeleteGenerated(sl.Code));
 
             var created = new Dictionary<WallCandidate, Wall>(ReferenceEqualityComparer.Instance);
-            if (o.Walls)
+            if (o.Walls) Step($"{sl.Name}: walls, windows and doors", done, () =>
             {
                 int made = 0, skipped = 0;
                 foreach (var w in sl.Walls.Walls)
@@ -284,22 +280,23 @@ public sealed class ModelBuilder
                 done.Add($"{made} walls" + (skipped > 0 ? $" ({skipped} skipped)" : ""));
                 if (o.Windows && sl.Windows.Count > 0) done.Add(CreateWindows(sl, level, created));
                 if (o.Doors && sl.Doors.Count > 0) done.Add(CreateDoors(sl, level, created));
-            }
+            });
 
             var loop = sl.Outline != null ? Loop(sl.Outline, level.Elevation) : null;
+            Floor? floor = null;
             if (o.Floors)
             {
                 if (loop == null) done.Add("no floor (outline not found)");
-                else try
+                else Step($"{sl.Name}: floor slab", done, () =>
                 {
-                    var floor = Floor.Create(_doc, new List<CurveLoop> { loop }, FloorTypeFor(o.SlabThicknessMm).Id, level.Id);
+                    floor = Floor.Create(_doc, new List<CurveLoop> { loop }, FloorTypeFor(o.SlabThicknessMm).Id, level.Id);
                     Mark(floor, sl.Code, "Floor");
                     done.Add($"floor {sl.Outline!.Area / 1e6:0} m²");
-                    if (o.Stairs && sl.StairVoids.Count > 0) done.Add(StairVoids(floor, sl, level));
-                }
-                catch (Exception ex) { done.Add($"no floor ({ex.Message})"); }
+                });
+                if (floor != null && floor.IsValidObject && o.Stairs && sl.StairVoids.Count > 0)
+                    Step($"{sl.Name}: stair openings", done, () => done.Add(StairVoids(floor, sl, level)));
             }
-            if (o.Ceilings && loop != null)
+            if (o.Ceilings && loop != null) Step($"{sl.Name}: ceiling", done, () =>
             {
                 try
                 {
@@ -309,8 +306,8 @@ public sealed class ModelBuilder
                     done.Add($"ceiling at {sl.CeilingHeightMm:0} mm");
                 }
                 catch (Exception ex) { done.Add($"no ceiling ({ex.Message})"); }
-            }
-            if (o.UnclearAsGenericModels && sl.Unclear.Count > 0)
+            });
+            if (o.UnclearAsGenericModels && sl.Unclear.Count > 0) Step($"{sl.Name}: areas to check", done, () =>
             {
                 int made = 0;
                 foreach (var u in sl.Unclear)
@@ -328,16 +325,29 @@ public sealed class ModelBuilder
                     catch { /* a sliver Revit refuses is skipped */ }
                 }
                 done.Add($"{made} generic models for areas to check");
-            }
-            if (o.Details && sl.Details.Count > 0) done.Add(BuildDetails(sl, level));
-            if (o.Rooms && o.Walls)
+            });
+            if (o.Details && sl.Details.Count > 0) Step($"{sl.Name}: generic models", done, () => done.Add(BuildDetails(sl, level)));
+            if (o.Rooms && o.Walls) Step($"{sl.Name}: rooms", done, () =>
             {
                 try { done.Add(CreateRooms(sl, level, view)); }
                 catch (Exception ex) { done.Add($"no rooms ({ex.Message})"); }
-            }
+            });
             Log.Add($"{sl.Name}: {string.Join(", ", done)}" + (removed > 0 ? $" (replacing {removed} elements from an earlier run)." : "."));
         }
-        t.Commit();
+    }
+
+    /// <summary>
+    /// One part of a floor in its own transaction, so a part Revit refuses (and rolls back)
+    /// costs only that part, never the floor or the whole build; the log says which part.
+    /// </summary>
+    void Step(string what, List<string> done, Action build)
+    {
+        using var t = new Transaction(_doc, "Survey: " + what);
+        t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()).SetClearAfterRollback(true));
+        t.Start();
+        try { build(); }
+        catch (Exception ex) { t.RollBack(); done.Add($"{what} failed ({ex.Message})"); Log.Add($"WARNING: {what} failed: {ex.Message}"); return; }
+        if (t.Commit() != TransactionStatus.Committed) { done.Add($"{what} refused by Revit"); Log.Add($"WARNING: {what} was refused by Revit and left out."); }
     }
 
     /// <summary>
@@ -1032,6 +1042,11 @@ public sealed class ModelBuilder
             {
                 if (f.GetSeverity() == FailureSeverity.Warning) a.DeleteWarning(f);
                 else if (f.GetSeverity() == FailureSeverity.Error && f.HasResolutions()) { a.ResolveFailure(f); resolved = true; }
+                else if (f.GetSeverity() == FailureSeverity.Error && f.GetFailingElementIds().Count > 0)
+                {
+                    // no fix offered: drop the elements Revit cannot make rather than lose the whole step
+                    try { a.DeleteElements(f.GetFailingElementIds().ToList()); resolved = true; } catch { }
+                }
             }
             return resolved ? FailureProcessingResult.ProceedWithCommit : FailureProcessingResult.Continue;
         }
