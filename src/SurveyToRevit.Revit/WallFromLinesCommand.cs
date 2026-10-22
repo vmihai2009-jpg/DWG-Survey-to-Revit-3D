@@ -152,6 +152,7 @@ public class WallFromLinesCommand : IExternalCommand
         double type = WallDetector.SnapThickness(thickness, tol.WallTypeSizes);
 
         using var t = new Transaction(doc, "Wall from survey lines");
+        t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new ModelBuilder.WarningSwallower()));
         t.Start();
         var wallType = ModelBuilder.WallTypeFor(doc, type);
         var above = new FilteredElementCollector(doc).OfClass(typeof(Level)).Cast<Level>()

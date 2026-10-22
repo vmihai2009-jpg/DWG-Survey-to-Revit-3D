@@ -85,6 +85,7 @@ public sealed class ModelBuilder
         var f = _model.Frame;
         double e = Ft(f.BasePoint.X), n = Ft(f.BasePoint.Y), angle = f.RotationDeg * Math.PI / 180;
         using var t = new Transaction(_doc, "Survey coordinates");
+        t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
         t.Start();
         var location = _doc.ActiveProjectLocation;
         foreach (var sign in new[] { 1.0, -1.0 })
@@ -114,6 +115,7 @@ public sealed class ModelBuilder
     {
         var result = new Dictionary<SurveyLevel, (Level, ViewPlan?)>();
         using var t = new Transaction(_doc, "Survey levels");
+        t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
         t.Start();
         var existing = new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().ToList();
         var planType = new FilteredElementCollector(_doc).OfClass(typeof(ViewFamilyType)).Cast<ViewFamilyType>()
@@ -149,6 +151,7 @@ public sealed class ModelBuilder
             var file = System.IO.Path.GetFileName(sl.Plan.Path);
             if (view == null || linked.Contains(file)) { Log.Add($"Already linked: {file}"); continue; }
             using var t = new Transaction(_doc, "Link survey plan");
+            t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
             t.Start();
             var options = new DWGImportOptions
             {
@@ -206,6 +209,7 @@ public sealed class ModelBuilder
         }
         if (offMm <= 10) { Log.Add($"{file} lines up with the walls."); return; }
         using var t = new Transaction(_doc, "Align survey link");
+        t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
         t.Start();
         inst.Pinned = false;
         ElementTransformUtils.MoveElement(_doc, inst.Id, off);
@@ -456,6 +460,7 @@ public sealed class ModelBuilder
                     catch (Exception ex) { firstError ??= ex.Message; }
                 if (ok) { native++; continue; }
                 using var t = new Transaction(_doc, "Survey stair (blocks)");
+                t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
                 t.Start();
                 try { StairBlocks(stair, level, sl.Code, rise); blocks++; t.Commit(); }
                 catch (Exception ex) { firstError ??= ex.Message; t.RollBack(); }
@@ -473,6 +478,7 @@ public sealed class ModelBuilder
         var id = scope.Start(level.Id, above.Id);
         using (var t = new Transaction(_doc, "Survey stair runs"))
         {
+            t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
             t.Start();
             var runs = new List<Autodesk.Revit.DB.Architecture.StairsRun>();
             int done = 0;
@@ -562,6 +568,7 @@ public sealed class ModelBuilder
         var type = new FilteredElementCollector(_doc).OfClass(typeof(ViewFamilyType)).Cast<ViewFamilyType>().FirstOrDefault(v => v.ViewFamily == ViewFamily.Section);
         if (type == null) { Log.Add("Sections: the project has no section view type; no section views made."); return; }
         using var t = new Transaction(_doc, "Survey sections");
+        t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
         t.Start();
         double low = levels.Min(l => l.Elevation) - Ft(2000), high = levels.Max(l => l.Elevation) + Ft(6000);
         var made = new List<string>();
@@ -703,11 +710,24 @@ public sealed class ModelBuilder
         if (_phase != null && phase != null && !phase.IsReadOnly) phase.Set(_phase.Id);
     }
 
-    /// <summary>Closed loop at the given height; edges too short for Revit are dropped.</summary>
+    /// <summary>
+    /// Closed loop at the given height; edges too short for Revit are dropped, and edges a hair
+    /// off square (under 1°, ends under 30 mm out) are made exactly square, so Revit does not
+    /// warn "Line in Sketch is slightly off axis".
+    /// </summary>
     static CurveLoop? Loop(Polygon2 poly, double z)
     {
+        var vs = poly.Vertices.Select(v => (X: v.X, Y: v.Y)).ToArray();
+        for (int pass = 0; pass < 2; pass++)
+            for (int i = 0; i < vs.Length; i++)
+            {
+                int j = (i + 1) % vs.Length;
+                double dx = vs[j].X - vs[i].X, dy = vs[j].Y - vs[i].Y;
+                if (Math.Abs(dy) > 0 && Math.Abs(dy) < 30 && Math.Abs(dy) < Math.Abs(dx) * 0.0175) { double y = (vs[i].Y + vs[j].Y) / 2; vs[i].Y = y; vs[j].Y = y; }
+                else if (Math.Abs(dx) > 0 && Math.Abs(dx) < 30 && Math.Abs(dx) < Math.Abs(dy) * 0.0175) { double x = (vs[i].X + vs[j].X) / 2; vs[i].X = x; vs[j].X = x; }
+            }
         var pts = new List<XYZ>();
-        foreach (var v in poly.Vertices)
+        foreach (var v in vs)
         {
             var p = new XYZ(Ft(v.X), Ft(v.Y), z);
             if (pts.Count == 0 || pts[^1].DistanceTo(p) > 0.01) pts.Add(p); // ~3 mm
@@ -1003,7 +1023,7 @@ public sealed class ModelBuilder
     /// Revit apply its own fix for errors on single elements (usually deleting the element that
     /// cannot be made, e.g. a window that does not fit), so one bad element never cancels the run.
     /// </summary>
-    sealed class WarningSwallower : IFailuresPreprocessor
+    internal sealed class WarningSwallower : IFailuresPreprocessor
     {
         public FailureProcessingResult PreprocessFailures(FailuresAccessor a)
         {
