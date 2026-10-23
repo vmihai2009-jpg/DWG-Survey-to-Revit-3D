@@ -248,6 +248,8 @@ public static class SurveyAnalyzer
                       (better is { Count: > 0 } ? " (its next most common spot height). Check it." : " (an assumed storey). Check it."));
         }
 
+        // which outside walls line up with the façade on the floors below and above (the building's face)
+        var stacked = FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList());
         for (int i = 0; i < levels.Count; i++)
         {
             var next = levels.Skip(i + 1).FirstOrDefault(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm > levels[i].ElevationMm);
@@ -306,14 +308,44 @@ public static class SurveyAnalyzer
                 levels[i].Walls = levels[i].Walls with { Walls = kept, ThicknessGroups = kept.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
                 notes.Add($"{levels[i].Name}: {filling.Count} short walls across window or door openings (their reveals) left out.");
             }
+            // a window drawn in a lining or inner leaf goes in the building's face just outside it, cutting through on the way
+            var seats = FacadeStack.Seat(levels[i].Walls.Walls, levels[i].Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm)).ToList(), levels[i].Outline, stacked);
+            if (seats.Count > 0)
+            {
+                var wins = levels[i].Windows.ToList();
+                foreach (var r in seats)
+                    wins[r.Window] = wins[r.Window] with { HostIndex = r.Host, Center = r.Center, Outward = r.Out, AlsoCut = wins[r.Window].AlsoCut.Concat(r.AlsoCut).ToList() };
+                levels[i].Windows = wins;
+                notes.Add($"{levels[i].Name}: {seats.Count} windows drawn in an inner wall moved into the façade outside them (the face that lines up with the floors above and below); the inner walls are cut through.");
+            }
             // a window must look out: a wall drawn outside it (a balcony balustrade, a parapet) is low, not a storey high
             var inFront = OpeningCuts.InFront(levels[i].Walls.Walls,
                 levels[i].Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm)).ToList(), levels[i].Outline, levels[i].Doors.Select(d => d.HostIndex), out var through);
+            // a thin wall outside a window set in a real wall (one standing on the floors below and above) is a glazed
+            // balustrade or screen, even with glass drawn in it on the window layer: low, and its "windows" are its glass
+            var screens = through.Where(t =>
+            {
+                var host = levels[i].Walls.Walls[levels[i].Windows[t.Window].HostIndex]; var front = levels[i].Walls.Walls[t.Wall];
+                return stacked.GetValueOrDefault(host) >= FacadeStack.StackedShare && front.TypeThickness <= 200 && front.TypeThickness <= host.TypeThickness - 100;
+            }).ToList();
+            if (screens.Count > 0)
+            {
+                foreach (var t in screens)
+                    inFront[t.Wall] = Math.Min(inFront.GetValueOrDefault(t.Wall, double.MaxValue), levels[i].Windows[t.Window].SillMm);
+                var screenWalls = screens.Select(t => t.Wall).ToHashSet();
+                through = through.Where(t => !screenWalls.Contains(t.Wall)).ToList();
+                var glass = levels[i].Windows.Count(w => screenWalls.Contains(w.HostIndex));
+                var kept = levels[i].Windows.Select((w, k) => (w, k)).Where(x => !screenWalls.Contains(x.w.HostIndex)).ToList();
+                var newIndex = kept.Select((x, n) => (x.k, n)).ToDictionary(x => x.k, x => x.n);
+                through = through.Where(t => newIndex.ContainsKey(t.Window)).Select(t => (newIndex[t.Window], t.Wall, t.At)).ToList();
+                levels[i].Windows = kept.Select(x => x.w).ToList();
+                notes.Add($"{levels[i].Name}: {screenWalls.Count} thin walls outside windows in the main walls read as glazed balustrades (low walls); {glass} panes drawn in them left out.");
+            }
             if (through.Count > 0)
             {
                 var wins = levels[i].Windows.ToList();
                 foreach (var g in through.GroupBy(t => t.Window))
-                    wins[g.Key] = wins[g.Key] with { AlsoCut = g.Select(t => (t.Wall, t.At)).ToList() };
+                    wins[g.Key] = wins[g.Key] with { AlsoCut = wins[g.Key].AlsoCut.Concat(g.Select(t => (t.Wall, t.At))).ToList() };
                 levels[i].Windows = wins;
                 notes.Add($"{levels[i].Name}: {through.Select(t => t.Window).Distinct().Count()} windows set in an inner wall also cut through the façade wall in front of them.");
             }
