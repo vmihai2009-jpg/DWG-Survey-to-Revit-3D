@@ -49,6 +49,7 @@ public class BuildFromSurveyCommand : IExternalCommand
 
         BuildOptions options;
         var downloaded = new LidarChoice();
+        var checks = model.Checks.ToList();
         while (true)
         {
             using var dialog = new SurveyDialog(model, model.Skipped.Count, lidar.Count, downloaded);
@@ -61,6 +62,9 @@ public class BuildFromSurveyCommand : IExternalCommand
                 try { options.Site = SiteContextBuilder.Build(lidar.Concat(downloaded.Files), model.Frame,
                     model.Levels.Where(l => l.Outline != null).Select(l => l.Outline!), dialog.SiteRadiusM, centreM: downloaded.Files.Count > 0 ? downloaded.Centre : null); }
                 catch (Exception ex) { TaskDialog.Show("Survey to Revit", "The LiDAR tiles could not be read, so the surroundings are skipped:\n" + ex.Message); }
+                // outside walls standing where the LiDAR sees nothing built go on the review list
+                try { checks.AddRange(LidarEnvelope.Check(lidar.Concat(downloaded.Files), model.Frame, model.Levels)); }
+                catch { /* the check is a help, never a reason to stop */ }
             }
             break;
         }
@@ -75,7 +79,21 @@ public class BuildFromSurveyCommand : IExternalCommand
             return Result.Failed;
         }
 
-        var logPath = SaveText("build", SurveyReport.Build(model) + "\nWHAT WAS DONE IN REVIT\n" + string.Join("\n", builder.Log.Select(l => "  - " + l)));
+        string? reviewPath = null;
+        ReviewList? review = null;
+        if (checks.Count > 0)
+        {
+            review = ReviewList.From(doc.Title, checks, model.Levels);
+            try { reviewPath = ReviewList.PathFor(UserSettings.Load().Reports, doc.Title); review.Save(reviewPath); }
+            catch
+            {
+                try { reviewPath = ReviewList.PathFor(UserSettings.DefaultReports, doc.Title); review.Save(reviewPath); }
+                catch { reviewPath = null; }
+            }
+        }
+        var logPath = SaveText("build", SurveyReport.Build(model)
+            + (checks.Count > model.Checks.Count ? "\nLIDAR CHECK\n" + string.Join("\n", checks.Skip(model.Checks.Count).Select(c => "  - " + c.Message)) + "\n" : "")
+            + "\nWHAT WAS DONE IN REVIT\n" + string.Join("\n", builder.Log.Select(l => "  - " + l)));
         var done = new TaskDialog("Survey to Revit")
         {
             MainInstruction = "Done",
@@ -83,7 +101,12 @@ public class BuildFromSurveyCommand : IExternalCommand
             CommonButtons = TaskDialogCommonButtons.Close,
         };
         done.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Open full log");
-        if (done.Show() == TaskDialogResult.CommandLink1) OpenFile(logPath);
+        if (review != null && reviewPath != null)
+            done.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, $"Open the review list ({review.Items.Count} places to look at)",
+                "Rooms with no way in, door symbols with no door, gaps in a column of windows and the like. Also on the ribbon: Review List.");
+        var pick = done.Show();
+        if (pick == TaskDialogResult.CommandLink1) OpenFile(logPath);
+        else if (pick == TaskDialogResult.CommandLink2 && review != null && reviewPath != null) ReviewListCommand.Open(review, reviewPath);
         return Result.Succeeded;
     }
 

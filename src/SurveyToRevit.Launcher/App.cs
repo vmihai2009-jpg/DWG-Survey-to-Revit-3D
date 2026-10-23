@@ -38,6 +38,20 @@ public class App : IExternalApplication
             Image = Icon("icon16.png"),
             LargeImage = Icon("icon32.png"),
         });
+        panel.AddStackedItems(
+            new PushButtonData("SurveyReviewList", "Review List", me, typeof(ReviewList).FullName)
+            {
+                ToolTip = "The places the last Build from Survey was unsure about (rooms with no way in, door symbols with no door, " +
+                          "gaps in a column of windows, walls stopping short...). Double-click one to go to it on its floor plan; " +
+                          "tick it off once looked at.",
+                Image = Icon("icon16.png"), LargeImage = Icon("icon32.png"),
+            },
+            new PushButtonData("SurveyScore", "Score", me, typeof(Score).FullName)
+            {
+                ToolTip = "With a reference model of the same building linked in (modelled by hand): counts the generated walls, " +
+                          "windows and doors that are right, off, missed or invented, level by level. Nothing is changed.",
+                Image = Icon("icon16.png"), LargeImage = Icon("icon32.png"),
+            });
         var stacked = panel.AddStackedItems(
             new PushButtonData("SurveyUpdater", "Updater", me, typeof(UpdaterCommand).FullName)
             {
