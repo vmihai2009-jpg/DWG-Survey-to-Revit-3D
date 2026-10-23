@@ -31,6 +31,18 @@ public sealed class BuildOptions
     public double SlabThicknessMm { get; set; } = 300;
     /// <summary>Surroundings from LiDAR (ground and neighbouring blocks); null for none.</summary>
     public SiteContext? Site { get; set; }
+    /// <summary>Overlay only: coordinates, levels, plan links and section views; nothing is built.</summary>
+    public bool OverlayOnly { get; set; }
+    /// <summary>Drawings that are not a floor plan (elevations, sections, roof plans...), each linked into a drafting view of its own.</summary>
+    public IReadOnlyList<string> OtherDrawings { get; set; } = Array.Empty<string>();
+
+    /// <summary>Options for the overlay: the project set up with the survey drawings aligned, nothing built.</summary>
+    public static BuildOptions Overlay(IReadOnlyList<string> otherDrawings) => new()
+    {
+        OverlayOnly = true, LinkPlans = true, Sections = true, OtherDrawings = otherDrawings,
+        Walls = false, Floors = false, Ceilings = false, Windows = false, Doors = false, Rooms = false,
+        UnclearAsGenericModels = false, Stairs = false, Details = false, Roofs = false,
+    };
 }
 
 /// <summary>
@@ -89,6 +101,13 @@ public sealed class ModelBuilder
         SetCoordinates();
         var levels = SetUpLevels();
         if (o.LinkPlans) LinkPlans(levels);
+        if (o.OtherDrawings.Count > 0) LinkOthers(o.OtherDrawings);
+        if (o.OverlayOnly)
+        {
+            if (o.Sections && _model.Sections.Any(x => x.Cut != null)) BuildSections(levels.Values.Select(v => v.level).ToList());
+            group.Assimilate();
+            return;
+        }
         // families first, outside the floor-by-floor transactions: making our own window family opens a family document
         if (o.Windows && _model.Levels.Any(l => l.Windows.Count > 0)) HostedFamily(BuiltInCategory.OST_Windows, "Window");
         BuildElements(levels, o);
@@ -220,11 +239,14 @@ public sealed class ModelBuilder
 
     void LinkPlans(Dictionary<SurveyLevel, (Level level, ViewPlan? view)> levels)
     {
-        var linked = new FilteredElementCollector(_doc).OfClass(typeof(CADLinkType)).Select(e => e.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // a sheet holding several floors is linked into each floor's plan (and lined up with that floor's walls)
+        bool InView(View view, string file) => new FilteredElementCollector(_doc, view.Id).OfClass(typeof(ImportInstance)).Cast<ImportInstance>()
+            .Any(i => _doc.GetElement(i.GetTypeId())?.Name.Equals(file, StringComparison.OrdinalIgnoreCase) == true);
         foreach (var (sl, (_, view)) in levels)
         {
             var file = System.IO.Path.GetFileName(sl.Plan.Path);
-            if (view == null || linked.Contains(file)) { Log.Add($"Already linked: {file}"); continue; }
+            if (view == null) continue;
+            if (InView(view, file)) { Log.Add($"Already linked: {file} in '{view.Name}'"); continue; }
             using var t = new Transaction(_doc, "Link survey plan");
             t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
             t.Start();
@@ -248,6 +270,42 @@ public sealed class ModelBuilder
                 catch (Exception ex) { Log.Add($"Could not check where {file} landed ({ex.Message}); check it by eye."); }
             }
             else { t.RollBack(); Log.Add($"WARNING: could not link {file}."); }
+        }
+    }
+
+    /// <summary>
+    /// The survey's other drawings (elevations, sections, roof plans, sheets not read as a floor), each linked into a
+    /// drafting view named after it, at the drawing's own origin: they are 2D sheets with no place in plan.
+    /// </summary>
+    void LinkOthers(IReadOnlyList<string> files)
+    {
+        var draftingType = new FilteredElementCollector(_doc).OfClass(typeof(ViewFamilyType)).Cast<ViewFamilyType>()
+            .FirstOrDefault(v => v.ViewFamily == ViewFamily.Drafting);
+        if (draftingType == null) { Log.Add("WARNING: the project has no drafting view type, so the other drawings were not linked."); return; }
+        var views = new FilteredElementCollector(_doc).OfClass(typeof(ViewDrafting)).Cast<View>().ToList();
+        foreach (var path in files)
+        {
+            var file = System.IO.Path.GetFileName(path);
+            var name = "Survey - " + System.IO.Path.GetFileNameWithoutExtension(path);
+            using var t = new Transaction(_doc, "Link survey drawing");
+            t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
+            t.Start();
+            try
+            {
+                var view = views.FirstOrDefault(v => v.Name == name);
+                if (view != null && new FilteredElementCollector(_doc, view.Id).OfClass(typeof(ImportInstance)).Any())
+                { t.RollBack(); Log.Add($"Already linked: {file} in '{name}'"); continue; }
+                if (view == null) { view = ViewDrafting.Create(_doc, draftingType.Id); view.Name = name; views.Add(view); }
+                var options = new DWGImportOptions { Placement = ImportPlacement.Origin, ThisViewOnly = true, ColorMode = ImportColorMode.Preserved };
+                if (_doc.Link(path, options, view, out ElementId id) && _doc.GetElement(id) is ImportInstance inst)
+                {
+                    inst.Pinned = true;
+                    t.Commit();
+                    Log.Add($"Linked {file} into the drafting view '{name}'.");
+                }
+                else { t.RollBack(); Log.Add($"WARNING: could not link {file}."); }
+            }
+            catch (Exception ex) { t.RollBack(); Log.Add($"WARNING: could not link {file} ({ex.Message})."); }
         }
     }
 

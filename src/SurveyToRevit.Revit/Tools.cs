@@ -11,6 +11,11 @@ public static class Tools
 {
     public static string[][] Buttons() =>
     [
+        ["overlay", "Overlay\\nSurvey",
+            "Set up the project from the survey without building anything: shared coordinates and base points, a level " +
+            "per floor (Ground Floor at 0), each floor plan DWG linked into its floor plan and lined up, section views, and " +
+            "the other drawings (elevations, sections) linked into drafting views of their own.",
+            typeof(OverlaySurveyCommand).FullName!, "Ribbon.icon16.png", "Ribbon.icon32.png"],
         ["review", "Review\\nList",
             "The places the last Build from Survey was unsure about (rooms with no way in, door symbols with no door, " +
             "gaps in a column of windows, walls stopping short...). Double-click one to go to it on its floor plan; " +

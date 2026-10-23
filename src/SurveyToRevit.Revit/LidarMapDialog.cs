@@ -28,6 +28,13 @@ public sealed class LidarMapDialog : Form
     readonly Button _use = new() { Text = "Download and use", Width = 140 };
     readonly string _folder = Path.Combine(Path.GetTempPath(), "SurveyToRevit-lidar-download");
     Bitmap? _relief;
+    // the step under way, how long it has taken and how much has come in (shown every second, so a slow server shows it is moving)
+    CancellationTokenSource? _cts;
+    readonly System.Windows.Forms.Timer _tick = new() { Interval = 1000 };
+    string _step = "";
+    DateTime _stepStart;
+    long _bytes;
+    bool _downloading, _roadsStep;
     PointF _centre;
     bool _dragging;
 
@@ -59,7 +66,7 @@ public sealed class LidarMapDialog : Form
                    "Open Government Licence; roads © OpenStreetMap contributors (ODbL).",
         };
         var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 44, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8, 6, 8, 6) };
-        var cancel = new Button { Text = "Cancel", Width = 100, DialogResult = DialogResult.Cancel };
+        var cancel = new Button { Text = "Cancel", Width = 100 };
         var centre = new Button { Text = "Back to the site", Width = 120 };
         bar.Controls.AddRange(new Control[] { cancel, _use, centre, _radius, new Label { Text = "Radius (m):", AutoSize = true, Padding = new Padding(0, 6, 0, 0) } });
         Controls.Add(_map);
@@ -67,6 +74,16 @@ public sealed class LidarMapDialog : Form
         Controls.Add(_status);
         Controls.Add(bar);
         CancelButton = cancel;
+        // Cancel stops a download under way (during the roads it skips them and keeps the LiDAR); otherwise it closes
+        cancel.Click += (_, _) =>
+        {
+            if (_downloading) { _cts?.Cancel(); return; }
+            _cts?.Cancel();
+            DialogResult = DialogResult.Cancel;
+            Close();
+        };
+        _tick.Tick += (_, _) => ShowStep();
+        FormClosing += (_, _) => _cts?.Cancel();
 
         _map.Paint += (_, e) => Draw(e.Graphics);
         _map.Resize += (_, _) => _map.Invalidate();
@@ -80,16 +97,29 @@ public sealed class LidarMapDialog : Form
     }
 
     static HttpClient Client() => new(new HttpClientHandler { DefaultProxyCredentials = CredentialCache.DefaultCredentials })
-    { Timeout = TimeSpan.FromMinutes(3) };
+    { Timeout = TimeSpan.FromMinutes(2) };
+
+    void Step(string what) { _step = what; _stepStart = DateTime.Now; _bytes = 0; ShowStep(); }
+    void ShowStep()
+    {
+        if (_step.Length == 0) return;
+        var secs = (int)(DateTime.Now - _stepStart).TotalSeconds;
+        _status.Text = $"{_step} {(_bytes > 0 ? $"{_bytes / 1048576.0:0.0} MB, " : "")}{secs} s" +
+                       (_downloading ? (_roadsStep ? " (Cancel skips the roads)" : " (Cancel stops)") : "");
+    }
+    IProgress<long> Bytes => new Progress<long>(b => _bytes = b);
 
     async Task LoadMap()
     {
-        _status.Text = "Loading the map from the Environment Agency…";
+        _cts = new CancellationTokenSource();
+        Step("Loading the map from the Environment Agency…");
+        _tick.Start();
         try
         {
             using var http = Client();
             double minE = Math.Floor(_home.X - _mapHalf), minN = Math.Floor(_home.Y - _mapHalf), maxE = Math.Ceiling(_home.X + _mapHalf), maxN = Math.Ceiling(_home.Y + _mapHalf);
-            var path = await LidarService.Download(http, LidarService.Dsm, minE, minN, maxE, maxN, Path.Combine(_folder, "map"));
+            var path = await LidarService.Download(http, LidarService.Dsm, minE, minN, maxE, maxN, Path.Combine(_folder, "map"), Bytes, _cts.Token);
+            _tick.Stop(); _step = "";
             var grid = await Task.Run(() => GeoRaster.Read(path, minE, minN, maxE, maxN));
             if (grid == null) { _status.Text = "The Environment Agency has no LiDAR here. You can still try the download, or use a zip from their website."; return; }
             var shade = await Task.Run(() => LidarService.ShadedRelief(grid));
@@ -99,7 +129,11 @@ public sealed class LidarMapDialog : Form
         }
         catch (Exception ex)
         {
-            _status.Text = "The map could not be loaded (" + ex.Message + "). The download may still work; or get a zip from the Environment Agency website.";
+            _tick.Stop(); _step = "";
+            if (IsDisposed) return;
+            _status.Text = ex is OperationCanceledException or TaskCanceledException
+                ? "The map took too long to load. The download may still work (it is a smaller area); or get a zip from the Environment Agency website."
+                : "The map could not be loaded (" + ex.Message + "). The download may still work; or get a zip from the Environment Agency website.";
         }
         _map.Invalidate();
     }
@@ -170,33 +204,47 @@ public sealed class LidarMapDialog : Form
     async Task Download()
     {
         _use.Enabled = false;
+        _cts?.Cancel();             // the map, if still loading
+        _cts = new CancellationTokenSource();
+        _downloading = true;
+        _tick.Start();
         try
         {
             using var http = Client();
             double r = RadiusM;
             double minE = Math.Floor(_centre.X - r), minN = Math.Floor(_centre.Y - r), maxE = Math.Ceiling(_centre.X + r), maxN = Math.Ceiling(_centre.Y + r);
             Files.Clear();
-            _status.Text = "Downloading the surface model (DSM)…";
-            Files.Add(await LidarService.Download(http, LidarService.Dsm, minE, minN, maxE, maxN, _folder));
-            _status.Text = "Downloading the ground model (DTM)…";
-            Files.Add(await LidarService.Download(http, LidarService.Dtm, minE, minN, maxE, maxN, _folder));
-            _status.Text = "Downloading the roads (OpenStreetMap)…";
-            try { Files.Add(await OsmRoads.Download(http, minE, minN, maxE, maxN, _folder)); }
+            Step("Downloading the surface model (DSM, 1 of 3)…");
+            Files.Add(await LidarService.Download(http, LidarService.Dsm, minE, minN, maxE, maxN, _folder, Bytes, _cts.Token));
+            Step("Downloading the ground model (DTM, 2 of 3)…");
+            Files.Add(await LidarService.Download(http, LidarService.Dtm, minE, minN, maxE, maxN, _folder, Bytes, _cts.Token));
+            _roadsStep = true;
+            Step("Downloading the roads (OpenStreetMap, 3 of 3)…");
+            var roadServer = new Progress<string>(host => Step($"Downloading the roads (OpenStreetMap {host}, 3 of 3)…"));
+            try { Files.Add(await OsmRoads.Download(http, minE, minN, maxE, maxN, _folder, roadServer, _cts.Token)); }
+            catch (OperationCanceledException) { /* skipped: the LiDAR is enough */ }
             catch (Exception ex) { MessageBox.Show(this, "The roads could not be downloaded, so the surroundings will have none:\n" + ex.Message, Text); }
+            Finish();
             DialogResult = DialogResult.OK;
             Close();
         }
         catch (Exception ex)
         {
-            _status.Text = "The download failed: " + ex.Message +
-                           " You can instead download a zip from the Environment Agency's LiDAR website and add it with the DWGs.";
+            Finish();
+            if (IsDisposed) return;
+            _status.Text = (ex is OperationCanceledException or TaskCanceledException
+                               ? (_cts.IsCancellationRequested ? "Download stopped." : "The Environment Agency did not answer in 2 minutes.")
+                               : "The download failed: " + ex.Message) +
+                           " Try again, a smaller radius, or download a zip from the Environment Agency's LiDAR website and add it with the DWGs.";
             _use.Enabled = true;
         }
     }
 
+    void Finish() { _tick.Stop(); _step = ""; _downloading = _roadsStep = false; }
+
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _relief?.Dispose();
+        if (disposing) { _relief?.Dispose(); _tick.Dispose(); _cts?.Dispose(); }
         base.Dispose(disposing);
     }
 }

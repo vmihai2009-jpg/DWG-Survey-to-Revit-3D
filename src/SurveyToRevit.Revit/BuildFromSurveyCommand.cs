@@ -110,7 +110,7 @@ public class BuildFromSurveyCommand : IExternalCommand
         return Result.Succeeded;
     }
 
-    static string SaveText(string kind, string text)
+    internal static string SaveText(string kind, string text)
     {
         var dir = UserSettings.Load().Reports;
         try { Directory.CreateDirectory(dir); }
@@ -120,7 +120,7 @@ public class BuildFromSurveyCommand : IExternalCommand
         return path;
     }
 
-    static void OpenFile(string path)
+    internal static void OpenFile(string path)
     {
         try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); } catch { /* no viewer: path is shown */ }
     }

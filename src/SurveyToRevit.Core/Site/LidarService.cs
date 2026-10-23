@@ -37,18 +37,33 @@ public static class LidarService
         return parts.Length >= 2 ? (parts[0], parts[1]) : ("E", "N");
     }
 
-    static async Task<(string Id, (string, string) Axes)> Find(HttpClient http, string service, string want)
+    static async Task<(string Id, (string, string) Axes)> Find(HttpClient http, string service, string want, CancellationToken cancel)
     {
-        var ids = CoverageIds(await http.GetStringAsync(CapabilitiesUrl(service)));
+        var ids = CoverageIds(await http.GetStringAsync(CapabilitiesUrl(service), cancel));
         var id = ids.FirstOrDefault(i => i.Contains(want, StringComparison.OrdinalIgnoreCase)) ?? ids.FirstOrDefault()
                  ?? throw new InvalidDataException($"The Environment Agency service '{service}' lists no data.");
-        return (id, AxisLabels(await http.GetStringAsync(DescribeUrl(service, id))));
+        return (id, AxisLabels(await http.GetStringAsync(DescribeUrl(service, id), cancel)));
     }
 
-    static async Task<byte[]> Get(HttpClient http, string url)
+    /// <summary>Reads an answer, reporting the bytes received so far (so a slow download shows it is moving).</summary>
+    internal static async Task<byte[]> Read(HttpResponseMessage response, IProgress<long>? progress, CancellationToken cancel)
     {
-        using var response = await http.GetAsync(url);
-        var bytes = await response.Content.ReadAsByteArrayAsync();
+        using var stream = await response.Content.ReadAsStreamAsync(cancel);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        int n;
+        while ((n = await stream.ReadAsync(chunk, cancel)) > 0)
+        {
+            buffer.Write(chunk, 0, n);
+            progress?.Report(buffer.Length);
+        }
+        return buffer.ToArray();
+    }
+
+    static async Task<byte[]> Get(HttpClient http, string url, IProgress<long>? progress, CancellationToken cancel)
+    {
+        using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancel);
+        var bytes = await Read(response, progress, cancel);
         var type = response.Content.Headers.ContentType?.MediaType ?? "";
         if (!response.IsSuccessStatusCode || type.Contains("xml"))
         {
@@ -60,10 +75,11 @@ public static class LidarService
     }
 
     /// <summary>Downloads the DSM or DTM (<paramref name="service"/>) for an area (grid metres) into a GeoTIFF in <paramref name="folder"/>.</summary>
-    public static async Task<string> Download(HttpClient http, string service, double minE, double minN, double maxE, double maxN, string folder)
+    public static async Task<string> Download(HttpClient http, string service, double minE, double minN, double maxE, double maxN, string folder,
+        IProgress<long>? progress = null, CancellationToken cancel = default)
     {
-        var (id, axes) = await Find(http, service, "Elevation");
-        var bytes = await Get(http, CoverageUrl(service, id, axes, minE, minN, maxE, maxN, "image/tiff"));
+        var (id, axes) = await Find(http, service, "Elevation", cancel);
+        var bytes = await Get(http, CoverageUrl(service, id, axes, minE, minN, maxE, maxN, "image/tiff"), progress, cancel);
         Directory.CreateDirectory(folder);
         var kind = service == Dtm ? "DTM" : "DSM";
         var path = Path.Combine(folder, $"EA_LIDAR_Composite_{kind}_1m_E{minE:0}_N{minN:0}_{maxE - minE:0}m.tif");

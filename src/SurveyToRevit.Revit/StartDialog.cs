@@ -36,7 +36,7 @@ public sealed class StartDialog : Form
 
     public IReadOnlyList<string> Files => _files.Items.Cast<ListViewItem>().Select(i => (string)i.Tag!).ToList();
 
-    public StartDialog(string projectName)
+    public StartDialog(string projectName, bool overlay = false)
     {
         Text = "Survey to Revit " + Version;
         Font = new Font("Segoe UI", 9f);
@@ -65,8 +65,16 @@ public sealed class StartDialog : Form
         var steps = new TableLayoutPanel { Dock = DockStyle.Top, Height = 78, ColumnCount = 3, BackColor = Soft, Padding = new Padding(12, 8, 12, 8) };
         for (int i = 0; i < 3; i++) steps.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3f));
         steps.Controls.Add(Step("1  Choose the survey", "The floor plan DWGs. Sections, elevations and duplicates are set aside on their own."), 0, 0);
-        steps.Controls.Add(Step("2  Check what was read", "Floors, levels, ceiling heights and what to build. Nothing changes until you press Build."), 1, 0);
-        steps.Controls.Add(Step("3  Build", "Coordinates, levels, linked plans, walls, windows, doors, floors, ceilings and rooms, in the Existing phase."), 2, 0);
+        if (overlay)
+        {
+            steps.Controls.Add(Step("2  Check the levels", "The floors and their heights found in the survey. Nothing changes until you press OK."), 1, 0);
+            steps.Controls.Add(Step("3  Overlay", "Coordinates, levels (Ground Floor at 0) and every drawing linked and lined up. Nothing is built."), 2, 0);
+        }
+        else
+        {
+            steps.Controls.Add(Step("2  Check what was read", "Floors, levels, ceiling heights and what to build. Nothing changes until you press Build."), 1, 0);
+            steps.Controls.Add(Step("3  Build", "Coordinates, levels, linked plans, walls, windows, doors, floors, ceilings and rooms, in the Existing phase."), 2, 0);
+        }
 
         // the file list
         _files.Columns.Add("File", 260);

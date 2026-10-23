@@ -30,17 +30,22 @@ public static class OsmRoads
         var (n, e) = Bng.ToWgs84(maxE, maxN);
         // the corners of a grid square are not the corners in latitude/longitude: a little extra all round
         string F(double v) => v.ToString("0.000000", CultureInfo.InvariantCulture);
-        return $"[out:json][timeout:60];way[\"highway\"]({F(Math.Min(s, n) - 0.0005)},{F(Math.Min(w, e) - 0.0008)},{F(Math.Max(s, n) + 0.0005)},{F(Math.Max(w, e) + 0.0008)});out geom;";
+        return $"[out:json][timeout:40];way[\"highway\"]({F(Math.Min(s, n) - 0.0005)},{F(Math.Min(w, e) - 0.0008)},{F(Math.Max(s, n) + 0.0005)},{F(Math.Max(w, e) + 0.0008)});out geom;";
     }
 
     /// <summary>Downloads the roads for an area (grid metres) into <paramref name="folder"/>; returns the file.</summary>
-    public static async Task<string> Download(HttpClient http, double minE, double minN, double maxE, double maxN, string folder)
+    public static async Task<string> Download(HttpClient http, double minE, double minN, double maxE, double maxN, string folder,
+        IProgress<string>? progress = null, CancellationToken cancel = default)
     {
         // Overpass refuses requests that do not say who is asking (406/403): name the add-in, ask for JSON
         string? text = null;
         var errors = new List<string>();
         foreach (var server in Overpass)
         {
+            // a busy server can keep a request waiting for minutes: give each one 45 s, then try the next
+            using var each = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            each.CancelAfter(TimeSpan.FromSeconds(45));
+            progress?.Report(new Uri(server).Host);
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, server)
@@ -50,12 +55,13 @@ public static class OsmRoads
                 request.Headers.UserAgent.ParseAdd($"SurveyToRevit/{typeof(OsmRoads).Assembly.GetName().Version} (Revit add-in; site context)");
                 request.Headers.Accept.ParseAdd("application/json");
                 request.Headers.Accept.ParseAdd("*/*;q=0.5");
-                using var response = await http.SendAsync(request);
-                var answer = await response.Content.ReadAsStringAsync();
+                using var response = await http.SendAsync(request, each.Token);
+                var answer = await response.Content.ReadAsStringAsync(each.Token);
                 if (response.IsSuccessStatusCode && answer.TrimStart().StartsWith("{")) { text = answer; break; }
                 errors.Add($"{new Uri(server).Host}: {(int)response.StatusCode}");
             }
-            catch (Exception ex) { errors.Add($"{new Uri(server).Host}: {ex.Message}"); }
+            catch (OperationCanceledException) when (!cancel.IsCancellationRequested) { errors.Add($"{new Uri(server).Host}: no answer in 45 s"); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { errors.Add($"{new Uri(server).Host}: {ex.Message}"); }
         }
         if (text == null) throw new InvalidDataException("OpenStreetMap (Overpass) refused the request (" + string.Join("; ", errors) + ").");
         Directory.CreateDirectory(folder);
