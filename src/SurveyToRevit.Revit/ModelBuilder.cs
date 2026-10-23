@@ -78,6 +78,8 @@ public sealed class ModelBuilder
         SetCoordinates();
         var levels = SetUpLevels();
         if (o.LinkPlans) LinkPlans(levels);
+        // families first, outside the floor-by-floor transactions: making our own window family opens a family document
+        if (o.Windows && _model.Levels.Any(l => l.Windows.Count > 0)) HostedFamily(BuiltInCategory.OST_Windows, "Window");
         BuildElements(levels, o);
         if (o.Stairs) BuildStairs(levels);
         if (o.Roofs && _model.Roofs.Count > 0) BuildRoofs(levels.Values.Select(v => v.level).ToList());
@@ -1217,7 +1219,7 @@ public sealed class ModelBuilder
             .ToList();
         var family = inProject.FirstOrDefault(f => f.Name.Contains(prefer, StringComparison.OrdinalIgnoreCase)) ?? (dbl ? null : inProject.FirstOrDefault());
         if (family == null)
-            foreach (var root in _doc.Application.GetLibraryPaths().Values.Where(Directory.Exists))
+            foreach (var root in ConceptFamilies.LibraryRoots(_doc.Application))
             {
                 List<string> files = new();
                 try
@@ -1227,7 +1229,7 @@ public sealed class ModelBuilder
                 }
                 catch { /* unreadable folder */ }
                 foreach (var file in files)
-                    if (_doc.LoadFamily(file, out Family loaded) && loaded.FamilyPlacementType == FamilyPlacementType.OneLevelBasedHosted)
+                    if (ConceptFamilies.Load(_doc, file) is Family loaded && loaded.FamilyPlacementType == FamilyPlacementType.OneLevelBasedHosted)
                     {
                         Log.Add($"{what} family loaded: {Path.GetFileName(file)}");
                         family = loaded;
@@ -1235,6 +1237,8 @@ public sealed class ModelBuilder
                     }
                 if (family != null) break;
             }
+        // a project and library with no window family at all (an office template): our own, made from Revit's template
+        if (family == null && category == BuiltInCategory.OST_Windows) family = ConceptFamilies.Window(_doc, Log);
         if (family != null) Log.Add($"{what}s use the family '{family.Name}'.");
         else if (dbl)
         {
