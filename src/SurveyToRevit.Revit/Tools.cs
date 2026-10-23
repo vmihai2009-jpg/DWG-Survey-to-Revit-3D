@@ -16,6 +16,12 @@ public static class Tools
             "per floor (Ground Floor at 0), each floor plan DWG linked into its floor plan and lined up, section views, and " +
             "the other drawings (elevations, sections) linked into drafting views of their own.",
             typeof(OverlaySurveyCommand).FullName!, "Ribbon.icon16.png", "Ribbon.icon32.png"],
+        ["interior", "Interior\\nSurvey",
+            "Build from Survey for a project that already holds the building's exterior (a surveyed façade model, here or " +
+            "linked in). The survey is fitted onto the existing façade and its levels, keeping the project's coordinates; " +
+            "façade walls, windows, shopfronts and roofs are left to the existing model, and the interior walls, doors, " +
+            "floors, ceilings, rooms and stairs are built to meet it.",
+            typeof(InteriorSurveyCommand).FullName!, "Ribbon.icon16.png", "Ribbon.icon32.png"],
         ["review", "Review\\nList",
             "The places the last Build from Survey was unsure about (rooms with no way in, door symbols with no door, " +
             "gaps in a column of windows, walls stopping short...). Double-click one to go to it on its floor plan; " +

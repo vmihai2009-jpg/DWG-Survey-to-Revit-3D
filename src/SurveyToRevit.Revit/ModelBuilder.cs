@@ -35,6 +35,17 @@ public sealed class BuildOptions
     public bool OverlayOnly { get; set; }
     /// <summary>Drawings that are not a floor plan (elevations, sections, roof plans...), each linked into a drafting view of its own.</summary>
     public IReadOnlyList<string> OtherDrawings { get; set; } = Array.Empty<string>();
+    /// <summary>
+    /// Interior Survey: the project already holds the exterior, so its coordinates, base points and levels are kept;
+    /// the survey (already fitted onto it) is built in the project's internal coordinates, with this datum.
+    /// </summary>
+    public bool Interior { get; set; }
+    /// <summary>Interior Survey: the survey height (mm) at the project's internal 0.</summary>
+    public double InteriorDatumMm { get; set; }
+    /// <summary>Interior Survey: the project's shared coordinates are the survey's, so plans link by shared coordinates.</summary>
+    public bool InteriorSharedPlacement { get; set; }
+    /// <summary>Interior Survey: the survey's turn in the project (degrees), for linking plans that are not placed by shared coordinates.</summary>
+    public double InteriorTurnDeg { get; set; }
 
     /// <summary>Options for the overlay: the project set up with the survey drawings aligned, nothing built.</summary>
     public static BuildOptions Overlay(IReadOnlyList<string> otherDrawings) => new()
@@ -97,10 +108,20 @@ public sealed class ModelBuilder
                                : $"All elements are created in the '{_phase.Name}' phase.");
         using var group = new TransactionGroup(_doc, "Build from survey");
         group.Start();
-        _datumMm = GroundFloorMm();
-        SetCoordinates();
-        var levels = SetUpLevels();
-        if (o.LinkPlans) LinkPlans(levels);
+        if (o.Interior)
+        {
+            // the exterior model already here owns the coordinates, base points and levels
+            _datumMm = o.InteriorDatumMm;
+            Log.Add($"Coordinates: the project's own are kept; the survey's {_datumMm / 1000:0.000} m is the project's 0.");
+            RoomBoundingLinks();
+        }
+        else
+        {
+            _datumMm = GroundFloorMm();
+            SetCoordinates();
+        }
+        var levels = SetUpLevels(o.Interior);
+        if (o.LinkPlans) LinkPlans(levels, o);
         if (o.OtherDrawings.Count > 0) LinkOthers(o.OtherDrawings);
         if (o.OverlayOnly)
         {
@@ -205,7 +226,7 @@ public sealed class ModelBuilder
         return ground.ElevationMm;
     }
 
-    Dictionary<SurveyLevel, (Level level, ViewPlan? view)> SetUpLevels()
+    Dictionary<SurveyLevel, (Level level, ViewPlan? view)> SetUpLevels(bool interior = false)
     {
         var result = new Dictionary<SurveyLevel, (Level, ViewPlan?)>();
         using var t = new Transaction(_doc, "Survey levels");
@@ -217,7 +238,22 @@ public sealed class ModelBuilder
         foreach (var sl in _model.Levels.Where(l => l.Include && !double.IsNaN(l.ElevationMm)))
         {
             var level = existing.FirstOrDefault(l => l.Name == sl.Name);
-            if (level == null)
+            if (interior)
+            {
+                // the existing model's own level at this height (the floors were put on them before building); never moved
+                level = existing.Where(l => Math.Abs(l.Elevation - Z(sl.ElevationMm)) < Ft(1)).OrderBy(l => Math.Abs(l.Elevation - Z(sl.ElevationMm))).FirstOrDefault();
+                if (level != null) Log.Add($"Level used: {sl.Name} on the existing level '{level.Name}'.");
+                else
+                {
+                    level = Level.Create(_doc, Z(sl.ElevationMm));
+                    var name = sl.Name;
+                    for (int k = 2; existing.Any(l => l.Name == name); k++) name = $"{sl.Name} (survey{(k > 2 ? " " + (k - 1) : "")})";
+                    level.Name = name;
+                    existing.Add(level);
+                    Log.Add($"Level created: {name} at {(sl.ElevationMm - _datumMm) / 1000:0.000} m ({sl.ElevationMm / 1000:0.000} m above survey datum)");
+                }
+            }
+            else if (level == null)
             {
                 level = Level.Create(_doc, Z(sl.ElevationMm));
                 level.Name = sl.Name;
@@ -237,8 +273,11 @@ public sealed class ModelBuilder
         return result;
     }
 
-    void LinkPlans(Dictionary<SurveyLevel, (Level level, ViewPlan? view)> levels)
+    void LinkPlans(Dictionary<SurveyLevel, (Level level, ViewPlan? view)> levels, BuildOptions? o = null)
     {
+        // Interior Survey in a project whose shared coordinates are not the survey's: placed centred, turned to the
+        // survey's turn, then moved onto the walls (CheckLinkPosition)
+        bool turn = o != null && o.Interior && !o.InteriorSharedPlacement;
         // a sheet holding several floors is linked into each floor's plan (and lined up with that floor's walls)
         bool InView(View view, string file) => new FilteredElementCollector(_doc, view.Id).OfClass(typeof(ImportInstance)).Cast<ImportInstance>()
             .Any(i => _doc.GetElement(i.GetTypeId())?.Name.Equals(file, StringComparison.OrdinalIgnoreCase) == true);
@@ -252,7 +291,7 @@ public sealed class ModelBuilder
             t.Start();
             var options = new DWGImportOptions
             {
-                Placement = ImportPlacement.Shared,
+                Placement = turn ? ImportPlacement.Centered : ImportPlacement.Shared,
                 Unit = ImportUnitFor(sl.Plan.MmPerUnit),
                 ThisViewOnly = true,
                 ColorMode = ImportColorMode.Preserved,
@@ -263,9 +302,14 @@ public sealed class ModelBuilder
             catch (Exception ex) { t.RollBack(); Log.Add($"WARNING: could not link {file} ({ex.Message})."); continue; }
             if (ok && _doc.GetElement(id) is ImportInstance inst)
             {
+                if (turn && Math.Abs(o!.InteriorTurnDeg) > 1e-6 && inst.get_BoundingBox(view) is BoundingBoxXYZ box)
+                {
+                    var c = (box.Min + box.Max) / 2;
+                    ElementTransformUtils.RotateElement(_doc, inst.Id, Line.CreateBound(c, c + XYZ.BasisZ), o.InteriorTurnDeg * Math.PI / 180);
+                }
                 inst.Pinned = true;
                 t.Commit();
-                Log.Add($"Linked {file} into '{view.Name}' using shared coordinates.");
+                Log.Add(turn ? $"Linked {file} into '{view.Name}' (turned {o!.InteriorTurnDeg:0.00}° to the project)." : $"Linked {file} into '{view.Name}' using shared coordinates.");
                 try { CheckLinkPosition(inst, sl); }
                 catch (Exception ex) { Log.Add($"Could not check where {file} landed ({ex.Message}); check it by eye."); }
             }
@@ -476,6 +520,26 @@ public sealed class ModelBuilder
                 }
                 catch (Exception ex) { done.Add($"no ceiling ({ex.Message})"); }
             });
+            if ((o.Floors || o.Ceilings) && sl.MoreOutlines.Count > 0) Step($"{sl.Name}: other floor parts", done, () =>
+            {
+                // a floor the existing model splits (Interior Survey): each other part gets its own slab and ceiling
+                int parts = 0;
+                foreach (var part in sl.MoreOutlines)
+                    try
+                    {
+                        if (Loop(part, level.Elevation) is not CurveLoop l) continue;
+                        if (o.Floors) Mark(Floor.Create(_doc, new List<CurveLoop> { l }, FloorTypeFor(o.SlabThicknessMm).Id, level.Id), sl.Code, "Floor");
+                        if (o.Ceilings && Loop(part, level.Elevation) is CurveLoop cl)
+                        {
+                            var ceiling = Ceiling.Create(_doc, new List<CurveLoop> { cl }, CeilingTypeFor().Id, level.Id);
+                            ceiling.get_Parameter(BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM)?.Set(Ft(sl.CeilingHeightMm));
+                            Mark(ceiling, sl.Code, "Ceiling");
+                        }
+                        parts++;
+                    }
+                    catch { /* a part Revit refuses is left out */ }
+                done.Add($"{parts} more floor part{(parts == 1 ? "" : "s")}");
+            });
             if (o.UnclearAsGenericModels && sl.Unclear.Count > 0) Step($"{sl.Name}: areas to check", done, () =>
             {
                 int made = 0;
@@ -504,6 +568,21 @@ public sealed class ModelBuilder
             });
             Log.Add($"{sl.Name}: {string.Join(", ", done)}" + (removed > 0 ? $" (replacing {removed} elements from an earlier run)." : "."));
         }
+    }
+
+    /// <summary>
+    /// Interior Survey: linked models (the exterior) bound rooms, so rooms close against the existing façade.
+    /// </summary>
+    void RoomBoundingLinks()
+    {
+        var types = new FilteredElementCollector(_doc).OfClass(typeof(RevitLinkType)).Cast<RevitLinkType>()
+            .Where(lt => lt.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING) is Parameter p && !p.IsReadOnly && p.AsInteger() == 0).ToList();
+        if (types.Count == 0) return;
+        using var t = new Transaction(_doc, "Survey: linked models bound rooms");
+        t.Start();
+        foreach (var lt in types) lt.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING).Set(1);
+        t.Commit();
+        Log.Add($"Room Bounding turned on for {string.Join(", ", types.Select(x => x.Name))}, so rooms close against the existing façade.");
     }
 
     /// <summary>

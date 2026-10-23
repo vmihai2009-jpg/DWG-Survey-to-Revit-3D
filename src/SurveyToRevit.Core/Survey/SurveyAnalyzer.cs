@@ -39,6 +39,10 @@ public sealed record SurveyLevel(
 {
     /// <summary>Floor level above survey datum (mm). Editable before building.</summary>
     public double ElevationMm { get; set; } = ElevationMm;
+    /// <summary>The floor's outline (slab edge); Interior Survey trims it to the existing façade's inner face.</summary>
+    public Polygon2? Outline { get; set; } = Outline;
+    /// <summary>Further floor parts with slabs and ceilings of their own (Interior Survey: a floor the existing model splits in two).</summary>
+    public IReadOnlyList<Polygon2> MoreOutlines { get; set; } = Array.Empty<Polygon2>();
     /// <summary>Walls (walls made to hold doors in empty openings are added after the doors are read).</summary>
     public WallDetectionResult Walls { get; set; } = Walls;
     /// <summary>Wall height: up to the next level, or the default for the top level.</summary>
@@ -141,7 +145,7 @@ public static class SurveyAnalyzer
     /// <summary>Development aid: receives each floor's classified grid (level code, width, height, classes).</summary>
     public static Action<string, int, int, byte[]>? PlanDebug { get; set; }
 
-    public static SurveyModel Analyze(IEnumerable<string> paths, Tolerances? tol = null, LayerRules? rules = null)
+    public static SurveyModel Analyze(IEnumerable<string> paths, Tolerances? tol = null, LayerRules? rules = null, SurveyFrame? frame = null)
     {
         tol ??= Tolerances.Default;
         rules ??= LayerRules.Default;
@@ -196,7 +200,8 @@ public static class SurveyAnalyzer
                 skipped.Add(new(other.Name.FileName, $"same floor as {best.Name.FileName}; used that one"));
         }
 
-        var frame = MakeFrame(chosen, tol);
+        // a frame given by the caller (Interior Survey: the existing model's own coordinates) is used as it is
+        frame ??= MakeFrame(chosen, tol);
         var sections = new List<SurveySection>();
         foreach (var sheet in sectionSheets)
         {
