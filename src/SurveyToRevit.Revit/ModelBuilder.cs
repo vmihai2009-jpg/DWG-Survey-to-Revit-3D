@@ -52,7 +52,17 @@ public sealed class ModelBuilder
         _doc = doc; _model = model;
         var phases = doc.Phases.Cast<Phase>().ToList();
         _phase = phases.FirstOrDefault(p => p.Name.Contains("Existing", StringComparison.OrdinalIgnoreCase)) ?? phases.FirstOrDefault();
+        // a model already built: its internal 0 is wherever the shared elevation says (the Ground Floor, from 0.18.2)
+        try { _datumMm = Mm(doc.ActiveProjectLocation.GetProjectPosition(XYZ.Zero).Elevation); } catch { _datumMm = 0; }
     }
+
+    /// <summary>
+    /// The survey height (mm above survey datum, AOD) of the project's 0: the Ground Floor. Levels read 0 at the
+    /// Ground Floor from the project base point; the shared elevation (and the survey point) keep the survey's AOD.
+    /// </summary>
+    double _datumMm;
+    /// <summary>A survey height (mm AOD) as a Revit internal height (feet above the Ground Floor).</summary>
+    double Z(double mmAod) => Ft(mmAod - _datumMm);
 
     readonly Phase? _phase;
 
@@ -75,6 +85,7 @@ public sealed class ModelBuilder
                                : $"All elements are created in the '{_phase.Name}' phase.");
         using var group = new TransactionGroup(_doc, "Build from survey");
         group.Start();
+        _datumMm = GroundFloorMm();
         SetCoordinates();
         var levels = SetUpLevels();
         if (o.LinkPlans) LinkPlans(levels);
@@ -96,19 +107,19 @@ public sealed class ModelBuilder
     void SetCoordinates()
     {
         var f = _model.Frame;
-        double e = Ft(f.BasePoint.X), n = Ft(f.BasePoint.Y), angle = f.RotationDeg * Math.PI / 180;
+        double e = Ft(f.BasePoint.X), n = Ft(f.BasePoint.Y), z = Ft(_datumMm), angle = f.RotationDeg * Math.PI / 180;
         using var t = new Transaction(_doc, "Survey coordinates");
         t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
         t.Start();
         var location = _doc.ActiveProjectLocation;
         foreach (var sign in new[] { 1.0, -1.0 })
         {
-            location.SetProjectPosition(XYZ.Zero, new ProjectPosition(e, n, 0, sign * angle));
-            if (CheckInternalToShared(location, e, n, angle))
+            location.SetProjectPosition(XYZ.Zero, new ProjectPosition(e, n, z, sign * angle));
+            if (CheckInternalToShared(location, e, n, z, angle))
             {
                 t.Commit();
-                Log.Add($"Shared coordinates set: internal origin = E {f.BasePoint.X / 1000:0.000} N {f.BasePoint.Y / 1000:0.000}, project north {f.RotationDeg:0.00}° from true north.");
-                PointsToOrigin(e, n, angle);
+                Log.Add($"Shared coordinates set: internal origin = E {f.BasePoint.X / 1000:0.000} N {f.BasePoint.Y / 1000:0.000}, elevation {_datumMm / 1000:0.000} m (survey datum) = project 0, project north {f.RotationDeg:0.00}° from true north.");
+                PointsToOrigin(e, n, z, angle);
                 return;
             }
         }
@@ -122,13 +133,14 @@ public sealed class ModelBuilder
     /// and both points read the same national grid position. Only the markers move: the shared coordinates are
     /// checked after each move and the move is undone if they changed (Revit's clip setting decides which moves).
     /// </summary>
-    void PointsToOrigin(double e, double n, double angle)
+    void PointsToOrigin(double e, double n, double z, double angle)
     {
         var moved = new List<string>();
-        foreach (var (point, name) in new[] { (BasePoint.GetProjectBasePoint(_doc), "project base point"), (BasePoint.GetSurveyPoint(_doc), "survey point") })
+        // the project base point at the Ground Floor (project 0); the survey point under it at survey datum (0 m AOD)
+        foreach (var (point, name, target) in new[] { (BasePoint.GetProjectBasePoint(_doc), "project base point", XYZ.Zero), (BasePoint.GetSurveyPoint(_doc), "survey point", new XYZ(0, 0, -z)) })
         {
             if (point == null) continue;
-            if (point.Position.GetLength() < 1e-6) { moved.Add($"{name} already there"); continue; }
+            if (point.Position.IsAlmostEqualTo(target, 1e-6)) { moved.Add($"{name} already there"); continue; }
             bool done = false;
             foreach (var clip in new[] { point.Clipped, !point.Clipped })
             {
@@ -138,9 +150,9 @@ public sealed class ModelBuilder
                 try
                 {
                     if (point.Clipped != clip) point.Clipped = clip;
-                    ElementTransformUtils.MoveElement(_doc, point.Id, XYZ.Zero - point.Position);
+                    ElementTransformUtils.MoveElement(_doc, point.Id, target - point.Position);
                     _doc.Regenerate();
-                    if (point.Position.GetLength() < 1e-4 && CheckInternalToShared(_doc.ActiveProjectLocation, e, n, angle)) { t.Commit(); done = true; break; }
+                    if (point.Position.IsAlmostEqualTo(target, 1e-4) && CheckInternalToShared(_doc.ActiveProjectLocation, e, n, z, angle)) { t.Commit(); done = true; break; }
                 }
                 catch { /* try the other clip setting */ }
                 t.RollBack();
@@ -151,17 +163,27 @@ public sealed class ModelBuilder
     }
 
     // Survey = base point + rotation(+angle) × internal. Accept either way Revit reports its transform.
-    static bool CheckInternalToShared(ProjectLocation location, double e, double n, double angle)
+    static bool CheckInternalToShared(ProjectLocation location, double e, double n, double z, double angle)
     {
         var total = location.GetTotalTransform();
         foreach (var m in new[] { total, total.Inverse })
         {
             var o = m.OfPoint(XYZ.Zero);
-            if (Math.Abs(o.X - e) > 0.01 || Math.Abs(o.Y - n) > 0.01) continue;
+            if (Math.Abs(o.X - e) > 0.01 || Math.Abs(o.Y - n) > 0.01 || Math.Abs(o.Z - z) > 0.01) continue;
             var x = m.OfVector(XYZ.BasisX);
             return Math.Abs(Math.Atan2(x.Y, x.X) - angle) < 1e-4;
         }
         return false;
+    }
+
+    /// <summary>The Ground Floor's survey height: the floor named Ground, else the lowest floor at or above it, else the lowest.</summary>
+    double GroundFloorMm()
+    {
+        var built = _model.Levels.Where(l => l.Include && !double.IsNaN(l.ElevationMm)).ToList();
+        if (built.Count == 0) return 0;
+        var ground = built.Where(l => l.Order >= 0 && l.Order < 1000).OrderBy(l => l.Order).FirstOrDefault() ?? built.OrderBy(l => l.ElevationMm).First();
+        Log.Add($"Project 0 = {ground.Name} at {ground.ElevationMm / 1000:0.000} m above survey datum; levels read from it, the survey point keeps the survey heights.");
+        return ground.ElevationMm;
     }
 
     Dictionary<SurveyLevel, (Level level, ViewPlan? view)> SetUpLevels()
@@ -178,14 +200,14 @@ public sealed class ModelBuilder
             var level = existing.FirstOrDefault(l => l.Name == sl.Name);
             if (level == null)
             {
-                level = Level.Create(_doc, Ft(sl.ElevationMm));
+                level = Level.Create(_doc, Z(sl.ElevationMm));
                 level.Name = sl.Name;
-                Log.Add($"Level created: {sl.Name} at {sl.ElevationMm / 1000:0.00} m");
+                Log.Add($"Level created: {sl.Name} at {(sl.ElevationMm - _datumMm) / 1000:0.000} m ({sl.ElevationMm / 1000:0.000} m above survey datum)");
             }
-            else if (Math.Abs(level.Elevation - Ft(sl.ElevationMm)) > 1e-6)
+            else if (Math.Abs(level.Elevation - Z(sl.ElevationMm)) > 1e-6)
             {
-                Log.Add($"Level moved: {sl.Name} from {UnitConversion.FeetToMm(level.Elevation) / 1000:0.00} to {sl.ElevationMm / 1000:0.00} m");
-                level.Elevation = Ft(sl.ElevationMm);
+                Log.Add($"Level moved: {sl.Name} from {UnitConversion.FeetToMm(level.Elevation) / 1000:0.000} to {(sl.ElevationMm - _datumMm) / 1000:0.000} m ({sl.ElevationMm / 1000:0.000} m above survey datum)");
+                level.Elevation = Z(sl.ElevationMm);
             }
             var view = new FilteredElementCollector(_doc).OfClass(typeof(ViewPlan)).Cast<ViewPlan>()
                 .FirstOrDefault(v => !v.IsTemplate && v.ViewType == ViewType.FloorPlan && v.GenLevel?.Id == level.Id);
@@ -466,7 +488,7 @@ public sealed class ModelBuilder
             {
                 var level = levels.Count > 0 ? levels.OrderBy(l => l.Elevation).First()
                           : new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().OrderBy(l => l.Elevation).First();
-                var points = site.Ground.Select(g => new XYZ(Ft(g.Position.X), Ft(g.Position.Y), Ft(g.ZMm))).ToList();
+                var points = site.Ground.Select(g => new XYZ(Ft(g.Position.X), Ft(g.Position.Y), Z(g.ZMm))).ToList();
                 var type = new FilteredElementCollector(_doc).OfClass(typeof(ToposolidType)).FirstElementId();
                 // the ground stops at the surveyed building, whose own floors take over there
                 Toposolid? topo = null;
@@ -491,7 +513,7 @@ public sealed class ModelBuilder
                 OnWorkset(topo);
                 done.Add($"ground surface from {points.Count} LiDAR points");
                 if (topo.get_BoundingBox(null) is BoundingBoxXYZ placed)
-                    Log.Add($"Surroundings: ground surface top {placed.Max.Z * 304.8 / 1000:0.00} m (highest LiDAR ground point {expectedTop * 304.8 / 1000:0.00} m); lowest level {level.Name} at {level.Elevation * 304.8 / 1000:0.00} m.");
+                    Log.Add($"Surroundings: ground surface top {(placed.Max.Z * 304.8 + _datumMm) / 1000:0.00} m AOD (highest LiDAR ground point {(expectedTop * 304.8 + _datumMm) / 1000:0.00} m); lowest level {level.Name} at {(level.Elevation * 304.8 + _datumMm) / 1000:0.00} m AOD.");
                 if (site.Roads.Count > 0) done.Add(Roads(topo, site.Roads, level.Elevation));
             }
             catch (Exception ex) { done.Add($"no ground surface ({ex.Message})"); }
@@ -514,7 +536,7 @@ public sealed class ModelBuilder
                 made++; shaped++;
                 continue;
             }
-            double z = Ft(b.BaseMm), h = Ft(b.TopMm - b.BaseMm);
+            double z = Z(b.BaseMm), h = Ft(b.TopMm - b.BaseMm);
             var outer = Loop(b.Outline, z);
             if (outer == null) { failed++; continue; }
             Solid? solid = null;
@@ -545,7 +567,7 @@ public sealed class ModelBuilder
         {
             var builder = new TessellatedShapeBuilder { Target = TessellatedShapeBuilderTarget.AnyGeometry, Fallback = TessellatedShapeBuilderFallback.Mesh };
             builder.OpenConnectedFaceSet(true);
-            var xyz = mesh.Points.Select(p => new XYZ(Ft(p.X), Ft(p.Y), Ft(p.Z))).ToList();
+            var xyz = mesh.Points.Select(p => new XYZ(Ft(p.X), Ft(p.Y), Z(p.Z))).ToList();
             foreach (var (a, b, c) in mesh.Triangles)
             {
                 if (xyz[a].IsAlmostEqualTo(xyz[b]) || xyz[b].IsAlmostEqualTo(xyz[c]) || xyz[a].IsAlmostEqualTo(xyz[c])) continue;
@@ -800,7 +822,7 @@ public sealed class ModelBuilder
         string? firstError = null;
         foreach (var r in _model.Roofs)
         {
-            double top = Ft(r.ElevationMm);
+            double top = Z(r.ElevationMm);
             var level = levels.Where(l => l.Elevation <= top - thick).OrderByDescending(l => l.Elevation).FirstOrDefault() ?? levels.OrderBy(l => l.Elevation).First();
             try
             {
