@@ -102,10 +102,50 @@ public sealed class ModelBuilder
         foreach (var sign in new[] { 1.0, -1.0 })
         {
             location.SetProjectPosition(XYZ.Zero, new ProjectPosition(e, n, 0, sign * angle));
-            if (CheckInternalToShared(location, e, n, angle)) { t.Commit(); Log.Add($"Shared coordinates set: internal origin = E {f.BasePoint.X / 1000:0.000} N {f.BasePoint.Y / 1000:0.000}, project north {f.RotationDeg:0.00}° from true north."); return; }
+            if (CheckInternalToShared(location, e, n, angle))
+            {
+                t.Commit();
+                Log.Add($"Shared coordinates set: internal origin = E {f.BasePoint.X / 1000:0.000} N {f.BasePoint.Y / 1000:0.000}, project north {f.RotationDeg:0.00}° from true north.");
+                PointsToOrigin(e, n, angle);
+                return;
+            }
         }
         t.RollBack();
         throw new InvalidOperationException("Could not set the project coordinates consistently; nothing was changed.");
+    }
+
+    /// <summary>
+    /// The project base point and the survey point both moved onto the survey base point (the internal origin), so
+    /// views and scope boxes from an office template, set up around the project base point, land on the building,
+    /// and both points read the same national grid position. Only the markers move: the shared coordinates are
+    /// checked after each move and the move is undone if they changed (Revit's clip setting decides which moves).
+    /// </summary>
+    void PointsToOrigin(double e, double n, double angle)
+    {
+        var moved = new List<string>();
+        foreach (var (point, name) in new[] { (BasePoint.GetProjectBasePoint(_doc), "project base point"), (BasePoint.GetSurveyPoint(_doc), "survey point") })
+        {
+            if (point == null) continue;
+            if (point.Position.GetLength() < 1e-6) { moved.Add($"{name} already there"); continue; }
+            bool done = false;
+            foreach (var clip in new[] { point.Clipped, !point.Clipped })
+            {
+                using var t = new Transaction(_doc, $"Survey: {name} to the survey base point");
+                t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
+                t.Start();
+                try
+                {
+                    if (point.Clipped != clip) point.Clipped = clip;
+                    ElementTransformUtils.MoveElement(_doc, point.Id, XYZ.Zero - point.Position);
+                    _doc.Regenerate();
+                    if (point.Position.GetLength() < 1e-4 && CheckInternalToShared(_doc.ActiveProjectLocation, e, n, angle)) { t.Commit(); done = true; break; }
+                }
+                catch { /* try the other clip setting */ }
+                t.RollBack();
+            }
+            moved.Add(done ? $"{name} moved there" : $"{name} could not be moved without changing the coordinates (left where it was)");
+        }
+        Log.Add("Base points: " + string.Join("; ", moved) + ".");
     }
 
     // Survey = base point + rotation(+angle) × internal. Accept either way Revit reports its transform.
