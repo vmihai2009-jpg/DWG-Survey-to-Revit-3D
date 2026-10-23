@@ -53,4 +53,32 @@ public class LidarServiceTests
         Assert.True(px[5 * w + 5] > px[5 * w + 15] + 50);
         Assert.Equal(255, px[0]);
     }
+
+    [Fact]
+    public void A_tiff_without_map_position_is_placed_by_its_world_file()
+    {
+        var dir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            // 4 x 3 float grid, no GeoTIFF tags (as the service may send it)
+            var path = Path.Combine(dir, "EA_LIDAR_Composite_DTM_1m.tif");
+            using (var bw = new BinaryWriter(File.Create(path)))
+            {
+                bw.Write((ushort)0x4949); bw.Write((ushort)42); bw.Write(8u);
+                var tags = new (ushort Tag, ushort Type, uint Value)[] { (256, 3, 4), (257, 3, 3), (258, 3, 32), (259, 3, 1), (273, 4, 8 + 2 + 8 * 12 + 4), (277, 3, 1), (279, 4, 48), (339, 3, 3) };
+                bw.Write((ushort)tags.Length);
+                foreach (var t in tags) { bw.Write(t.Tag); bw.Write(t.Type); bw.Write(1u); if (t.Type == 3) { bw.Write((ushort)t.Value); bw.Write((ushort)0); } else bw.Write(t.Value); }
+                bw.Write(0u);
+                for (int i = 0; i < 12; i++) bw.Write((float)i);
+            }
+            Assert.False(GeoTiff.Probe(path).Placed);
+            Assert.Equal((4, 3), (GeoTiff.Probe(path).Width, GeoTiff.Probe(path).Height));
+            File.WriteAllText(Path.ChangeExtension(path, ".tfw"), LidarService.WorldFileText(528900, 181200, 1));
+            var g = GeoRaster.Read(path, 528000, 181000, 530000, 182000)!;
+            Assert.Equal(528900, g.OriginX, 6);
+            Assert.Equal(181200, g.OriginY, 6);
+            Assert.Equal(5, g.At(528901.5, 181198.5));   // row 1, column 1
+        }
+        finally { Directory.Delete(dir, true); }
+    }
 }

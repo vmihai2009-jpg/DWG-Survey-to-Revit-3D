@@ -88,7 +88,7 @@ public sealed class LidarMapDialog : Form
         try
         {
             using var http = Client();
-            double minE = _home.X - _mapHalf, minN = _home.Y - _mapHalf, maxE = _home.X + _mapHalf, maxN = _home.Y + _mapHalf;
+            double minE = Math.Floor(_home.X - _mapHalf), minN = Math.Floor(_home.Y - _mapHalf), maxE = Math.Ceiling(_home.X + _mapHalf), maxN = Math.Ceiling(_home.Y + _mapHalf);
             var path = await LidarService.Download(http, LidarService.Dsm, minE, minN, maxE, maxN, Path.Combine(_folder, "map"));
             var grid = await Task.Run(() => GeoRaster.Read(path, minE, minN, maxE, maxN));
             if (grid == null) { _status.Text = "The Environment Agency has no LiDAR here. You can still try the download, or use a zip from their website."; return; }

@@ -99,6 +99,48 @@ public sealed class GeoRaster
 /// </summary>
 static class GeoTiff
 {
+    /// <summary>
+    /// A world file beside the image (name.tfw, .tifw or .wld: six lines A D B E C F, C/F the centre of the
+    /// top-left cell): cell size and top-left corner; null if there is none.
+    /// </summary>
+    internal static (double Cell, double OriginX, double OriginY)? WorldFile(string path)
+    {
+        foreach (var ext in new[] { ".tfw", ".tifw", ".wld" })
+        {
+            var f = Path.ChangeExtension(path, ext);
+            if (!File.Exists(f)) continue;
+            var v = File.ReadAllLines(f).Where(l => l.Trim().Length > 0).Take(6)
+                .Select(l => double.Parse(l.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture)).ToArray();
+            if (v.Length < 6 || v[0] <= 0) continue;
+            return (v[0], v[4] - v[0] / 2, v[5] - v[3] / 2);
+        }
+        return null;
+    }
+
+    /// <summary>Pixel size of a TIFF and whether it carries its own map position.</summary>
+    internal static (int Width, int Height, bool Placed) Probe(string path)
+    {
+        using var fs = File.OpenRead(path);
+        using var br = new BinaryReader(fs);
+        bool little = br.ReadUInt16() == 0x4949;
+        ushort U16() { var b = br.ReadBytes(2); if (!little) Array.Reverse(b); return BitConverter.ToUInt16(b); }
+        uint U32() { var b = br.ReadBytes(4); if (!little) Array.Reverse(b); return BitConverter.ToUInt32(b); }
+        U16();
+        fs.Position = U32();
+        int count = U16(), w = 0, h = 0;
+        var seen = new HashSet<int>();
+        for (int i = 0; i < count; i++)
+        {
+            int tag = U16(), type = U16();
+            U32();
+            long next = fs.Position + 4;
+            if (tag is 256 or 257) { uint v = type == 3 ? U16() : U32(); if (tag == 256) w = (int)v; else h = (int)v; }
+            seen.Add(tag);
+            fs.Position = next;
+        }
+        return (w, h, seen.Contains(34264) || (seen.Contains(33550) && seen.Contains(33922)));
+    }
+
     public static GeoRaster? Read(string path, double minX, double minY, double maxX, double maxY)
     {
         using var fs = File.OpenRead(path);
@@ -160,10 +202,22 @@ static class GeoTiff
         if (spp != 1) throw new InvalidDataException($"{name} has {spp} bands; a height grid has one.");
         if (!(bits == 32 || bits == 16) || (format == 3 && bits != 32)) throw new InvalidDataException($"{name}: {bits}-bit samples are not supported.");
         if (compression is not (1 or 5 or 8 or 32946)) throw new InvalidDataException($"{name}: TIFF compression {compression} is not supported (use LZW, Deflate or none).");
-        if (!tags.TryGetValue(33550, out var scale) || !tags.TryGetValue(33922, out var tie))
-            throw new InvalidDataException($"{name} has no map position (not a GeoTIFF).");
-        double cell = scale[0];
-        double originX = tie[3] - tie[0] * cell, originY = tie[4] + tie[1] * scale[1];
+        double cell, originX, originY;
+        if (tags.TryGetValue(33550, out var scale) && tags.TryGetValue(33922, out var tie))
+        {
+            cell = scale[0];
+            originX = tie[3] - tie[0] * cell; originY = tie[4] + tie[1] * scale[1];
+        }
+        else if (tags.TryGetValue(34264, out var m) && m.Length >= 8)
+        {
+            // ModelTransformation matrix (row by row): x = m0·col + m1·row + m3, y = m4·col + m5·row + m7
+            cell = m[0]; originX = m[3]; originY = m[7];
+        }
+        else if (WorldFile(path) is (double wc, double wx, double wy))
+        {
+            cell = wc; originX = wx; originY = wy;
+        }
+        else throw new InvalidDataException($"{name} has no map position (not a GeoTIFF, and no .tfw world file beside it).");
         double noData = text.TryGetValue(42113, out var nd) && double.TryParse(nd, NumberStyles.Float, CultureInfo.InvariantCulture, out var ndv) ? ndv : double.NaN;
 
         var win = GeoRaster.Window(originX, originY, cell, width, height, minX, minY, maxX, maxY);

@@ -68,7 +68,17 @@ public static class LidarService
         var kind = service == Dtm ? "DTM" : "DSM";
         var path = Path.Combine(folder, $"EA_LIDAR_Composite_{kind}_1m_E{minE:0}_N{minN:0}_{maxE - minE:0}m.tif");
         await File.WriteAllBytesAsync(path, bytes);
+        // the service's TIFF may carry no map position: then a world file (.tfw) from the area asked for
+        var (w, h, placed) = GeoTiff.Probe(path);
+        if (!placed && w > 0 && h > 0) await File.WriteAllTextAsync(Path.ChangeExtension(path, ".tfw"), WorldFileText(minE, maxN, (maxE - minE) / w));
         return path;
+    }
+
+    /// <summary>World file lines (A D B E C F) for a north-up grid whose top-left corner is (<paramref name="left"/>, <paramref name="top"/>).</summary>
+    public static string WorldFileText(double left, double top, double cell)
+    {
+        string F(double v) => v.ToString("0.######", CultureInfo.InvariantCulture);
+        return string.Join("\r\n", F(cell), "0", "0", F(-cell), F(left + cell / 2), F(top - cell / 2)) + "\r\n";
     }
 
     /// <summary>
