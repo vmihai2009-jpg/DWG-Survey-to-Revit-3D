@@ -36,6 +36,8 @@ public sealed record SurveyLevel(
     public WallDetectionResult Walls { get; set; } = Walls;
     /// <summary>Wall height: up to the next level, or the default for the top level.</summary>
     public double WallHeightMm { get; set; }
+    /// <summary>A mezzanine: covers only part of the floor below, whose walls elsewhere run up past it.</summary>
+    public bool Partial { get; set; }
     /// <summary>Ceiling height above this floor (mm): the surveyed one when the plan gives it ("u/s 2.52"), else a default to adjust.</summary>
     public double CeilingHeightMm { get; set; }
     /// <summary>True when <see cref="CeilingHeightMm"/> comes from ceiling heights written on the plan.</summary>
@@ -87,6 +89,20 @@ public static class SurveyAnalyzer
 {
     /// <summary>Height of a balustrade or parapet in front of windows, where the windows' sill does not give one.</summary>
     public const double ParapetMm = 1100;
+    /// <summary>A floor smaller than this share of the one below is a mezzanine.</summary>
+    public const double MezzanineShare = 0.6;
+
+    static double EdgeDistance(Polygon2 poly, Vec2 p)
+    {
+        var v = poly.Vertices; double best = double.MaxValue;
+        for (int i = 0; i < v.Count; i++)
+        {
+            Vec2 a = v[i], b = v[(i + 1) % v.Count], d = b - a;
+            double len2 = d.Dot(d), t = len2 == 0 ? 0 : Math.Clamp((p - a).Dot(d) / len2, 0, 1);
+            best = Math.Min(best, p.DistanceTo(a + d * t));
+        }
+        return best;
+    }
 
     public const double DefaultTopWallHeightMm = 3000;
     /// <summary>The least height between a floor and the floor above (mm).</summary>
@@ -285,7 +301,15 @@ public static class SurveyAnalyzer
             }
             // a window must look out: a wall drawn outside it (a balcony balustrade, a parapet) is low, not a storey high
             var inFront = OpeningCuts.InFront(levels[i].Walls.Walls,
-                levels[i].Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm)).ToList(), levels[i].Outline, levels[i].Doors.Select(d => d.HostIndex));
+                levels[i].Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm)).ToList(), levels[i].Outline, levels[i].Doors.Select(d => d.HostIndex), out var through);
+            if (through.Count > 0)
+            {
+                var wins = levels[i].Windows.ToList();
+                foreach (var g in through.GroupBy(t => t.Window))
+                    wins[g.Key] = wins[g.Key] with { AlsoCut = g.Select(t => (t.Wall, t.At)).ToList() };
+                levels[i].Windows = wins;
+                notes.Add($"{levels[i].Name}: {through.Select(t => t.Window).Distinct().Count()} windows set in an inner wall also cut through the façade wall in front of them.");
+            }
             if (inFront.Count > 0)
             {
                 var ws = levels[i].Walls.Walls.ToList();
@@ -294,6 +318,23 @@ public static class SurveyAnalyzer
                 notes.Add($"{levels[i].Name}: {inFront.Count} walls outside windows (balustrades, parapets) made low, up to the sill or {ParapetMm:0} mm, so the windows look out.");
             }
             if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
+        }
+
+        // a mezzanine covers part of the floor below; elsewhere that floor is double height, its walls running up past it
+        for (int i = 0; i + 2 < levels.Count; i++)
+        {
+            if (levels[i + 1].Outline is not Polygon2 mezz || levels[i].Outline is not Polygon2 below || mezz.Area >= MezzanineShare * below.Area) continue;
+            levels[i + 1].Partial = true;
+            int up = 0;
+            var ws = levels[i].Walls.Walls.Select(w =>
+            {
+                var mid = WallGeometry.PointAt(w, WallGeometry.Length(w) / 2);
+                if (FacadeWalls.Contains(mezz, mid) || EdgeDistance(mezz, mid) < 300) return w;
+                up++;
+                return w with { PastPartialFloor = true };
+            }).ToList();
+            levels[i].Walls = levels[i].Walls with { Walls = ws };
+            notes.Add($"{levels[i + 1].Name} covers {mezz.Area / below.Area:P0} of the {levels[i].Name}: read as a mezzanine; {up} {levels[i].Name} walls outside it run up to the {levels[i + 2].Name}.");
         }
 
         notes.Add($"Survey base point E {frame.BasePoint.X / 1000:0.000} m, N {frame.BasePoint.Y / 1000:0.000} m; " +

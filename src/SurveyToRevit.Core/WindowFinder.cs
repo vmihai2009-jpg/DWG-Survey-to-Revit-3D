@@ -6,6 +6,8 @@ public sealed record WindowCandidate(int HostIndex, Vec2 Center, double WidthMm,
     /// <summary>For a window in an outside wall: the direction out of the building (the window's outer face points this way).</summary>
     public Vec2? Outward { get; init; }
     public double HeightMm => HeadMm - SillMm;
+    /// <summary>Other walls the opening must also be cut through (an outer façade in front of the wall it is set in), each at a point on that wall.</summary>
+    public IReadOnlyList<(int Wall, Vec2 At)> AlsoCut { get; init; } = Array.Empty<(int, Vec2)>();
 }
 
 /// <summary>

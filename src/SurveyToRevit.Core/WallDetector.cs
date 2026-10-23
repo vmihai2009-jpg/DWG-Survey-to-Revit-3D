@@ -8,6 +8,8 @@ public sealed record WallCandidate(Segment2 Centerline, double MeasuredThickness
     public Arc2? Arc { get; init; }
     /// <summary>A low wall (mm above its floor) instead of a full storey: e.g. a parapet or balustrade in front of windows.</summary>
     public double? HeightMm { get; init; }
+    /// <summary>Runs up past a mezzanine above (which does not reach this wall) to the floor after it.</summary>
+    public bool PastPartialFloor { get; init; }
     /// <summary>A glazed wall or screen (drawn on a curtain wall / glazed partition layer): built as a curtain wall.</summary>
     public bool Curtain { get; init; }
     public double Length => Arc?.Length ?? Centerline.Length;

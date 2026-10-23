@@ -73,12 +73,24 @@ public static class OpeningCuts
     /// </summary>
     public static Dictionary<int, double> InFront(IReadOnlyList<WallCandidate> walls,
         IReadOnlyList<(int Host, Vec2 Center, double WidthMm, double SillMm)> windows, Polygon2? outline, IEnumerable<int>? otherHosts = null)
+        => InFront(walls, windows, outline, otherHosts, out _);
+
+    /// <summary>
+    /// As above; <paramref name="through"/> also lists, per window (by its place in <paramref name="windows"/>), the
+    /// façade walls outside it that hold other windows themselves: a real outer wall, so the window is set in the wrong
+    /// (inner) wall and must be cut through that façade too, at the point on it in front of the window.
+    /// </summary>
+    public static Dictionary<int, double> InFront(IReadOnlyList<WallCandidate> walls,
+        IReadOnlyList<(int Host, Vec2 Center, double WidthMm, double SillMm)> windows, Polygon2? outline, IEnumerable<int>? otherHosts,
+        out List<(int Window, int Wall, Vec2 At)> through)
     {
         var result = new Dictionary<int, double>();
+        through = new();
         if (outline == null) return result;
         var hosts = windows.Select(w => w.Host).Concat(otherHosts ?? Enumerable.Empty<int>()).ToHashSet();
-        foreach (var (host, center, width, sill) in windows)
+        for (int wi = 0; wi < windows.Count; wi++)
         {
+            var (host, center, width, sill) = windows[wi];
             var h = walls[host];
             double along = WallGeometry.Along(h, center);
             double a = WallGeometry.AngleDegAt(h, along) * Math.PI / 180;
@@ -96,13 +108,17 @@ public static class OpeningCuts
                         if (k < 0) continue;
                         // only a wall whose far side is outside the building stands between the window and the view
                         var far = q + side * (walls[k].TypeThickness + 400);
-                        if (!hosts.Contains(k) && !walls[k].Curtain && !FacadeWalls.Contains(outline, far))
+                        if (!walls[k].Curtain && !FacadeWalls.Contains(outline, far))
                             votes[k] = votes.GetValueOrDefault(k) + 1;
                         break;
                     }
                 }
                 foreach (var (k, v) in votes)
-                    if (v >= 3) result[k] = Math.Min(result.GetValueOrDefault(k, double.MaxValue), sill);
+                {
+                    if (v < 3) continue;
+                    if (hosts.Contains(k)) through.Add((wi, k, WallGeometry.PointAt(walls[k], Math.Clamp(WallGeometry.Along(walls[k], center), 0, WallGeometry.Length(walls[k])))));
+                    else result[k] = Math.Min(result.GetValueOrDefault(k, double.MaxValue), sill);
+                }
             }
         }
         return result;

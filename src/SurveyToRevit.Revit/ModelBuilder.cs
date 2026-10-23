@@ -250,6 +250,8 @@ public sealed class ModelBuilder
         {
             var (sl, (level, view)) = (ordered[i].Key, ordered[i].Value);
             var above = i + 1 < ordered.Count ? ordered[i + 1].Value.level : null;
+            // over a mezzanine's floor, walls outside the mezzanine run up to the floor after it
+            var past = i + 2 < ordered.Count && ordered[i + 1].Key.Partial ? ordered[i + 2].Value.level : null;
             int removed = 0;
             var done = new List<string>();
             Step($"{sl.Name}: clearing an earlier run", done, () => removed = DeleteGenerated(sl.Code));
@@ -270,9 +272,11 @@ public sealed class ModelBuilder
                         WallType type;
                         if (w.Curtain) type = _curtainType ??= CurtainTypeFor();
                         else if (!wallTypes.TryGetValue(w.TypeThickness, out type!)) wallTypes[w.TypeThickness] = type = WallTypeFor(w.TypeThickness);
-                        var wall = Wall.Create(_doc, line, type.Id, level.Id, Ft(w.HeightMm ?? sl.WallHeightMm), 0, false, false);
+                        var top = w.PastPartialFloor && past != null ? past : above;
+                        double height = w.HeightMm is double low ? Ft(low) : top != null ? top.Elevation - level.Elevation : Ft(sl.WallHeightMm);
+                        var wall = Wall.Create(_doc, line, type.Id, level.Id, height, 0, false, false);
                         // a low wall (balustrade, parapet) keeps its own height; the rest run up to the next level
-                        if (above != null && w.HeightMm == null) wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.Set(above.Id);
+                        if (top != null && w.HeightMm == null) wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.Set(top.Id);
                         Mark(wall, sl.Code, w.HeightMm != null ? "Parapet" : w.Confidence.ToString());
                         created[w] = wall;
                         made++;
@@ -818,6 +822,12 @@ public sealed class ModelBuilder
     {
         var (made, failed, real) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Windows, "Window",
             sl.Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward, (Vec2?)null, (Vec2?)null)));
+        // a window set in an inner wall, with the façade in front of it: cut through the façade too
+        foreach (var w in sl.Windows)
+            foreach (var (k, at) in w.AlsoCut)
+                if (created.TryGetValue(sl.Walls.Walls[k], out var facade))
+                    try { Cut(facade, new XYZ(Ft(at.X), Ft(at.Y), level.Elevation), w.WidthMm, w.SillMm, w.HeadMm, sl.Code, "Window opening"); }
+                    catch { /* does not reach this wall */ }
         return real ? $"{made} windows" + (failed > 0 ? $" ({failed} did not fit)" : "")
                     : $"{made} window openings (no window family found)";
     }
