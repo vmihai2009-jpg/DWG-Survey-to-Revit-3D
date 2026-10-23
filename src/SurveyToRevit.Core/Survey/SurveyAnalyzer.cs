@@ -228,6 +228,9 @@ public static class SurveyAnalyzer
             facade = WallDetector.CloseFacade(facade, raster.Outline, tol);
             facade = WallFit.Fit(facade, raster.IsMaterial, raster.Outline, tol);
             facade = facade.Where(w => w.Length >= tol.MinWallLength).ToList();
+            facade = Rosettes.Remove(facade, out var rosettes);
+            foreach (var (c, r, n) in rosettes)
+                notes.Add($"{name}: {n} lines crossing at one point (x {c.X / 1000:0.0}, y {c.Y / 1000:0.0} m, {2 * r / 1000:0.0} m across) read as a pattern, not walls: a lantern, rooflight or round feature.");
             // walls drawn on glazed-screen layers become curtain walls
             facade = facade.Select(w => rules.Classify(w.Centerline.Layer) == LayerRole.CurtainWall ? w with { Curtain = true } : w).ToList();
             // glazed screens the pair reader left (single lines, thin pairs)
