@@ -15,7 +15,13 @@ public sealed record RoadLine(string Kind, string? Name, double WidthM, IReadOnl
 /// </summary>
 public static class OsmRoads
 {
-    public const string Overpass = "https://overpass-api.de/api/interpreter";
+    /// <summary>Overpass servers, tried in turn (the main one first).</summary>
+    public static readonly string[] Overpass =
+    {
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+    };
     public const string FileSuffix = ".osm.json";
 
     public static string Query(double minE, double minN, double maxE, double maxN)
@@ -30,10 +36,28 @@ public static class OsmRoads
     /// <summary>Downloads the roads for an area (grid metres) into <paramref name="folder"/>; returns the file.</summary>
     public static async Task<string> Download(HttpClient http, double minE, double minN, double maxE, double maxN, string folder)
     {
-        using var body = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("data", Query(minE, minN, maxE, maxN)) });
-        using var response = await http.PostAsync(Overpass, body);
-        var text = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode) throw new InvalidDataException($"OpenStreetMap (Overpass) refused the request ({(int)response.StatusCode}).");
+        // Overpass refuses requests that do not say who is asking (406/403): name the add-in, ask for JSON
+        string? text = null;
+        var errors = new List<string>();
+        foreach (var server in Overpass)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, server)
+                {
+                    Content = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("data", Query(minE, minN, maxE, maxN)) }),
+                };
+                request.Headers.UserAgent.ParseAdd($"SurveyToRevit/{typeof(OsmRoads).Assembly.GetName().Version} (Revit add-in; site context)");
+                request.Headers.Accept.ParseAdd("application/json");
+                request.Headers.Accept.ParseAdd("*/*;q=0.5");
+                using var response = await http.SendAsync(request);
+                var answer = await response.Content.ReadAsStringAsync();
+                if (response.IsSuccessStatusCode && answer.TrimStart().StartsWith("{")) { text = answer; break; }
+                errors.Add($"{new Uri(server).Host}: {(int)response.StatusCode}");
+            }
+            catch (Exception ex) { errors.Add($"{new Uri(server).Host}: {ex.Message}"); }
+        }
+        if (text == null) throw new InvalidDataException("OpenStreetMap (Overpass) refused the request (" + string.Join("; ", errors) + ").");
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, $"Roads_E{minE:0}_N{minN:0}_{maxE - minE:0}m{FileSuffix}");
         await File.WriteAllTextAsync(path, text);
