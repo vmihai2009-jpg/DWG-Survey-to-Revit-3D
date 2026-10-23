@@ -59,7 +59,7 @@ public static class WindowFinder
 
     public static List<WindowCandidate> Find(IReadOnlyList<Segment2> windowLines, IReadOnlyList<WallCandidate> walls,
         IReadOnlyList<(Vec2 Position, string Value)> texts, double storeyMm,
-        double joinMm = 150, double textReach = 2000, double minWidth = 300, double maxWidth = 4000, Polygon2? outline = null, double? ceilingMm = null,
+        double joinMm = 150, double textReach = 2000, double minWidth = 300, double maxWidth = 6000, Polygon2? outline = null, double? ceilingMm = null,
         List<WallCandidate>? added = null, Func<Vec2, bool>? isMaterial = null, IReadOnlyList<double>? wallSizes = null)
     {
         var lines = windowLines.Where(l => l.Length >= 20).ToList();
