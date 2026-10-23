@@ -307,6 +307,7 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
     <section class="sec">
       <h2>Drawing</h2>
       <label class="sw"><input type="checkbox" data-layer="grid" checked><span class="tg"></span>Column grid &amp; dimensions</label>
+      <label class="sw" id="keepRow" hidden><input type="checkbox" id="keepT" checked><span class="tg"></span>Keep existing partitions</label>
       <label class="sw"><input type="checkbox" id="snapT" checked><span class="tg"></span>Snap to 150 mm</label>
       <label class="sw"><input type="checkbox" data-layer="underlay" checked><span class="tg"></span>Show plan underlay</label>
     </section>
@@ -467,7 +468,7 @@ const ORDER=['work','soft','meeting','focus','reception'];
 // TESTFIT_SITE (metres, y down, origin at the outline's top-left): faces (outline loops, even-odd),
 // existing walls {x1,y1,x2,y2,t}, columns {x,y,w,h}, rooms {name,pts}, cores {name,x,y,w,d}.
 const SITE=window.TESTFIT_SITE||null;
-const MK=SITE?buildMask(SITE):null;
+let KEEP_PARTS=true,MK=SITE?buildMask(SITE):null;
 function buildMask(s){
   const res=0.05,nx=Math.ceil(s.w/res)+1,ny=Math.ceil(s.d/res)+1,inside=new Uint8Array(nx*ny),block=new Uint8Array(nx*ny);
   for(const face of s.faces){
@@ -489,6 +490,7 @@ function buildMask(s){
     for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++)if(test((i+.5)*res,(j+.5)*res))block[j*nx+i]=1;
   };
   for(const w of s.walls){
+    if(!KEEP_PARTS&&w.t<=.155)continue; // partitions stripped out: only walls thicker than 150 mm stay
     const dx=w.x2-w.x1,dy=w.y2-w.y1,L2=dx*dx+dy*dy||1e-9,h=w.t/2;
     mark(Math.min(w.x1,w.x2)-h,Math.min(w.y1,w.y2)-h,Math.max(w.x1,w.x2)+h,Math.max(w.y1,w.y2)+h,(x,y)=>{
       const u=Math.max(0,Math.min(1,((x-w.x1)*dx+(y-w.y1)*dy)/L2));return Math.hypot(x-w.x1-u*dx,y-w.y1-u*dy)<=h;});
@@ -496,8 +498,10 @@ function buildMask(s){
   for(const c of s.cols)mark(c.x,c.y,c.x+c.w,c.y+c.h,(x,y)=>x>=c.x&&x<=c.x+c.w&&y>=c.y&&y<=c.y+c.h);
   const sat=f=>{const S2=new Uint32Array((nx+1)*(ny+1));
     for(let j=0;j<ny;j++){let row=0;for(let i=0;i<nx;i++){row+=f(j*nx+i);S2[(j+1)*(nx+1)+i+1]=S2[j*(nx+1)+i+1]+row;}}return S2;};
-  let area=0;for(let k=0;k<inside.length;k++)area+=inside[k];
-  return{res,nx,ny,inside,out:sat(k=>1-inside[k]),blk:sat(k=>block[k]),area:area*res*res};
+  // usable: on the floor and not under a wall or column (net of walls, as NIA is measured)
+  const usable=new Uint8Array(nx*ny);let area=0,net=0;
+  for(let k=0;k<inside.length;k++){area+=inside[k];usable[k]=inside[k]&&!block[k]?1:0;net+=usable[k];}
+  return{res,nx,ny,inside,usable,out:sat(k=>1-inside[k]),blk:sat(k=>block[k]),area:area*res*res,net:net*res*res};
 }
 // Cells in a rectangle: outside the floor (anything beyond the mask counts) or blocked by walls/columns.
 function cnt(S2,x0,y0,x1,y1,edgeOut){
@@ -515,7 +519,7 @@ function siteOK(r,margin){
   const m=margin||0;
   return cnt(MK.out,r.x-m,r.y-m,r.x+r.w+m,r.y+r.h+m,true)===0&&cnt(MK.blk,r.x+.02,r.y+.02,r.x+r.w-.02,r.y+r.h-.02,false)===0;
 }
-const onFloor=(x,y)=>{if(!MK)return true;const i=Math.floor(x/MK.res),j=Math.floor(y/MK.res);return i>=0&&j>=0&&i<MK.nx&&j<MK.ny&&MK.inside[j*MK.nx+i]===1;};
+const onFloor=(x,y)=>{if(!MK)return true;const i=Math.floor(x/MK.res),j=Math.floor(y/MK.res);return i>=0&&j>=0&&i<MK.nx&&j<MK.ny&&MK.usable[j*MK.nx+i]===1;};
 // A new partition is needed here: on the floor, away from the façade, and not along an existing wall.
 const needWall=(x,y)=>cnt(MK.out,x-.2,y-.2,x+.2,y+.2,true)===0&&cnt(MK.blk,x-.12,y-.12,x+.12,y+.12,false)===0;
 function clipToSite(walls,doors){
@@ -747,8 +751,8 @@ function compute(){
   if(SITE){gx.length=0;gy.length=0;cols.length=0;for(const c of SITE.cols)cols.push({x:c.x,y:c.y,w:c.w,h:c.h});}
   const colObs=cols.map(c=>grow(c,.1));
   const A=areaRaster();
-  const coreA=cores.reduce((s,z)=>s+A.by[z.id],0),colA=SITE?cols.reduce((s,c)=>s+c.w*c.h,0):cols.length*R.col*R.col;
-  const gross=MK?MK.area:F.w*F.d,NIA=Math.max(0,gross-coreA-colA);
+  const coreA=cores.reduce((s,z)=>s+A.by[z.id],0),colA=SITE?0:cols.length*R.col*R.col;
+  const gross=MK?MK.area:F.w*F.d,NIA=Math.max(0,(MK?MK.net:gross)-coreA-colA);
   const target=Math.floor(NIA/S.density);
 
   const work=zs.filter(z=>z.type==='work');
@@ -997,7 +1001,7 @@ function siteSVG(){
   for(const r of SITE.rooms)s+=`<path class="s-room passive" d="${P(r.pts)}"/>`;
   SITE_SVG=s;s='';
   for(const w of SITE.walls){
-    const L=Math.hypot(w.x2-w.x1,w.y2-w.y1);if(L<.01)continue;
+    const L=Math.hypot(w.x2-w.x1,w.y2-w.y1);if(L<.01||(!KEEP_PARTS&&w.t<=.155))continue;
     const nx=-(w.y2-w.y1)/L*w.t/2,ny=(w.x2-w.x1)/L*w.t/2;
     s+=`<path class="s-wall passive" d="${P([[w.x1+nx,w.y1+ny],[w.x2+nx,w.y2+ny],[w.x2-nx,w.y2-ny],[w.x1-nx,w.y1-ny]])}"/>`;
   }
@@ -1354,7 +1358,7 @@ function build3D(){
   put('box','ground',O0,W/2,-.32,D/2,W+120,.02,D+120);
   if(!SITE)put('box','slab',O0,W/2,-.15,D/2,W+.3,.3,D+.3);
   else for(const w of SITE.walls){
-    const L=Math.hypot(w.x2-w.x1,w.y2-w.y1);if(L<.01)continue;
+    const L=Math.hypot(w.x2-w.x1,w.y2-w.y1);if(L<.01||(!KEEP_PARTS&&w.t<=.155))continue;
     put('box','wall',{x:(w.x1+w.x2)/2,z:(w.y1+w.y2)/2,r:-Math.atan2(w.y2-w.y1,w.x2-w.x1)},0,H/2,0,L,H,Math.max(.03,w.t));
   }
   for(const z of S.zones)if(!SITE||!cnt(MK.out,z.x,z.y,z.x+z.w,z.y+z.d,true))put('box',FLOORK[z.type],O0,z.x+z.w/2,.004+TYPES[z.type].pri*.0012,z.y+z.d/2,z.w,.008,z.d);
@@ -1438,6 +1442,8 @@ if(SITE){
   $('.bar-t span').textContent=`${SITE.level} · from Revit`;
   for(const id of['fW','fD','fG'])$('#'+id).disabled=true;
   $('#resetBtn').textContent='Reset';
+  $('#keepRow').hidden=false;
+  $('#keepT').addEventListener('change',e=>{KEEP_PARTS=e.target.checked;MK=buildMask(SITE);SITE_SVG=null;siteSVG();if(V3.ok)V3.stale=true;refresh(false);});
 }
 if(window.innerWidth<820){stage.className='stage mode-plan';$$('#modeSeg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.m==='plan'));}
 syncLeft();
