@@ -48,16 +48,18 @@ public class BuildFromSurveyCommand : IExternalCommand
         }
 
         BuildOptions options;
+        var downloaded = new LidarChoice();
         while (true)
         {
-            using var dialog = new SurveyDialog(model, model.Skipped.Count, lidar.Count);
+            using var dialog = new SurveyDialog(model, model.Skipped.Count, lidar.Count, downloaded);
             var result = dialog.ShowDialog();
             if (dialog.OpenReport) { OpenFile(reportPath); continue; }
             if (result != DialogResult.OK) return Result.Cancelled;
             options = dialog.Options;
             if (dialog.Site)
             {
-                try { options.Site = SiteContextBuilder.Build(lidar, model.Frame, model.Levels.Where(l => l.Outline != null).Select(l => l.Outline!), dialog.SiteRadiusM); }
+                try { options.Site = SiteContextBuilder.Build(lidar.Concat(downloaded.Files), model.Frame,
+                    model.Levels.Where(l => l.Outline != null).Select(l => l.Outline!), dialog.SiteRadiusM, centreM: downloaded.Files.Count > 0 ? downloaded.Centre : null); }
                 catch (Exception ex) { TaskDialog.Show("Survey to Revit", "The LiDAR tiles could not be read, so the surroundings are skipped:\n" + ex.Message); }
             }
             break;

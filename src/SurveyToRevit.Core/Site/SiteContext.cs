@@ -52,10 +52,11 @@ public static class SiteContextBuilder
     }
 
     public static SiteContext Build(IEnumerable<string> files, SurveyFrame frame, IEnumerable<Polygon2> surveyedOutlines,
-        double radiusM = 150, double groundStepM = 5)
+        double radiusM = 150, double groundStepM = 5, (double E, double N)? centreM = null)
     {
         var notes = new List<string>();
-        double cx = frame.BasePoint.X / 1000, cy = frame.BasePoint.Y / 1000;
+        // the area round the base point, or round a centre chosen on the map
+        double cx = centreM?.E ?? frame.BasePoint.X / 1000, cy = centreM?.N ?? frame.BasePoint.Y / 1000;
         double minX = cx - radiusM, maxX = cx + radiusM, minY = cy - radiusM, maxY = cy + radiusM;
         var dsm = new List<GeoRaster>();
         var dtm = new List<GeoRaster>();

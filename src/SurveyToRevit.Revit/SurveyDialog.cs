@@ -29,18 +29,21 @@ public sealed class SurveyDialog : Form
     readonly CheckBox _site = new() { Text = "Surroundings from LiDAR, radius (m):", AutoSize = true };
     readonly NumericUpDown _radius = new() { Minimum = 50, Maximum = 500, Increment = 50, Value = 150, Width = 70 };
     readonly int _lidarFiles;
+    readonly LidarChoice _lidar;
+    readonly Button _download = new() { Text = "Get from the Environment Agency…", AutoSize = true };
     readonly CheckBox _generic = new() { Text = "Generic models where the drawing is unclear (to check)", Checked = false, AutoSize = true };
 
     public BuildOptions Options { get; } = new();
     public bool OpenReport { get; private set; }
     /// <summary>Build the surroundings from the LiDAR files, and how far round the base point (m).</summary>
-    public bool Site => _lidarFiles > 0 && _site.Checked;
+    public bool Site => _lidarFiles + _lidar.Files.Count > 0 && _site.Checked;
     public double SiteRadiusM => (double)_radius.Value;
 
-    public SurveyDialog(SurveyModel model, int skippedFiles, int lidarFiles = 0)
+    public SurveyDialog(SurveyModel model, int skippedFiles, int lidarFiles = 0, LidarChoice? lidar = null)
     {
         _model = model;
         _lidarFiles = lidarFiles;
+        _lidar = lidar ?? new LidarChoice();
         var settings = SurveyToRevit.Shared.UserSettings.Load();
         _slab.Value = Math.Clamp(settings.SlabMm, (int)_slab.Minimum, (int)_slab.Maximum);
         _radius.Value = Math.Clamp(settings.SiteRadiusM, (int)_radius.Minimum, (int)_radius.Maximum);
@@ -95,13 +98,28 @@ public sealed class SurveyDialog : Form
         var siteRow = new FlowLayoutPanel { AutoSize = true, Margin = Padding.Empty };
         siteRow.Controls.Add(_site);
         siteRow.Controls.Add(_radius);
-        _site.Checked = _site.Enabled = _radius.Enabled = lidarFiles > 0;
-        if (lidarFiles > 0) _site.Text = $"Surroundings from LiDAR ({lidarFiles} files; own workset), radius (m):";
-        else siteRow.Controls.Add(new Label
+        siteRow.Controls.Add(_download);
+        var siteNote = new Label { AutoSize = true, ForeColor = Color.DimGray, Padding = new Padding(0, 6, 0, 0) };
+        siteRow.Controls.Add(siteNote);
+        void ShowSite()
         {
-            AutoSize = true, ForeColor = Color.DimGray, Padding = new Padding(0, 4, 0, 0),
-            Text = "To add these, select Environment Agency LiDAR DSM and DTM tiles (.tif), and footprints (.shp) if you have them, with the DWGs.",
-        });
+            int n = lidarFiles + _lidar.Files.Count;
+            _site.Checked = _site.Enabled = _radius.Enabled = n > 0;
+            _site.Text = n > 0 ? $"Surroundings from LiDAR ({n} files; own workset), radius (m):" : "Surroundings from LiDAR, radius (m):";
+            siteNote.Text = _lidar.Files.Count > 0 ? "Downloaded for the square chosen on the map."
+                          : n > 0 ? "" : "Or select LiDAR tiles or the zip from the Environment Agency with the DWGs.";
+        }
+        ShowSite();
+        _download.Click += (_, _) =>
+        {
+            using var map = new LidarMapDialog(model.Frame, model.Levels.Where(l => l.Outline != null).Select(l => l.Outline!), SiteRadiusM);
+            if (map.ShowDialog(this) != DialogResult.OK) return;
+            _lidar.Files.Clear();
+            _lidar.Files.AddRange(map.Files);
+            _lidar.Centre = map.Centre;
+            _radius.Value = (decimal)map.RadiusM;
+            ShowSite();
+        };
         options.Controls.AddRange(new Control[] { _link, _walls, _windows, _doors, _rooms, _stairs, _details, _roofs, _sections, slabRow, _ceilings, _generic, siteRow });
         _walls.CheckedChanged += (_, _) => { _windows.Enabled = _doors.Enabled = _rooms.Enabled = _walls.Checked; };
 
@@ -180,4 +198,11 @@ public sealed class SurveyDialog : Form
         var s = value?.ToString()?.Trim() ?? "";
         return double.TryParse(s.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out result);
     }
+}
+
+/// <summary>LiDAR downloaded from the map, kept while the window is reopened: the files and the square's centre (grid metres).</summary>
+public sealed class LidarChoice
+{
+    public List<string> Files { get; } = new();
+    public (double E, double N)? Centre { get; set; }
 }

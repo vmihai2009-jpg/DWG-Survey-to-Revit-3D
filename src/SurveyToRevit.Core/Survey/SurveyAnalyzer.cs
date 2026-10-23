@@ -18,6 +18,13 @@ public sealed record SurveyFrame(Vec2 BasePoint, double RotationDeg)
 
     public Segment2 ToModel(Segment2 s) => s with { A = ToModel(s.A), B = ToModel(s.B) };
 
+    /// <summary>Back from the model to survey grid coordinates (mm).</summary>
+    public Vec2 ToSurvey(Vec2 model)
+    {
+        var r = RotationDeg * Math.PI / 180;
+        return BasePoint + new Vec2(model.X * Math.Cos(r) - model.Y * Math.Sin(r), model.X * Math.Sin(r) + model.Y * Math.Cos(r));
+    }
+
     public Arc2 ToModel(Arc2 a)
     {
         double r = -RotationDeg * Math.PI / 180;

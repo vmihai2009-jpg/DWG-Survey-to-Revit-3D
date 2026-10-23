@@ -45,7 +45,11 @@ Files go to `%AppData%\Autodesk\Revit\Addins\2025\`. Remove with `uninstall.cmd`
 
 ### Surroundings (optional)
 
-1. Download the free LiDAR for the site from the [Defra Survey Data Download](https://environment.data.gov.uk/DefraDataDownload/?Mode=survey): draw a box round the site and download the **LIDAR Composite DSM 1m** and **LIDAR Composite DTM 1m** tiles. Unzip them.
+Easiest: in the build window click **Get from the Environment Agency…**. A map of the area opens with the survey outline in red and the area to download as a blue square (drag it to move it, set its size with the radius). **Download and use** fetches the Environment Agency LIDAR Composite DSM and DTM 1 m for that square (free, Open Government Licence) and ticks *Surroundings from LiDAR*. Needs internet access to environment.data.gov.uk.
+
+Or by hand:
+
+1. Download the free LiDAR for the site from the [Defra Survey Data Download](https://environment.data.gov.uk/DefraDataDownload/?Mode=survey): draw a box round the site and download the **LIDAR Composite DSM 1m** and **LIDAR Composite DTM 1m** tiles. Unzip them. (The zips can be given as they are.)
 2. In *Build from Survey*, select the DWGs and the `.tif` tiles together (keep "DSM"/"DTM" in the file names).
 3. Optionally add a building footprint shapefile (`.shp`, British National Grid), e.g. OS MasterMap Topography buildings, for exact outlines.
 4. Tick *Surroundings from LiDAR* and choose the radius. The ground and neighbouring blocks go on a "Context" workset (workshared projects) in the Existing phase. The surveyed building is never changed by this.
