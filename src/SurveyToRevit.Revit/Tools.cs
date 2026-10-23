@@ -20,6 +20,11 @@ public static class Tools
             "With a reference model of the same building linked in (modelled by hand): counts the generated walls, " +
             "windows and doors that are right, off, missed or invented, level by level. Nothing is changed.",
             typeof(ScoreCommand).FullName!, "Ribbon.icon16.png", "Ribbon.icon32.png"],
+        ["site", "Surroundings",
+            "Ground, neighbouring buildings and roads around the site from the Environment Agency LiDAR (picked on a map or " +
+            "from files) and OpenStreetMap, on their own workset. Run it again with other settings to replace them; the " +
+            "surveyed building is never touched.",
+            typeof(SiteCommand).FullName!, "Ribbon.icon16.png", "Ribbon.icon32.png"],
         ["testfit", "Office\\nTest-Fit",
             "Open the floor plan of a floor, then click: the workplace test-fit opens on that floor's real outline, " +
             "walls, columns and rooms. Set the density, lay out workspace, meeting rooms and breakout, and read " +

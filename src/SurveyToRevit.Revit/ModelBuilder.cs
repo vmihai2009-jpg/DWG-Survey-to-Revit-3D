@@ -56,6 +56,16 @@ public sealed class ModelBuilder
 
     readonly Phase? _phase;
 
+    /// <summary>For tools that work on a model already built (the surroundings): no survey drawings needed.</summary>
+    public ModelBuilder(Document doc) : this(doc, null!) { }
+
+    /// <summary>Builds (or rebuilds, replacing the last run) the surroundings on their own.</summary>
+    public void RunSite(SiteContext site)
+    {
+        var levels = new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().OrderBy(l => l.Elevation).ToList();
+        BuildSite(site, levels);
+    }
+
     static double Ft(double mm) => UnitConversion.MmToFeet(mm);
     static double Mm(double ft) => ft / UnitConversion.MmToFeet(1);
 
@@ -537,7 +547,8 @@ public sealed class ModelBuilder
         return $"{made} road areas" + (failed > 0 ? $" ({failed} could not be made: {why})" : "");
     }
 
-    const string ContextWorksetName = "Context";
+    /// <summary>The workset the surroundings go on (workshared projects).</summary>
+    public string ContextWorksetName { get; set; } = "Context";
 
     /// <summary>The "Context" workset (made if missing) in a workshared project; null otherwise (worksharing is never turned on by the add-in).</summary>
     WorksetId? ContextWorkset()

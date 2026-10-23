@@ -65,7 +65,7 @@ public static class SiteContextBuilder
     }
 
     public static SiteContext Build(IEnumerable<string> files, SurveyFrame frame, IEnumerable<Polygon2> surveyedOutlines,
-        double radiusM = 150, double groundStepM = 5, (double E, double N)? centreM = null)
+        double radiusM = 150, double groundStepM = 5, (double E, double N)? centreM = null, int roofStepM = 2)
     {
         var notes = new List<string>();
         // the area round the base point, or round a centre chosen on the map
@@ -198,7 +198,7 @@ public static class SiteContextBuilder
                     var inside = new bool[n * n];
                     foreach (var i in cells) inside[i] = !double.IsNaN(top[i]) && top[i] - ground[i] >= MinBuildingHeightM;
                     int before = blocks.Count;
-                    skipped += Roofs(inside, top, ground, n, minX, maxY, Model, blocks);
+                    skipped += Roofs(inside, top, ground, n, minX, maxY, Model, blocks, roofStepM);
                     if (blocks.Count > before) { split++; continue; }
                 }
                 var outline = new Polygon2(fp.Outer.Select(v => Model(v.X, v.Y)));
@@ -208,7 +208,7 @@ public static class SiteContextBuilder
             }
             notes.Add($"Footprints: {footprints.Count} outlines in the area; {split} with stepped roofs split by the LiDAR; {noHeight} without LiDAR heights left out.");
         }
-        else skipped = Roofs(mask, top, ground, n, minX, maxY, Model, blocks);
+        else skipped = Roofs(mask, top, ground, n, minX, maxY, Model, blocks, roofStepM);
         if (skipped > 0) notes.Add($"{skipped} small roof shapes too irregular to outline were left out.");
         notes.Insert(0, $"LiDAR: {dsm.Count} DSM and {dtm.Count} DTM tiles over a {2 * radiusM:0} m square around the base point; " +
                         $"{groundPts.Count} ground points, {blocks.Count} neighbouring blocks{(footprints.Count > 0 ? " from the footprints" : " traced from the LiDAR")} (the surveyed building and {SurveyMarginM:0} m around it are left to the survey).");
@@ -345,7 +345,7 @@ public static class SiteContextBuilder
     }
 
     /// <summary>Splits the masked cells into roofs of one height and adds a block for each; returns how many could not be outlined.</summary>
-    static int Roofs(bool[] mask, double[] top, double[] ground, int n, double minX, double maxY, Func<double, double, Vec2> model, List<ContextBlock> blocks)
+    static int Roofs(bool[] mask, double[] top, double[] ground, int n, double minX, double maxY, Func<double, double, Vec2> model, List<ContextBlock> blocks, int roofStepM = 2)
     {
         var region = new int[n * n];
         Array.Fill(region, -1);
@@ -377,7 +377,7 @@ public static class SiteContextBuilder
             double topMm = Math.Round(Percentile(heights, 0.5) * 10) * 100;
             double baseMm = Math.Floor(bases.Min() * 10) * 100;
             if (topMm - baseMm < MinBuildingHeightM * 1000) continue;
-            blocks.Add(new ContextBlock(outline, holes, baseMm, topMm) { Mesh = Surface(cells, top, n, minX, maxY, baseMm / 1000) });
+            blocks.Add(new ContextBlock(outline, holes, baseMm, topMm) { Mesh = Surface(cells, top, n, minX, maxY, baseMm / 1000, Math.Clamp(roofStepM, 1, 8)) });
         }
         return skipped;
     }
