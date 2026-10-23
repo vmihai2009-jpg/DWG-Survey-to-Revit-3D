@@ -83,3 +83,18 @@ public class OutlineRepairTests
         Assert.InRange(parts.Sum(p => p.Area), 45e6, 55e6);
     }
 }
+
+public class CeilingTagTests
+{
+    [Theory]
+    [InlineData("2.80", "X.XX", "CH 2.80")]
+    [InlineData("F2.37", "X.XX", "CH 2.37")]
+    [InlineData("F2.37", "", "CH 2.37")]
+    [InlineData("ROOM", "X.XX", null)]
+    [InlineData("2.80", "2.80", null)]
+    public void Ceiling_heights_in_attribute_tags_are_read(string tag, string value, string? expected)
+    {
+        var ad = new ACadSharp.Entities.AttributeDefinition { Tag = tag, Value = value };
+        Assert.Equal(expected, SurveyToRevit.Core.Survey.SurveyDrawing.CeilingTag(ad));
+    }
+}

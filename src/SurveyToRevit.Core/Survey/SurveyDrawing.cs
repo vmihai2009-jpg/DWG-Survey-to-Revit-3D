@@ -110,6 +110,9 @@ public sealed class SurveyDrawing
                     // round columns, rooflights: a full turn
                     arcs.Add((role, new Arc2(new Vec2(circle.Center.X, circle.Center.Y), circle.Radius, 0, 2 * Math.PI, layer)));
                     break;
+                case AttributeDefinition ad when CeilingTag(ad) is string ceiling:
+                    texts.Add((ad.InsertPoint.X, ad.InsertPoint.Y, ceiling, layer));
+                    break;
                 case TextEntity t:
                     texts.Add((t.InsertPoint.X, t.InsertPoint.Y, t.Value ?? "", layer));
                     break;
@@ -202,6 +205,18 @@ public sealed class SurveyDrawing
         if (w == (int)LineWeightType.ByLayer) w = e.Layer != null ? (int)e.Layer.LineWeight : -1;
         else if (w == (int)LineWeightType.ByBlock) w = block?.weight ?? -1;
         return (dashed, w >= 0 ? w : -1);
+    }
+
+    /// <summary>
+    /// A ceiling height drawn as a loose attribute in an oval (Plowman Craven: "2.80" ceiling, "F2.80" false
+    /// ceiling, with a placeholder value such as "X.XX"): the height is in the tag. Read as "CH 2.80"; a false
+    /// (suspended) ceiling is the ceiling seen in the room.
+    /// </summary>
+    internal static string? CeilingTag(AttributeDefinition ad)
+    {
+        if (!string.IsNullOrWhiteSpace(ad.Value) && ad.Value.Any(char.IsDigit)) return null;
+        var m = System.Text.RegularExpressions.Regex.Match(ad.Tag ?? "", @"^\s*F?\s*(\d+\.\d+)\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return m.Success ? "CH " + m.Groups[1].Value : null;
     }
 
     /// <summary>A block named as a door: "door", "doorl", "Door-900", "DR01", "FD30", "fire door".</summary>
