@@ -279,6 +279,7 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
         <button type="button" data-m="3d" aria-pressed="false">3D</button>
       </div>
       <button type="button" class="btn" id="resetBtn">Reset sample</button>
+      <button type="button" class="btn primary" id="sendBtn" hidden>Send to Revit</button>
     </div>
   </header>
 
@@ -1431,6 +1432,21 @@ function themeChanged(){if(V3.ok){V3.scene.background.set(tok('--v3d'));V3.need=
 try{matchMedia('(prefers-color-scheme: dark)').addEventListener('change',themeChanged);}catch(_){}
 new MutationObserver(themeChanged).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 
+/* ---------- send to Revit ---------- */
+// Which way each piece faces, in its own drawing: desks face their user (+y), seats face away from their back (-y).
+const FRONT={desk:1,recdesk:1};
+function layoutForRevit(){
+  const Ly=S.layers,r=n=>Math.round(n*1000)/1000;
+  const items=M.items.filter(it=>Ly[it.cat]!==false).map(it=>{
+    const s=FRONT[it.k]||-1,a=it.a*Math.PI/180;
+    return{k:it.k,cat:it.cat,zone:it.zid,x:r(it.x),y:r(it.y),w:r(it.w),d:r(it.d),fx:r(-s*Math.sin(a)),fy:r(s*Math.cos(a))};
+  });
+  const zones=S.zones.map(z=>({id:z.id,name:z.name,type:z.type,part:z.part,x:r(z.x),y:r(z.y),w:r(z.w),d:r(z.d)}));
+  const walls=M.walls.filter(w=>Math.hypot(w.x2-w.x1,w.y2-w.y1)>=.05).map(w=>({x1:r(w.x1),y1:r(w.y1),x2:r(w.x2),y2:r(w.y2),part:w.part,zone:w.zid}));
+  const doors=M.doors.map(d=>({x:r(d.hx),y:r(d.hy),dx:r(d.dx),dy:r(d.dy),nx:r(d.nx),ny:r(d.ny),w:r(d.w),part:d.part,zone:d.zid}));
+  return{kind:'testfit-layout',version:1,density:S.density,keepPartitions:KEEP_PARTS,desks:M.desksShown,nia:r(M.NIA),items,walls,doors,zones};
+}
+
 /* ---------- boot ---------- */
 if(SITE){
   // zones are drawn only where the floor is
@@ -1443,6 +1459,12 @@ if(SITE){
   for(const id of['fW','fD','fG'])$('#'+id).disabled=true;
   $('#resetBtn').textContent='Reset';
   $('#keepRow').hidden=false;
+  const host=window.chrome&&window.chrome.webview;
+  if(host){
+    const sb=$('#sendBtn');sb.hidden=false;
+    sb.title='Close this window and place the furniture, partitions, doors and rooms in the model';
+    sb.addEventListener('click',()=>host.postMessage(JSON.stringify(layoutForRevit())));
+  }
   $('#keepT').addEventListener('change',e=>{KEEP_PARTS=e.target.checked;MK=buildMask(SITE);SITE_SVG=null;siteSVG();if(V3.ok)V3.stale=true;refresh(false);});
 }
 if(window.innerWidth<820){stage.className='stage mode-plan';$$('#modeSeg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.m==='plan'));}

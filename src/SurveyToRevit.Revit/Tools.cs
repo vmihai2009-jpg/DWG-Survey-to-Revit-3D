@@ -28,7 +28,8 @@ public static class Tools
         ["testfit", "Office\\nTest-Fit",
             "Open the floor plan of a floor, then click: the workplace test-fit opens on that floor's real outline, " +
             "walls, columns and rooms. Set the density, lay out workspace, meeting rooms and breakout, and read " +
-            "headcount and NIA. Nothing in the model is changed.",
+            "headcount and NIA. Send to Revit places the furniture (Autodesk families), partitions, glazed screens, doors " +
+            "and rooms on that floor; sending again replaces them.",
             typeof(TestFitCommand).FullName!, "Ribbon.testfit16.png", "Ribbon.testfit32.png"],
     ];
 }
