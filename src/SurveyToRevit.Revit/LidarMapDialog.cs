@@ -56,7 +56,7 @@ public sealed class LidarMapDialog : Form
             Dock = DockStyle.Top, Height = 56, Padding = new Padding(8, 8, 8, 0),
             Text = "The site is found from the survey's coordinates (red outline). The blue square is the area to download: " +
                    "click or drag on the map to move it, set its size with the radius. Data: Environment Agency LIDAR Composite DSM and DTM 1 m, " +
-                   "Open Government Licence.",
+                   "Open Government Licence; roads © OpenStreetMap contributors (ODbL).",
         };
         var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 44, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8, 6, 8, 6) };
         var cancel = new Button { Text = "Cancel", Width = 100, DialogResult = DialogResult.Cancel };
@@ -180,6 +180,9 @@ public sealed class LidarMapDialog : Form
             Files.Add(await LidarService.Download(http, LidarService.Dsm, minE, minN, maxE, maxN, _folder));
             _status.Text = "Downloading the ground model (DTM)…";
             Files.Add(await LidarService.Download(http, LidarService.Dtm, minE, minN, maxE, maxN, _folder));
+            _status.Text = "Downloading the roads (OpenStreetMap)…";
+            try { Files.Add(await OsmRoads.Download(http, minE, minN, maxE, maxN, _folder)); }
+            catch (Exception ex) { MessageBox.Show(this, "The roads could not be downloaded, so the surroundings will have none:\n" + ex.Message, Text); }
             DialogResult = DialogResult.OK;
             Close();
         }

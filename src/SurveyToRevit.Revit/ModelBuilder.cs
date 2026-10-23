@@ -410,14 +410,30 @@ public sealed class ModelBuilder
                 Mark(topo, SiteCode, "Ground");
                 OnWorkset(topo);
                 done.Add($"ground surface from {points.Count} LiDAR points");
+                if (topo.get_BoundingBox(null) is BoundingBoxXYZ placed)
+                    Log.Add($"Surroundings: ground surface top {placed.Max.Z * 304.8 / 1000:0.00} m (highest LiDAR ground point {expectedTop * 304.8 / 1000:0.00} m); lowest level {level.Name} at {level.Elevation * 304.8 / 1000:0.00} m.");
+                if (site.Roads.Count > 0) done.Add(Roads(topo, site.Roads, level.Elevation));
             }
             catch (Exception ex) { done.Add($"no ground surface ({ex.Message})"); }
         }
 
-        var category = DirectShape.IsValidCategoryId(new ElementId(BuiltInCategory.OST_Mass), _doc) ? BuiltInCategory.OST_Mass : BuiltInCategory.OST_GenericModel;
+        // generic models: masses are hidden in most views unless "Show Mass" is on
+        var category = BuiltInCategory.OST_GenericModel;
         int made = 0, failed = 0;
+        int shaped = 0;
         foreach (var b in site.Blocks)
         {
+            // the LiDAR's own shape (roofs as surveyed from the air) where there is one
+            if (b.Mesh is BlockMesh mesh && Shape(mesh) is IList<GeometryObject> geometry)
+            {
+                var dm = DirectShape.CreateElement(_doc, new ElementId(category));
+                dm.SetShape(geometry);
+                dm.Name = "Context - LiDAR";
+                Mark(dm, SiteCode, $"Context block {b.TopMm / 1000:0.0} m");
+                OnWorkset(dm);
+                made++; shaped++;
+                continue;
+            }
             double z = Ft(b.BaseMm), h = Ft(b.TopMm - b.BaseMm);
             var outer = Loop(b.Outline, z);
             if (outer == null) { failed++; continue; }
@@ -436,12 +452,63 @@ public sealed class ModelBuilder
             OnWorkset(ds);
             made++;
         }
-        done.Add($"{made} neighbouring blocks" + (failed > 0 ? $" ({failed} could not be made)" : ""));
+        done.Add($"{made} neighbouring blocks ({shaped} with their LiDAR roof shape)" + (failed > 0 ? $" ({failed} could not be made)" : ""));
         t.Commit();
         Log.Add($"Surroundings: {string.Join(", ", done)}" + (removed > 0 ? $" (replacing {removed} elements from an earlier run)." : "."));
     }
 
     const string SiteCode = "SITE";
+    /// <summary>A LiDAR block surface as Revit geometry (a solid where Revit can close it, else a mesh); null if refused.</summary>
+    IList<GeometryObject>? Shape(BlockMesh mesh)
+    {
+        try
+        {
+            var builder = new TessellatedShapeBuilder { Target = TessellatedShapeBuilderTarget.AnyGeometry, Fallback = TessellatedShapeBuilderFallback.Mesh };
+            builder.OpenConnectedFaceSet(true);
+            var xyz = mesh.Points.Select(p => new XYZ(Ft(p.X), Ft(p.Y), Ft(p.Z))).ToList();
+            foreach (var (a, b, c) in mesh.Triangles)
+            {
+                if (xyz[a].IsAlmostEqualTo(xyz[b]) || xyz[b].IsAlmostEqualTo(xyz[c]) || xyz[a].IsAlmostEqualTo(xyz[c])) continue;
+                builder.AddFace(new TessellatedFace(new List<XYZ> { xyz[a], xyz[b], xyz[c] }, ElementId.InvalidElementId));
+            }
+            builder.CloseConnectedFaceSet();
+            builder.Build();
+            var result = builder.GetBuildResult();
+            return result.Outcome == TessellatedShapeBuilderOutcome.Nothing ? null : result.GetGeometricalObjects();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Roads cut into the ground surface as sub-divisions with a road material.</summary>
+    string Roads(Toposolid topo, IReadOnlyList<RoadArea> roads, double z)
+    {
+        var material = new FilteredElementCollector(_doc).OfClass(typeof(Material)).Cast<Material>()
+            .FirstOrDefault(m => m.Name == "Context - Road");
+        if (material == null)
+        {
+            material = (Material)_doc.GetElement(Material.Create(_doc, "Context - Road"));
+            material.Color = new Color(70, 70, 75);
+            material.SurfaceForegroundPatternColor = new Color(70, 70, 75);
+        }
+        int made = 0, failed = 0; string? why = null;
+        foreach (var r in roads)
+        {
+            var outer = Loop(r.Outline, z);
+            if (outer == null) { failed++; continue; }
+            var loops = new List<CurveLoop> { outer };
+            loops.AddRange(r.Holes.Select(h => Loop(h, z)).Where(h => h != null).Cast<CurveLoop>());
+            try
+            {
+                var sub = topo.CreateSubDivision(_doc, loops);
+                sub.get_Parameter(BuiltInParameter.TOPOSOLID_SUBDIVIDE_MATERIAL)?.Set(material.Id);
+                Mark(sub, SiteCode, "Road");
+                made++;
+            }
+            catch (Exception ex) { failed++; why ??= ex.Message; }
+        }
+        return $"{made} road areas" + (failed > 0 ? $" ({failed} could not be made: {why})" : "");
+    }
+
     const string ContextWorksetName = "Context";
 
     /// <summary>The "Context" workset (made if missing) in a workshared project; null otherwise (worksharing is never turned on by the add-in).</summary>
