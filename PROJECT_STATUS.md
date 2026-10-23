@@ -39,6 +39,8 @@ v0.4 adds: windows from the window layer (one per cluster of window lines, width
 
 v0.2 feedback addressed: no floors/ceilings (added), poor walls (new reader, below), no interface (window added), link "559 km away" warning (the check compared different coordinate spaces; it now compares the link's actual wall lines and corrects the position), walls placed twice-transformed (fixed).
 
+**Office Test-Fit (2026-10-23, Mihai's request, branch `claude/project-thread-tz8289`, step 1 of 3, to ship in 0.16.0 with launcher 1.0.2).** A new ribbon button opens Mihai's Workplace Test-Fit page (`src/SurveyToRevit.Revit/TestFit/testfit.html`, three.js bundled) in a WebView2 window over Revit, on the level of the active floor plan: outline from the floor slabs (else rooms, else the box round the walls), existing walls cut 1 m above the floor, columns/generic models/stairs/sanitaryware as obstacles, room names; rooms named stair/lift/WC/riser… start as core spaces, the rest as one workspace. The page keeps desks inside the outline (façade setback), clear of walls and columns, and drops new partitions along the façade or an existing wall. View only. Step 2 (agreed): *Send to Revit*: desks and chairs as Autodesk library furniture families, solid partitions as walls, glazed as curtain walls, doors, named rooms, on their own workset, replaceable. Step 3: odd-shaped zones, the layout saved in the model, headcount schedule. Not yet run in Revit (WebView2 inside Revit is the main unknown).
+
 ## Architecture
 
 | Project | Purpose | Needs Revit? |

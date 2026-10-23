@@ -15,7 +15,7 @@ stage=$(mktemp -d)
 pkg="$stage/SurveyToRevit-$version"
 mkdir -p "$pkg/SurveyToRevit"
 cp "$root"/install.cmd "$root"/install.ps1 "$root"/uninstall.cmd "$root"/uninstall.ps1 "$root"/README.md "$root"/src/SurveyToRevit.Launcher/SurveyToRevit.addin "$pkg/"
-for f in SurveyToRevit.Revit.dll SurveyToRevit.Revit.pdb SurveyToRevit.Revit.deps.json SurveyToRevit.Core.dll SurveyToRevit.Core.pdb ACadSharp.dll; do cp "$engine/$f" "$pkg/SurveyToRevit/"; done
+for f in SurveyToRevit.Revit.dll SurveyToRevit.Revit.pdb SurveyToRevit.Revit.deps.json SurveyToRevit.Core.dll SurveyToRevit.Core.pdb ACadSharp.dll Microsoft.Web.WebView2.Core.dll Microsoft.Web.WebView2.Wpf.dll; do cp "$engine/$f" "$pkg/SurveyToRevit/"; done
 cp "$launcher"/SurveyToRevit.Launcher.dll "$launcher"/SurveyToRevit.Launcher.pdb "$launcher"/SurveyToRevit.Launcher.deps.json "$pkg/SurveyToRevit/"
 mkdir -p "$out"
 rm -f "$out/SurveyToRevit-$version.zip"

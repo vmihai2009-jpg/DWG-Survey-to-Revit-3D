@@ -20,6 +20,8 @@
   <ItemGroup>
     <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2025.4.60" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2025.4.60" ExcludeAssets="runtime" PrivateAssets="all" />
+    <!-- Office Test-Fit window: Microsoft Edge WebView2 (the runtime comes with Windows 10/11). -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" GeneratePathProperty="true" />
   </ItemGroup>
 
   <ItemGroup>
@@ -39,6 +41,11 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Resources\icon96.png" LogicalName="icon96.png" />
+    <!-- Office Test-Fit page (written to a local folder and shown in WebView2) and WebView2's native loader,
+         carried inside the engine because the engine is loaded from memory, not from its folder. -->
+    <EmbeddedResource Include="TestFit\testfit.html" LogicalName="TestFit.testfit.html" />
+    <EmbeddedResource Include="TestFit\three.min.js" LogicalName="TestFit.three.min.js" />
+    <EmbeddedResource Include="$(PkgMicrosoft_Web_WebView2)\runtimes\win-x64\native\WebView2Loader.dll" LogicalName="TestFit.WebView2Loader.dll" />
   </ItemGroup>
 
 </Project>

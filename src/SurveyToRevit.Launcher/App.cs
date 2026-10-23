@@ -6,7 +6,7 @@ namespace SurveyToRevit.Launcher;
 
 /// <summary>
 /// What Revit loads at start-up: the "Survey to Revit" panel on the shared Barr Gazetas tab.
-/// Build from Survey and Wall from Lines run the newest installed engine on each click; the Updater
+/// Build from Survey, Wall from Lines and Office Test-Fit run the newest installed engine on each click; the Updater
 /// installs a new engine from a release zip and Settings holds the user's options.
 /// </summary>
 public class App : IExternalApplication
@@ -52,6 +52,15 @@ public class App : IExternalApplication
                           "windows and doors that are right, off, missed or invented, level by level. Nothing is changed.",
                 Image = Icon("icon16.png"), LargeImage = Icon("icon32.png"),
             });
+        panel.AddSeparator();
+        panel.AddItem(new PushButtonData("OfficeTestFit", "Office\nTest-Fit", me, typeof(OfficeTestFit).FullName)
+        {
+            ToolTip = "Open the floor plan of a floor, then click: the workplace test-fit opens on that floor's real outline, " +
+                      "walls, columns and rooms. Set the density, lay out workspace, meeting rooms and breakout, and read " +
+                      "headcount and NIA. Nothing in the model is changed.",
+            Image = Icon("testfit16.png"),
+            LargeImage = Icon("testfit32.png"),
+        });
         var stacked = panel.AddStackedItems(
             new PushButtonData("SurveyUpdater", "Updater", me, typeof(UpdaterCommand).FullName)
             {

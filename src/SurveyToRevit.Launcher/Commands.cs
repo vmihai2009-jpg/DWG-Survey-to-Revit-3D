@@ -33,3 +33,10 @@ public class Score : IExternalCommand
     public Result Execute(ExternalCommandData data, ref string message, ElementSet elements) =>
         Engine.Run("SurveyToRevit.Revit.ScoreCommand", data, ref message, elements);
 }
+
+[Transaction(TransactionMode.ReadOnly)]
+public class OfficeTestFit : IExternalCommand
+{
+    public Result Execute(ExternalCommandData data, ref string message, ElementSet elements) =>
+        Engine.Run("SurveyToRevit.Revit.TestFitCommand", data, ref message, elements);
+}

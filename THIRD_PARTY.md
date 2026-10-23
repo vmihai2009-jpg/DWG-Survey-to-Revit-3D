@@ -4,6 +4,8 @@
 |---|---|---|---|
 | Nice3point.Revit.Api.RevitAPI / RevitAPIUI 2025.4.60 (NuGet) | Revit API reference assemblies for compiling | MIT (package); Autodesk API assemblies are supplied by Revit at run time | No |
 | ACadSharp 3.8.0 (NuGet) | Reads DWG files directly (lines, polylines, text, blocks) | MIT | Yes (ACadSharp.dll) |
+| Microsoft.Web.WebView2 1.0.2792.45 (NuGet) | Office Test-Fit window (shows the test-fit page inside Revit) | BSD-3-Clause style (Microsoft); the WebView2 Runtime itself is part of Windows 10/11 | Yes (Microsoft.Web.WebView2.Core.dll, .Wpf.dll; WebView2Loader.dll inside the engine) |
+| three.js r128 | 3D view of the Office Test-Fit page | MIT | Yes (inside the engine, written out with the page) |
 | xunit, Microsoft.NET.Test.Sdk, coverlet (NuGet) | Tests only | Apache-2.0 / MIT | No |
 
 Reference projects reviewed (no code copied):

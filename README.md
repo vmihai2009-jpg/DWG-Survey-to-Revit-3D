@@ -56,6 +56,10 @@ Or by hand:
 
 Running it again replaces only the elements it created before on those floors. Undo reverses the whole run.
 
+### Office Test-Fit
+
+Open the floor plan of a floor and click **Office Test-Fit**. The workplace test-fit opens in a window over Revit, drawn on that floor: the outline of its floor slabs (or its rooms, or the box round its walls, when there is no slab), its walls, columns and rooms. Stairs, lifts and WCs (by room name) start as core spaces; the rest of the floor starts as one workspace. Set the density (m² NIA per workstation), add meeting rooms, focus rooms, breakout and reception, and read the headcount, NIA and checks. Desks stay inside the outline, off the façade by the setback, and clear of walls and columns. Nothing in the model is changed yet (placing the furniture and partitions in Revit is the next step). Needs the Microsoft Edge WebView2 Runtime, which Windows 10/11 already has.
+
 ## Developers
 
 ```
