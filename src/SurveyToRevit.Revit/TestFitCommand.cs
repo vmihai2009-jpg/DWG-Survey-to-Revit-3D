@@ -10,10 +10,10 @@ namespace SurveyToRevit.Revit;
 /// <summary>
 /// Office Test-Fit: opens the workplace test-fit page on the floor of the active floor plan. The floor's
 /// outline (its slabs, or failing that its rooms or walls), existing walls, columns and rooms are read and
-/// handed to the page, which lays out desks, meeting rooms and breakout inside them. Nothing in the model
-/// is changed.
+/// handed to the page, which lays out desks, meeting rooms and breakout inside them. Send to Revit on the page
+/// closes the window and places the layout (TestFitBuilder); closing it without sending changes nothing.
 /// </summary>
-[Transaction(TransactionMode.ReadOnly)]
+[Transaction(TransactionMode.Manual)]
 public class TestFitCommand : IExternalCommand
 {
     const string Caption = "Office Test-Fit";
@@ -41,13 +41,40 @@ public class TestFitCommand : IExternalCommand
                                      "Build the floor (Build from Survey) or draw its slab first.");
             return Result.Cancelled;
         }
-        try { TestFitWindow.Open(site, data.Application.MainWindowHandle); }
+        string? sent;
+        try { sent = TestFitWindow.Open(site, data.Application.MainWindowHandle); }
         catch (Exception ex)
         {
             TaskDialog.Show(Caption, "The test-fit window could not open: " + ex.Message);
             return Result.Failed;
         }
+        if (sent == null) return Result.Succeeded; // looked at, nothing sent
+
+        TestFitLayout layout;
+        try { layout = TestFitLayout.Parse(sent, site.Frame().OriginMm); }
+        catch (Exception ex) { TaskDialog.Show(Caption, "The layout could not be read: " + ex.Message); return Result.Failed; }
+        var builder = new TestFitBuilder(doc, level, site.StoreyHeightMm);
+        builder.Build(layout);
+        TaskDialog.Show(Caption, Summary(builder, layout, uidoc.ActiveView));
         return Result.Succeeded;
+    }
+
+    static string Summary(TestFitBuilder b, TestFitLayout layout, View view)
+    {
+        var lines = new List<string>
+        {
+            $"{layout.Desks} workstations on {layout.NiaM2:0} m² NIA placed on this floor.",
+            $"Furniture: {b.Placed.Values.Sum()} family instances" + (b.Blocks > 0 ? $", {b.Blocks} plain blocks (no family found)" : "") + ".",
+            $"Partitions: {b.Walls} walls, {b.Glazed} curtain walls, {b.Doors} doors; {b.Rooms} rooms.",
+        };
+        if (b.Placed.Count > 0) lines.Add("Families: " + string.Join(", ", b.Placed.Select(p => $"{p.Key} ({p.Value})")) + ".");
+        if (b.Removed > 0) lines.Add($"The last test-fit on this floor was replaced ({b.Removed} elements).");
+        var viewPhase = view.get_Parameter(BuiltInParameter.VIEW_PHASE)?.AsValueString();
+        if (b.PhaseName != null && viewPhase != null && viewPhase != b.PhaseName)
+            lines.Add($"It is on the '{b.PhaseName}' phase; this view shows '{viewPhase}', so set the view's phase to '{b.PhaseName}' to see it.");
+        lines.Add("Undo removes it all in one step. Send to Revit again from Office Test-Fit to replace it.");
+        if (b.Log.Count > 0) lines.Add("\n" + string.Join("\n", b.Log.Distinct().Take(14)));
+        return string.Join("\n", lines);
     }
 }
 

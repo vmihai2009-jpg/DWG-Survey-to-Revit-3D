@@ -10,7 +10,8 @@ namespace SurveyToRevit.Revit;
 /// <summary>
 /// The test-fit page in a window over Revit, shown in Microsoft Edge WebView2. The page and the floor
 /// (site.js) are written to a fresh folder under %LocalAppData%\SurveyToRevit\TestFit and served from
-/// there, so the page works offline. The window is modal: Revit waits until it is closed.
+/// there, so the page works offline. The window is modal: Revit waits until it is closed, or until the page's
+/// Send to Revit hands back its layout.
 /// </summary>
 internal sealed class TestFitWindow : Window
 {
@@ -20,13 +21,17 @@ internal sealed class TestFitWindow : Window
     readonly WebView2 _web = new();
     readonly string _folder;
 
-    public static void Open(TestFitSite site, IntPtr revit)
+    /// <summary>The layout sent with "Send to Revit" (the page's JSON), or null if the window was closed without it.</summary>
+    string? _sent;
+
+    public static string? Open(TestFitSite site, IntPtr revit)
     {
         LoadWebView2();
         var folder = WritePage(site);
         var window = new TestFitWindow(folder, site.Title);
         new WindowInteropHelper(window).Owner = revit;
         window.ShowDialog();
+        return window._sent;
     }
 
     TestFitWindow(string folder, string title)
@@ -48,6 +53,12 @@ internal sealed class TestFitWindow : Window
             await _web.EnsureCoreWebView2Async(env);
             _web.CoreWebView2.SetVirtualHostNameToFolderMapping(Host, _folder, CoreWebView2HostResourceAccessKind.Allow);
             _web.CoreWebView2.Settings.IsStatusBarEnabled = false;
+            _web.CoreWebView2.WebMessageReceived += (_, e) =>
+            {
+                try { _sent = e.TryGetWebMessageAsString(); }
+                catch (ArgumentException) { return; }
+                Close();
+            };
             _web.Source = new Uri($"https://{Host}/testfit.html");
         }
         catch (WebView2RuntimeNotFoundException)
