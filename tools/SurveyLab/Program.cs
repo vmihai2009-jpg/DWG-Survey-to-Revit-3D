@@ -39,12 +39,12 @@ File.WriteAllText(Path.Combine(outDir, "report.txt"), sb.ToString());
 Console.WriteLine(sb);
 
 foreach (var l in model.Levels)
-    File.WriteAllText(Path.Combine(outDir, $"{l.Code}.svg"), Svg(l, model.Frame));
+    File.WriteAllText(Path.Combine(outDir, $"{l.Code}.svg"), Svg(l, model.Frame, model.Checks.Where(c => c.LevelCode == l.Code).ToList()));
 
 foreach (var l in model.Levels)
     File.WriteAllText(Path.Combine(outDir, $"{l.Code}-loose.svg"), LooseEnds(l, model.Frame, Environment.GetEnvironmentVariable("BOX")?.Split(",").Select(double.Parse).ToArray()));
 
-static string Svg(SurveyLevel l, SurveyFrame f)
+static string Svg(SurveyLevel l, SurveyFrame f, List<CheckItem> checks)
 {
     var raw = l.Plan.WallLines.Select(f.ToModel).ToList();
     var walls = l.Walls.Walls.Select(w => (w, c: w.Centerline)).ToList();
@@ -91,6 +91,12 @@ static string Svg(SurveyLevel l, SurveyFrame f)
         sb.Append($"<text x='{p.X:0}' y='{-p.Y:0}' font-size='400' fill='#333'>{System.Security.SecurityElement.Escape(name)}</text>");
     foreach (var u in l.Unclear)
         sb.Append($"<polygon points='{string.Join(" ", u.Outline.Vertices.Select(v => $"{v.X:0},{-v.Y:0}"))}' fill='#f5a623' fill-opacity='0.6'/>");
+    // self-checks: a ring per item, coloured by kind, with its kind's number
+    foreach (var c in checks)
+    {
+        var col = new[] { "#ff0000", "#ff7f00", "#00b000", "#0090ff", "#a000ff", "#ff00c0", "#806000", "#008080", "#404040" }[(int)c.Kind % 9];
+        sb.Append($"<circle cx='{c.At.X:0}' cy='{-c.At.Y:0}' r='700' fill='none' stroke='{col}' stroke-width='90'/><text x='{c.At.X + 750:0}' y='{-c.At.Y:0}' font-size='700' fill='{col}'>{(int)c.Kind}</text>");
+    }
     sb.Append("</svg>");
     return sb.ToString();
 }

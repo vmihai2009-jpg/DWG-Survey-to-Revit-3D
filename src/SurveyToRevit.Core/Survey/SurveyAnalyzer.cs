@@ -85,6 +85,8 @@ public sealed class SurveyModel
     public LayerRules Rules { get; init; } = LayerRules.Default;
     /// <summary>Survey sections read from section sheets (heights, and cut lines for section views).</summary>
     public IReadOnlyList<SurveySection> Sections { get; init; } = Array.Empty<SurveySection>();
+    /// <summary>Places the self-checks found worth a look (see <see cref="ModelChecks"/>), most important first.</summary>
+    public IReadOnlyList<CheckItem> Checks { get; init; } = Array.Empty<CheckItem>();
 }
 
 /// <summary>
@@ -295,6 +297,34 @@ public static class SurveyAnalyzer
                 levels[i].Windows = levels[i].Windows.Where(w => at.ContainsKey(before[w.HostIndex])).Select(w => w with { HostIndex = at[before[w.HostIndex]] }).ToList();
                 levels[i].Walls = levels[i].Walls with { Walls = all, ThicknessGroups = all.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
             }
+            // door blocks on other layers ("doorl" on a joinery layer): doors where they swing in a wall's opening
+            if (levels[i].Plan.DoorBlockLines.Count > 0)
+            {
+                var blockLines = AxisSnapper.Snap(levels[i].Plan.DoorBlockLines.Select(frame.ToModel), levels[i].Walls.Axes, tol.AngleSnapDeg).Where(s => nearBuilding(s.A) && nearBuilding(s.B)).ToList();
+                var extra = DoorFinder.Find(blockLines, levels[i].Walls.Walls, levels[i].Windows, heights: heights, storeyMm: levels[i].WallHeightMm,
+                        arcs: levels[i].Plan.DoorArcs.Select(frame.ToModel).Where(a => nearBuilding(a.Center)).ToList(), wallSizes: tol.WallTypeSizes)
+                    .Where(d => d.Swing != null && !levels[i].Doors.Any(o => o.Center.DistanceTo(d.Center) < (o.WidthMm + d.WidthMm) / 2)).ToList();
+                if (extra.Count > 0)
+                {
+                    levels[i].Doors = levels[i].Doors.Concat(extra).ToList();
+                    notes.Add($"{levels[i].Name}: {extra.Count} doors from door blocks drawn on other layers (e.g. joinery).");
+                }
+            }
+            // doors the survey names in words next to door linework with no door ("Sliding Door", "FD30")
+            var named = DoorFinder.FromNotes(doorInput[levels[i]].Where(s => nearBuilding(s.A) && nearBuilding(s.B)).ToList(), levels[i].Walls.Walls, levels[i].Doors, levels[i].Windows, tx);
+            if (named.Count > 0)
+            {
+                levels[i].Doors = levels[i].Doors.Concat(named).ToList();
+                notes.Add($"{levels[i].Name}: {named.Count} doors where a note names one (sliding, folding, fire door) beside door linework.");
+            }
+            // windows the survey notes as blocked up ("Blocked Window") are wall
+            var blockedNotes = tx.Where(t => DoorFinder.IsBlockedNote(t.Item2) && t.Item2.Contains("window", StringComparison.OrdinalIgnoreCase)).Select(t => t.Item1).ToList();
+            if (blockedNotes.Count > 0)
+            {
+                int before = levels[i].Windows.Count;
+                levels[i].Windows = levels[i].Windows.Where(w => !blockedNotes.Any(b => b.DistanceTo(w.Center) <= Math.Max(1200, w.WidthMm))).ToList();
+                if (levels[i].Windows.Count < before) notes.Add($"{levels[i].Name}: {before - levels[i].Windows.Count} windows noted as blocked up (\"Blocked Window\") left as wall.");
+            }
             var filling = OpeningCuts.FillingOpenings(levels[i].Walls.Walls,
                 levels[i].Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm)).Concat(levels[i].Doors.Select(d => (d.HostIndex, d.Center, d.WidthMm))));
             if (filling.Count > 0)
@@ -397,7 +427,9 @@ public static class SurveyAnalyzer
         }
         if (noHeight > 0) notes.Add($"{noHeight} roof areas have no spot height inside them and were left out.");
         if (roofPlans.Count == 0 && roofs.Count == 0) notes.Add("No roof plan or roof layer: no roofs built.");
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections };
+        // self-checks: places to look at, listed for the review list and the report
+        var checks = ModelChecks.Run(levels, frame, rules, FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList()));
+        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections, Checks = checks };
     }
 
     /// <summary>Inside the box the walls span (their middle 98%, so one stray wall cannot stretch it), grown by a margin.</summary>

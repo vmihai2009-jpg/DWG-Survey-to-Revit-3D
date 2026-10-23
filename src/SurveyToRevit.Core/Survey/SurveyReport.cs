@@ -55,6 +55,16 @@ public static class SurveyReport
             sb.AppendLine($"  {RoleName(g.Key),-26} " + string.Join(", ", g.OrderByDescending(x => x.Count).Select(x => $"{x.Layer} ({x.Count})")));
         sb.AppendLine();
 
+        if (m.Checks.Count > 0)
+        {
+            sb.AppendLine("SELF-CHECKS (places worth a look; in Revit: Survey to Revit > Review list)");
+            foreach (var g in m.Checks.GroupBy(c => c.Kind).OrderBy(g => g.First().Priority))
+                sb.AppendLine($"  {CheckItem.Describe(g.Key),-48} {g.Count(),4}   " + string.Join(", ", g.GroupBy(c => c.LevelCode).Select(x => $"{x.Key}: {x.Count()}")));
+            foreach (var c in m.Checks.OrderBy(c => c.Priority).ThenBy(c => c.LevelCode).Take(60))
+                sb.AppendLine($"  - {c.Message} (at x {c.At.X / 1000:0.0}, y {c.At.Y / 1000:0.0} m)");
+            if (m.Checks.Count > 60) sb.AppendLine($"  … and {m.Checks.Count - 60} more in the review list.");
+            sb.AppendLine();
+        }
         if (m.Notes.Count > 0)
         {
             sb.AppendLine("ASSUMPTIONS AND NOTES");

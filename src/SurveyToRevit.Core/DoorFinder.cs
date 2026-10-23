@@ -220,6 +220,62 @@ public static class DoorFinder
             ? d with { HeightMm = Math.Round(h / 10) * 10, HeightFromSurvey = true } : d).ToList();
     }
 
+    static readonly System.Text.RegularExpressions.Regex DoorNote = new(@"\b(sliding|folding|bi-?fold|pocket|fire)\s*doors?\b|\bFD\s?\d{2}S?\b|^\s*doors?\s*$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    static readonly System.Text.RegularExpressions.Regex BlockedNote = new(@"\b(blocked|bricked|sealed|infilled|blocked[- ]up)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>A note saying an opening is blocked up ("Blocked Doors", "boarded", "bricked up").</summary>
+    public static bool IsBlockedNote(string text) => BlockedNote.IsMatch(text);
+
+    /// <summary>
+    /// Doors the survey names in words: a note ("Sliding Door", "Folding Door", "FD30", "door") within reach of door
+    /// linework no door was made from is a vote for a door there, in the wall that runs along that linework. A note
+    /// saying the opening is blocked wins over it.
+    /// </summary>
+    public static List<DoorCandidate> FromNotes(IReadOnlyList<Segment2> doorLines, IReadOnlyList<WallCandidate> walls, IReadOnlyList<DoorCandidate> doors,
+        IReadOnlyList<WindowCandidate> windows, IReadOnlyList<(Vec2 Position, string Value)> texts, double reach = 1500)
+    {
+        var result = new List<DoorCandidate>();
+        var notes = texts.Where(t => DoorNote.IsMatch(t.Value) && !BlockedNote.IsMatch(t.Value)).ToList();
+        if (notes.Count == 0) return result;
+        var blocked = texts.Where(t => BlockedNote.IsMatch(t.Value)).Select(t => t.Position).ToList();
+        var lines = doorLines.Where(l => l.Length >= 50).ToList();
+        var parent = Enumerable.Range(0, lines.Count).ToArray();
+        int Root(int i) => parent[i] == i ? i : parent[i] = Root(parent[i]);
+        for (int i = 0; i < lines.Count; i++)
+            for (int j = i + 1; j < lines.Count; j++)
+                if (Math.Min(Math.Min(lines[i].A.DistanceTo(lines[j].A), lines[i].A.DistanceTo(lines[j].B)), Math.Min(lines[i].B.DistanceTo(lines[j].A), lines[i].B.DistanceTo(lines[j].B))) < 60)
+                    parent[Root(i)] = Root(j);
+        foreach (var g in Enumerable.Range(0, lines.Count).GroupBy(Root))
+        {
+            var group = g.Select(i => lines[i]).ToList();
+            var pts = group.SelectMany(l => new[] { l.A, l.B }).ToList();
+            var mid = new Vec2(pts.Average(p => p.X), pts.Average(p => p.Y));
+            if (!notes.Any(n => n.Position.DistanceTo(mid) <= reach) || blocked.Any(b => b.DistanceTo(mid) <= reach)) continue;
+            if (doors.Concat(result).Any(d => d.Center.DistanceTo(mid) < Math.Max(1000, d.WidthMm))) continue;
+            // the wall the linework runs along (the opening it fills)
+            int host = -1; double best = double.MaxValue; double lo = 0, hi = 0;
+            for (int k = 0; k < walls.Count; k++)
+            {
+                var w = walls[k];
+                if (w.Curtain || w.Arc != null) continue;
+                double off = Math.Abs(WallGeometry.Offset(w, mid));
+                if (off > w.TypeThickness / 2 + 300) continue;
+                var along = pts.Select(p => WallGeometry.Along(w, p)).ToList();
+                double a0 = Math.Max(0, along.Min()), a1 = Math.Min(w.Length, along.Max());
+                if (a1 - a0 < 600 || a1 - a0 > 4000) continue;
+                if (off < best) { best = off; host = k; lo = a0; hi = a1; }
+            }
+            if (host < 0) continue;
+            var hw = walls[host];
+            var center = WallGeometry.PointAt(hw, (lo + hi) / 2);
+            double width = Math.Round((hi - lo) / 10) * 10;
+            if (windows.Any(w => w.HostIndex == host && w.Center.DistanceTo(center) < (w.WidthMm + width) / 2)) continue;
+            result.Add(new DoorCandidate(host, center, width, DefaultHeightMm, width > 1500));
+        }
+        return result;
+    }
+
     // a wall across an empty opening, run on at each end to the wall body forming the jamb (up to 400 mm), as thick as those walls (100–300 mm)
     static WallCandidate AcrossOpening(Vec2 a, Vec2 b, List<WallCandidate> walls, IReadOnlyList<double>? sizes)
     {

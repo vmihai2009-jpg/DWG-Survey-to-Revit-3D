@@ -19,6 +19,8 @@ public sealed class SurveyDrawing
     public required double MmPerUnit { get; init; }
     public required string UnitsNote { get; init; }
     public required IReadOnlyList<Segment2> WallLines { get; init; }
+    /// <summary>Lines of blocks named as doors ("door", "doorl", "FD30"…) placed on a layer that is not a door layer.</summary>
+    public IReadOnlyList<Segment2> DoorBlockLines { get; init; } = Array.Empty<Segment2>();
     /// <summary>Lines on wall layers that are not cut walls: drawn dashed or hidden (overhead, below or beyond), or much thinner than the walls.</summary>
     public IReadOnlyList<Segment2> HiddenLines { get; init; } = Array.Empty<Segment2>();
     public required IReadOnlyList<Segment2> OpeningLines { get; init; }
@@ -61,10 +63,14 @@ public sealed class SurveyDrawing
         var texts = new List<(double x, double y, string value, string layer)>();
         var arcs = new List<(LayerRole role, Arc2 arc)>(); // in drawing units until the units are known
         var counts = new Dictionary<string, int>();
+        // door symbols drawn as blocks named as doors on a layer that is not a door layer (e.g. "doorl" on JOINERY)
+        var doorBlocks = new List<(string layer, double x1, double y1, double x2, double y2)>();
+        int inDoorBlock = 0;
 
         (bool dashed, int weight) style = (false, -1);
         void AddSeg(string layer, LayerRole role, double x1, double y1, double x2, double y2)
         {
+            if (inDoorBlock > 0 && role is not LayerRole.Door) { doorBlocks.Add((layer, x1, y1, x2, y2)); return; }
             if (role is LayerRole.Wall or LayerRole.CurtainWall) { walls.Add((layer, x1, y1, x2, y2)); wallStyle.Add(style); }
             else if (role is LayerRole.Window or LayerRole.Door) openings.Add((layer, x1, y1, x2, y2));
             else if (LayerRules.IsFeature(role)) features.Add((layer, x1, y1, x2, y2));
@@ -90,15 +96,15 @@ public sealed class SurveyDrawing
                         var a = v[i].Location; var b = v[(i + 1) % v.Count].Location;
                         if (Math.Abs(v[i].Bulge) > 1e-6)
                         {
-                            if ((role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role)) && (a.X != b.X || a.Y != b.Y) && !(role is LayerRole.Wall && style.dashed))
-                                arcs.Add((role, Arc2.FromBulge(new Vec2(a.X, a.Y), new Vec2(b.X, b.Y), v[i].Bulge, layer)));
+                            if ((inDoorBlock > 0 || role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role)) && (a.X != b.X || a.Y != b.Y) && !(role is LayerRole.Wall && style.dashed))
+                                arcs.Add((inDoorBlock > 0 ? LayerRole.Door : role, Arc2.FromBulge(new Vec2(a.X, a.Y), new Vec2(b.X, b.Y), v[i].Bulge, layer)));
                             continue;
                         }
                         AddSeg(layer, role, a.X, a.Y, b.X, b.Y);
                     }
                     break;
-                case Arc arc when (role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role)) && !(role is LayerRole.Wall && style.dashed):
-                    arcs.Add((role, new Arc2(new Vec2(arc.Center.X, arc.Center.Y), arc.Radius, arc.StartAngle, arc.EndAngle, layer)));
+                case Arc arc when inDoorBlock > 0 || (role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role)) && !(role is LayerRole.Wall && style.dashed):
+                    arcs.Add((inDoorBlock > 0 ? LayerRole.Door : role, new Arc2(new Vec2(arc.Center.X, arc.Center.Y), arc.Radius, arc.StartAngle, arc.EndAngle, layer)));
                     break;
                 case Circle circle when LayerRules.IsFeature(role) || role is LayerRole.Wall:
                     // round columns, rooflights: a full turn
@@ -109,6 +115,13 @@ public sealed class SurveyDrawing
                     break;
                 case MText mt:
                     texts.Add((mt.InsertPoint.X, mt.InsertPoint.Y, mt.PlainText ?? "", layer));
+                    break;
+                case Insert ins when depth < 4 && role is not LayerRole.Door && IsDoorBlock(ins.Block?.Name):
+                    // a door block on another layer: its lines are door evidence, kept apart
+                    inDoorBlock++;
+                    var ownStyle = style;
+                    try { foreach (var sub in ins.Explode()) Visit(sub, layer, depth + 1, ownStyle); } catch { }
+                    inDoorBlock--;
                     break;
                 case Insert ins when depth < 4 && (role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role)):
                     // Window/door symbols (and stair, sanitary and furniture symbols) are usually blocks: explode them.
@@ -170,6 +183,7 @@ public sealed class SurveyDrawing
             UnitsNote = note,
             WallLines = walls.Select(Seg).ToList(),
             HiddenLines = hidden.Select(Seg).ToList(),
+            DoorBlockLines = doorBlocks.Select(Seg).ToList(),
             OpeningLines = openingSegs,
             Texts = texts.Select(t => new SurveyText(new Vec2(t.x * mmPerUnit, t.y * mmPerUnit), t.value, t.layer)).ToList(),
             LayerCounts = counts,
@@ -189,6 +203,10 @@ public sealed class SurveyDrawing
         else if (w == (int)LineWeightType.ByBlock) w = block?.weight ?? -1;
         return (dashed, w >= 0 ? w : -1);
     }
+
+    /// <summary>A block named as a door: "door", "doorl", "Door-900", "DR01", "FD30", "fire door".</summary>
+    public static bool IsDoorBlock(string? name) => name != null && !name.StartsWith("*") &&
+        System.Text.RegularExpressions.Regex.IsMatch(name, @"door|^dr[-_ ]?\d|^fd[-_ ]?\d|^d[-_]?\d{3,4}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     static bool IsDashed(ACadSharp.Tables.LineType? lt)
     {
