@@ -51,6 +51,8 @@ public sealed record SurveyLevel(
     public Polygon2? CeilingOutline { get; set; }
     /// <summary>True when <see cref="CeilingHeightMm"/> comes from ceiling heights written on the plan.</summary>
     public bool CeilingFromSurvey { get; set; }
+    /// <summary>Each ceiling height written on the plan (in a room), for ceilings room by room.</summary>
+    public IReadOnlyList<(Vec2 Position, double Mm)> CeilingNotes { get; set; } = Array.Empty<(Vec2, double)>();
     /// <summary>Wall material no wall covers, as lists of 25 mm cell centres (filled as generic models so nothing is left open).</summary>
     public IReadOnlyList<List<Vec2>> Leftover { get; set; } = Array.Empty<List<Vec2>>();
     /// <summary>Columns, chimneys, fittings, balconies, rooflights and railings, as generic model blocks.</summary>
@@ -264,6 +266,8 @@ public static class SurveyAnalyzer
             var heights = SurveyHeights.Read(tx);
             // surveyed ceiling heights ("u/s 2.52") win over the default
             var surveyedCeiling = SurveyHeights.CeilingHeight(heights, levels[i].WallHeightMm);
+            levels[i].CeilingNotes = heights.Where(h => h.Kind == HeightKind.Ceiling && h.Mm >= 1800 && h.Mm <= levels[i].WallHeightMm - 50)
+                .Select(h => (h.Position, h.Mm)).ToList();
             // heights on the survey sections between this floor and the next: the ceilings (and soffits) seen in section
             var inSection = sections.SelectMany(s => s.HeightsMm).Where(h => next != null && h > levels[i].ElevationMm + 2000 && h < next.ElevationMm - 60).OrderBy(h => h).ToList();
             if (surveyedCeiling == null && inSection.Count > 0)

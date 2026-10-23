@@ -367,7 +367,7 @@ public sealed class ModelBuilder
             if (_placed.Count > 0) Step($"{sl.Name}: openings check", done, () => done.Add(Unblock(sl.Code, level)));
             if (o.Rooms && o.Walls) Step($"{sl.Name}: rooms", done, () =>
             {
-                try { done.Add(CreateRooms(sl, level, view)); }
+                try { done.Add(CreateRooms(sl, level, view, o.Ceilings)); }
                 catch (Exception ex) { done.Add($"no rooms ({ex.Message})"); }
             });
             Log.Add($"{sl.Name}: {string.Join(", ", done)}" + (removed > 0 ? $" (replacing {removed} elements from an earlier run)." : "."));
@@ -1214,7 +1214,7 @@ public sealed class ModelBuilder
     /// level (in the Existing phase); each one holding a survey room label becomes a room with
     /// that name. Spaces with no label get no room.
     /// </summary>
-    string CreateRooms(SurveyLevel sl, Level level, ViewPlan? view)
+    string CreateRooms(SurveyLevel sl, Level level, ViewPlan? view, bool ceilings = true)
     {
         if (_phase == null) return "no rooms (no phase)";
         _doc.Regenerate();
@@ -1260,8 +1260,61 @@ public sealed class ModelBuilder
             room.LimitOffset = Ft(sl.CeilingHeightMm);
             Mark(room, sl.Code, "Room (no label)");
         }
-        return $"{names.Count} named rooms, {keep.Count} unnamed" + (outside > 0 ? $" ({outside} labels not inside a closed space)" : "")
+        string ceilingNote;
+        try { ceilingNote = ceilings ? RoomCeilings(sl, level, names.Keys.Concat(keep).ToList()) : ""; }
+        catch (Exception ex) { ceilingNote = $"; ceilings room by room not made ({ex.Message})"; }
+        return $"{names.Count} named rooms, {keep.Count} unnamed" + (outside > 0 ? $" ({outside} labels not inside a closed space)" : "") + ceilingNote
              + $" [{circuits} enclosed spaces found, {placed.Count} rooms tried" + (refused > 0 ? $", {refused} refused: {firstError}" : "") + "]";
+    }
+
+    /// <summary>
+    /// Ceilings room by room where the plan gives ceiling heights in the rooms: each room takes the middle
+    /// of the heights written inside it, or the floor's usual height; the floor-wide ceiling is then replaced.
+    /// Left as it was if most rooms' ceilings cannot be made, or under a mezzanine (its own ceiling outline).
+    /// </summary>
+    string RoomCeilings(SurveyLevel sl, Level level, List<Autodesk.Revit.DB.Architecture.Room> rooms)
+    {
+        if (sl.CeilingNotes.Count == 0 || rooms.Count == 0 || sl.CeilingOutline != null) return "";
+        double z = level.Elevation + Ft(1000);
+        var heights = rooms.ToDictionary(r => r, r =>
+        {
+            var inside = sl.CeilingNotes.Where(n => r.IsPointInRoom(new XYZ(Ft(n.Position.X), Ft(n.Position.Y), z))).Select(n => n.Mm).OrderBy(v => v).ToList();
+            return inside.Count == 0 ? (double?)null : inside[inside.Count / 2];
+        });
+        if (heights.Values.All(h => h == null)) return "";
+        var options = new SpatialElementBoundaryOptions { SpatialElementBoundaryLocation = SpatialElementBoundaryLocation.Finish };
+        var made = new List<ElementId>();
+        int failed = 0, own = 0;
+        foreach (var (room, h) in heights)
+        {
+            try
+            {
+                var loops = room.GetBoundarySegments(options)
+                    .Select(segs => CurveLoop.Create(segs.Select(sg => sg.GetCurve()).ToList()))
+                    .Where(l => !l.IsOpen()).ToList();
+                if (loops.Count == 0) { failed++; continue; }
+                double mm = h ?? sl.CeilingHeightMm;
+                var c = Ceiling.Create(_doc, loops, CeilingTypeFor().Id, level.Id);
+                c.get_Parameter(BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM)?.Set(Ft(mm));
+                Mark(c, sl.Code, h != null ? $"Ceiling {mm / 1000:0.00} m (surveyed in the room)" : "Ceiling (floor's usual height)");
+                room.LimitOffset = Ft(mm);
+                made.Add(c.Id);
+                if (h != null) own++;
+            }
+            catch { failed++; }
+        }
+        if (made.Count == 0 || failed > rooms.Count / 4)
+        {
+            if (made.Count > 0) _doc.Delete(made);
+            return $"; ceilings room by room not made ({failed} of {rooms.Count} rooms refused), the floor's ceiling kept";
+        }
+        // the floor-wide ceiling made earlier
+        var floorWide = new FilteredElementCollector(_doc).OfClass(typeof(Ceiling))
+            .Where(e => e.LevelId == level.Id && !made.Contains(e.Id)
+                     && e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() == $"{Tag}|{sl.Code}|Ceiling")
+            .Select(e => e.Id).ToList();
+        if (floorWide.Count > 0) _doc.Delete(floorWide);
+        return $"; ceilings room by room: {made.Count} ({own} at the height surveyed in the room)" + (failed > 0 ? $", {failed} rooms without" : "");
     }
 
     static void SetLength(Element e, double value, BuiltInParameter first, BuiltInParameter second, BuiltInParameter third, string name)
