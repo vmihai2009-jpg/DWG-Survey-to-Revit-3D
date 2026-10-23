@@ -102,8 +102,24 @@ public static class SurveyAnalyzer
 {
     /// <summary>Height of a balustrade or parapet in front of windows, where the windows' sill does not give one.</summary>
     public const double ParapetMm = 1100;
-    /// <summary>A floor smaller than this share of the one below is a mezzanine.</summary>
+    /// <summary>A floor smaller than this share of the one below is a mezzanine (when the floor after is whole again, or it is named one).</summary>
     public const double MezzanineShare = 0.6;
+
+    static readonly System.Text.RegularExpressions.Regex MezzanineName = new(@"mezz", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// The outline of the mezzanine over floor <paramref name="i"/>, or null. A mezzanine is a part floor within
+    /// a storey: smaller than <see cref="MezzanineShare"/> of the floor below, with the floor after it whole again
+    /// (or named a mezzanine). A building stepping back (every floor above smaller) has no mezzanine.
+    /// </summary>
+    static Polygon2? Mezzanine(IReadOnlyList<SurveyLevel> levels, int i)
+    {
+        if (i + 2 >= levels.Count || levels[i + 1].Outline is not Polygon2 m || levels[i].Outline is not Polygon2 below) return null;
+        if (m.Area >= MezzanineShare * below.Area) return null;
+        bool named = MezzanineName.IsMatch(levels[i + 1].Name);
+        bool wholeAfter = levels[i + 2].Outline is Polygon2 after && after.Area >= MezzanineShare * below.Area;
+        return named || wholeAfter ? m : null;
+    }
 
     static double EdgeDistance(Polygon2 poly, Vec2 p)
     {
@@ -257,7 +273,7 @@ public static class SurveyAnalyzer
         // which outside walls line up with the façade on the floors below and above (the building's face)
         var stacked = FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList());
         // floors with a mezzanine over part of them (see below): outside it they are double height
-        Polygon2? MezzanineOver(int i) => i + 2 < levels.Count && levels[i + 1].Outline is Polygon2 m && levels[i].Outline is Polygon2 b && m.Area < MezzanineShare * b.Area ? m : null;
+        Polygon2? MezzanineOver(int i) => Mezzanine(levels, i);
         for (int i = 0; i < levels.Count; i++)
         {
             var next = levels.Skip(i + 1).FirstOrDefault(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm > levels[i].ElevationMm);
@@ -407,7 +423,7 @@ public static class SurveyAnalyzer
         // a mezzanine covers part of the floor below; elsewhere that floor is double height, its walls running up past it
         for (int i = 0; i + 2 < levels.Count; i++)
         {
-            if (levels[i + 1].Outline is not Polygon2 mezz || levels[i].Outline is not Polygon2 below || mezz.Area >= MezzanineShare * below.Area) continue;
+            if (Mezzanine(levels, i) is not Polygon2 mezz || levels[i].Outline is not Polygon2 below) continue;
             levels[i + 1].Partial = true;
             // the ceiling below is only under the mezzanine; the rest is open to the floor after
             if (mezz.IsSimple()) levels[i].CeilingOutline = mezz;
