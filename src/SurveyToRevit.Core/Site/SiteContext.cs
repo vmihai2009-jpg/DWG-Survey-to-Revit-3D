@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text.RegularExpressions;
 using SurveyToRevit.Core.Survey;
 
@@ -13,6 +14,8 @@ public sealed class SiteContext
     public required IReadOnlyList<ContextBlock> Blocks { get; init; }
     /// <summary>LiDAR roof top over the surveyed building (mm above datum), for comparison only.</summary>
     public double? SurveyedRoofTopMm { get; init; }
+    /// <summary>The surveyed building's outline: the ground surface is left open here for the survey's own floors.</summary>
+    public Polygon2? Footprint { get; init; }
     public required IReadOnlyList<string> Notes { get; init; }
 }
 
@@ -33,9 +36,9 @@ public static class SiteContextBuilder
     static readonly Regex Dsm = new(@"dsm|surface|first.?return", RegexOptions.IgnoreCase);
     static readonly Regex Dtm = new(@"dtm|terrain", RegexOptions.IgnoreCase);
 
-    /// <summary>LiDAR tiles (.tif, .asc) and footprint shapefiles (.shp) for the surroundings.</summary>
+    /// <summary>LiDAR tiles (.tif, .asc), footprint shapefiles (.shp), or a zip of them as downloaded, for the surroundings.</summary>
     public static bool IsSiteFile(string path) =>
-        Path.GetExtension(path).ToLowerInvariant() is ".tif" or ".tiff" or ".asc" or ".shp";
+        Path.GetExtension(path).ToLowerInvariant() is ".tif" or ".tiff" or ".asc" or ".shp" or ".zip";
 
     /// <summary>"DSM", "DTM", "Footprints", or null when a grid's file name does not say which it is.</summary>
     public static string? Kind(string path)
@@ -43,6 +46,8 @@ public static class SiteContextBuilder
         if (Path.GetExtension(path).Equals(".shp", StringComparison.OrdinalIgnoreCase)) return "Footprints";
         var name = Path.GetFileNameWithoutExtension(path);
         bool s = Dsm.IsMatch(name), t = Dtm.IsMatch(name);
+        // a tile from a download zip whose own name does not say: the zip's name may ("lidar_tiles_dsm-2015...zip")
+        if (s == t && Path.GetFileName(Path.GetDirectoryName(path)) is string folder) { s = Dsm.IsMatch(folder); t = Dtm.IsMatch(folder); }
         return s == t ? null : s ? "DSM" : "DTM";
     }
 
@@ -55,7 +60,10 @@ public static class SiteContextBuilder
         var dsm = new List<GeoRaster>();
         var dtm = new List<GeoRaster>();
         var footprints = new List<Shapefile.Shape>();
-        foreach (var f in files)
+        var unzipped = new List<string>();
+        try
+        {
+        foreach (var f in Unzip(files, unzipped, notes))
         {
             var kind = Kind(f);
             if (kind == null) { notes.Add($"{Path.GetFileName(f)}: name does not say DSM or DTM; not used."); continue; }
@@ -68,6 +76,10 @@ public static class SiteContextBuilder
             }
             catch (Exception ex) { notes.Add($"{Path.GetFileName(f)}: could not be read ({ex.Message})."); }
         }
+        }
+        finally { foreach (var d in unzipped) try { Directory.Delete(d, true); } catch { /* temp folder */ } }
+        if (dsm.Count + dtm.Count == 0 && files.Any())
+            notes.Add($"None of the LiDAR tiles reach the site (E {cx:0} N {cy:0}). Download the tiles for this grid square that cover it, e.g. the Environment Agency's LIDAR Composite DSM and DTM 1m.");
 
         int n = (int)Math.Round(2 * radiusM);
         double At(List<GeoRaster> list, int c, int r)
@@ -174,7 +186,40 @@ public static class SiteContextBuilder
         notes.Insert(0, $"LiDAR: {dsm.Count} DSM and {dtm.Count} DTM tiles over a {2 * radiusM:0} m square around the base point; " +
                         $"{groundPts.Count} ground points, {blocks.Count} neighbouring blocks{(footprints.Count > 0 ? " from the footprints" : " traced from the LiDAR")} (the surveyed building and {SurveyMarginM:0} m around it are left to the survey).");
         if (roofTop is double rt) notes.Add($"LiDAR roof top over the surveyed building: {rt / 1000:0.00} m above datum (for comparison only; the survey levels are used).");
-        return new SiteContext { Ground = groundPts, Blocks = blocks, SurveyedRoofTopMm = roofTop, Notes = notes };
+        var footprint = outlines.OrderByDescending(o => o.Area).FirstOrDefault();
+        return new SiteContext { Ground = groundPts.Where(g => footprint == null || !FacadeWalls.Contains(footprint, g.Item1)).ToList(),
+            Blocks = blocks, SurveyedRoofTopMm = roofTop, Notes = notes, Footprint = footprint };
+    }
+
+    /// <summary>
+    /// The files to read: zips (as downloaded from the Environment Agency) are opened into a temporary folder
+    /// named after the zip, keeping only grids and shapefiles; the folders are listed in <paramref name="temp"/>.
+    /// </summary>
+    static IEnumerable<string> Unzip(IEnumerable<string> files, List<string> temp, List<string> notes)
+    {
+        foreach (var f in files)
+        {
+            if (!Path.GetExtension(f).Equals(".zip", StringComparison.OrdinalIgnoreCase)) { yield return f; continue; }
+            var dir = Path.Combine(Path.GetTempPath(), "SurveyToRevit-lidar-" + Guid.NewGuid().ToString("N")[..8], Path.GetFileNameWithoutExtension(f));
+            var got = new List<string>();
+            try
+            {
+                Directory.CreateDirectory(dir);
+                temp.Add(Path.GetDirectoryName(dir)!);
+                using var zip = ZipFile.OpenRead(f);
+                foreach (var e in zip.Entries)
+                {
+                    var ext = Path.GetExtension(e.Name).ToLowerInvariant();
+                    if (ext is not (".tif" or ".tiff" or ".asc" or ".shp" or ".shx" or ".dbf" or ".prj")) continue;
+                    var to = Path.Combine(dir, e.Name);
+                    e.ExtractToFile(to, true);
+                    if (ext is not (".shx" or ".dbf" or ".prj")) got.Add(to);
+                }
+                notes.Add($"{Path.GetFileName(f)}: {got.Count} files inside.");
+            }
+            catch (Exception ex) { notes.Add($"{Path.GetFileName(f)}: could not be opened ({ex.Message})."); }
+            foreach (var g in got) yield return g;
+        }
     }
 
     /// <summary>Splits the masked cells into roofs of one height and adds a block for each; returns how many could not be outlined.</summary>

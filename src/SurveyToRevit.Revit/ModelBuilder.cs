@@ -382,7 +382,19 @@ public sealed class ModelBuilder
                           : new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().OrderBy(l => l.Elevation).First();
                 var points = site.Ground.Select(g => new XYZ(Ft(g.Position.X), Ft(g.Position.Y), Ft(g.ZMm))).ToList();
                 var type = new FilteredElementCollector(_doc).OfClass(typeof(ToposolidType)).FirstElementId();
-                var topo = Toposolid.Create(_doc, points, type, level.Id);
+                // the ground stops at the surveyed building, whose own floors take over there
+                Toposolid? topo = null;
+                if (site.Footprint != null && Loop(site.Footprint, level.Elevation) is CurveLoop hole)
+                    try
+                    {
+                        double x0 = points.Min(p => p.X), x1 = points.Max(p => p.X), y0 = points.Min(p => p.Y), y1 = points.Max(p => p.Y), z = level.Elevation;
+                        var c = new[] { new XYZ(x0, y0, z), new XYZ(x1, y0, z), new XYZ(x1, y1, z), new XYZ(x0, y1, z) };
+                        var outer = CurveLoop.Create(Enumerable.Range(0, 4).Select(i => (Curve)Line.CreateBound(c[i], c[(i + 1) % 4])).ToList());
+                        topo = Toposolid.Create(_doc, new List<CurveLoop> { outer, hole }, points, type, level.Id);
+                        done.Add("ground left open under the surveyed building");
+                    }
+                    catch (Exception ex) { Log.Add($"Surroundings: the ground could not be left open under the building ({ex.Message}); made whole."); }
+                topo ??= Toposolid.Create(_doc, points, type, level.Id);
                 _doc.Regenerate();
                 // the points are meant above datum; if Revit took them as above the level, lift the surface back onto the LiDAR
                 var box = topo.get_BoundingBox(null);

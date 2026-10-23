@@ -14,7 +14,7 @@ public sealed class StartDialog : Form
 {
     static readonly Color Accent = Color.FromArgb(0, 84, 147), Soft = Color.FromArgb(242, 245, 249);
     const string Plans = "Survey DWGs (*.dwg)|*.dwg";
-    const string Tiles = "LiDAR tiles and footprints (*.tif;*.tiff;*.asc;*.shp)|*.tif;*.tiff;*.asc;*.shp";
+    const string Tiles = "LiDAR tiles, download zips and footprints (*.zip;*.tif;*.tiff;*.asc;*.shp)|*.zip;*.tif;*.tiff;*.asc;*.shp";
 
     readonly ListView _files = new()
     {

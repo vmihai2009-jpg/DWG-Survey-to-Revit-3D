@@ -92,6 +92,50 @@ public class SiteContextTests
     }
 
     [Fact]
+    public void Download_zips_are_read_as_they_are_and_the_ground_stops_at_the_building()
+    {
+        const int n = 120; const double x0 = 528940, top = 181060;
+        var dsm = new double[n, n]; var dtm = new double[n, n];
+        for (int r = 0; r < n; r++)
+            for (int c = 0; c < n; c++)
+            {
+                dtm[r, c] = 20; dsm[r, c] = 20;
+                double x = x0 + c + 0.5, y = top - r - 0.5;
+                if (x > 528950 && x < 528970 && y > 181020 && y < 181050) dsm[r, c] = 35;
+            }
+        var dir = Directory.CreateTempSubdirectory().FullName;
+        // tiles named by number only, as in the downloads: the zip's name says which is which
+        foreach (var (kind, grid) in new[] { ("dsm", dsm), ("dtm", dtm) })
+        {
+            var inner = Directory.CreateDirectory(Path.Combine(dir, kind)).FullName;
+            Write(Path.Combine(inner, "D0179119.asc"), grid, x0, top);
+            File.WriteAllText(Path.Combine(inner, "D0179119.asc.xml"), "<metadata/>");
+            System.IO.Compression.ZipFile.CreateFromDirectory(inner, Path.Combine(dir, $"lidar_tiles_{kind}-2020-1-TQ28se.zip"));
+        }
+        var frame = new SurveyFrame(new Vec2(529000_000, 181000_000), 0);
+        var surveyed = new Polygon2(new[] { new Vec2(-10000, -10000), new Vec2(10000, -10000), new Vec2(10000, 10000), new Vec2(-10000, 10000) });
+
+        var site = SiteContextBuilder.Build(new[] { Path.Combine(dir, "lidar_tiles_dsm-2020-1-TQ28se.zip"), Path.Combine(dir, "lidar_tiles_dtm-2020-1-TQ28se.zip") },
+            frame, new[] { surveyed }, radiusM: 60);
+
+        Assert.Equal(35000, Assert.Single(site.Blocks).TopMm);
+        Assert.NotEmpty(site.Ground);
+        Assert.DoesNotContain(site.Ground, g => Math.Abs(g.Position.X) < 10000 && Math.Abs(g.Position.Y) < 10000);
+        Assert.Same(surveyed, site.Footprint);
+        Assert.Empty(Directory.GetDirectories(Path.GetTempPath(), "SurveyToRevit-lidar-*").Where(d => Directory.GetFiles(d, "*", SearchOption.AllDirectories).Length > 0 && Directory.GetLastWriteTime(d) > DateTime.Now.AddMinutes(-1)));
+    }
+
+    [Fact]
+    public void Tiles_that_miss_the_site_say_so()
+    {
+        var dir = Directory.CreateTempSubdirectory().FullName;
+        var grid = new double[10, 10];
+        Write(Path.Combine(dir, "far_DSM.asc"), grid, 500000, 200000);
+        var site = SiteContextBuilder.Build(new[] { Path.Combine(dir, "far_DSM.asc") }, new SurveyFrame(new Vec2(529000_000, 181000_000), 0), Array.Empty<Polygon2>());
+        Assert.Contains(site.Notes, n => n.Contains("None of the LiDAR tiles reach the site"));
+    }
+
+    [Fact]
     public void Footprints_give_exact_outlines_at_lidar_heights_and_stepped_ones_are_split()
     {
         const int n = 120; const double x0 = 528940, top = 181060;
