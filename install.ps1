@@ -59,15 +59,20 @@ $manifest = @"
 "@
 Set-Content -Path (Join-Path $addins "SurveyToRevit.addin") -Value $manifest -Encoding UTF8
 
-# Tidy up: loose files and v0.12-style folders (anything still in use is left; Revit tidies it later),
-# and older launchers.
-Get-ChildItem $root -File -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
-Get-ChildItem $root -Directory | Where-Object { $_.Name -match '^\d{8}-\d{6}(\.old)?$' } | ForEach-Object {
-    $old = if ($_.Name.EndsWith(".old")) { $_.FullName } else { $_.FullName + ".old" }
-    try { if ($old -ne $_.FullName) { Rename-Item $_.FullName $old -ErrorAction Stop }; Remove-Item $old -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+# Tidy up: loose files, v0.12-style folders and older launchers. A folder whose add-in is loaded in a
+# running Revit is left alone (Revit tidies it at its next start): renaming it would pull files that
+# copy still needs from under it.
+function In-Use($dir) {
+    foreach ($f in Get-ChildItem $dir -Filter *.dll -ErrorAction SilentlyContinue) {
+        try { $s = [System.IO.File]::Open($f.FullName, 'Open', 'ReadWrite', 'None'); $s.Close() } catch { return $true }
+    }
+    $false
 }
-Get-ChildItem (Join-Path $root "launcher") -Directory | Where-Object { $_.FullName -ne $launcher } | ForEach-Object {
-    Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem $root -File -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+$old = @(Get-ChildItem $root -Directory | Where-Object { $_.Name -match '^\d{8}-\d{6}(\.old)?$' })
+$old += @(Get-ChildItem (Join-Path $root "launcher") -Directory | Where-Object { $_.FullName -ne $launcher })
+foreach ($dir in $old) {
+    if (-not (In-Use $dir.FullName)) { Remove-Item $dir.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 Write-Host "Installed to $root. Start Revit 2025 (or restart it once); look for the 'Survey to Revit' panel on the Barr Gazetas tab." -ForegroundColor Green
