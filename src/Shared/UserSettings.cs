@@ -34,7 +34,7 @@ internal sealed class UserSettings
 
     public static string DefaultDownloads =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-    public static string DefaultReports => Path.Combine(Path.GetTempPath(), "SurveyToRevit");
+    public static string DefaultReports => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SurveyToRevit", "Reports");
     public static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SurveyToRevit", "settings.json");
 
