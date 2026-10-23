@@ -37,6 +37,9 @@ public sealed record DrawingName(string FileName, string? LevelCode)
 
     static readonly string[] OrdinalWords = { "ground", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth" };
 
+    /// <summary>The level named in a title ("GROUND FLOOR PLAN", "1st Floor", "Basement"), or null.</summary>
+    public static string? LevelFromWords(string text) => FromWords(text);
+
     static string? FromWords(string name)
     {
         var n = Regex.Replace(name.ToLowerInvariant(), @"[_\-().]+", " ");
@@ -55,6 +58,8 @@ public sealed record DrawingName(string FileName, string? LevelCode)
             for (int i = 1; i < OrdinalWords.Length && code == null; i++)
                 if (Regex.IsMatch(n, $@"\b{OrdinalWords[i]}\b")) code = i.ToString("00");
             if (code == null && Regex.Match(n, @"\b(level|lvl|l|floor)\s?(\d{1,2})\b") is { Success: true } l) code = int.Parse(l.Groups[2].Value).ToString("00");
+            // "1st floor", "2nd floor plan"
+            if (code == null && Regex.Match(n, @"\b(\d{1,2})(st|nd|rd|th) (floor|fl)\b") is { Success: true } o && int.Parse(o.Groups[1].Value) > 0) code = int.Parse(o.Groups[1].Value).ToString("00");
         }
         if (code == null) return null;
         return mezz && !code.EndsWith("M") ? code + "M" : code;

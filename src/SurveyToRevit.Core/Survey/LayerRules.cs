@@ -54,6 +54,8 @@ public sealed class LayerRules
     public Regex Balcony { get; init; } = new(@"(balcon|terrace|^Ss_30_12_85)", RegexOptions.IgnoreCase);
     public Regex Railing { get; init; } = new(@"(rail|balustrad|handrail|fence|^Ss_25_14)", RegexOptions.IgnoreCase);
     public Regex Fitting { get; init; } = new(@"(^Pr_|joinery|furn|fitted|sanit|kitchen|^FF&?E|^A-FURN|^A-FLOR-(CASE|SPCL)|^P-SANR|counter|worktop|^Ss_6[05]|hvac|service|equip|plant|radiator|heater|^M-|^E-)", RegexOptions.IgnoreCase);
+    /// <summary>On a level layer: the heights are of something other than the floor.</summary>
+    public Regex NotFloorLevel { get; init; } = new(@"ceiling|beam|soffit|sill|cill|head|door|cover|slope|roof|parapet|ridge|eaves|gutter|top of|bottom of|invert", RegexOptions.IgnoreCase);
     public Regex Ceiling { get; init; } = new(@"(^Ss_30_25|ceiling|^A-CLNG)", RegexOptions.IgnoreCase);
     public Regex Area { get; init; } = new(@"(^G[EI]A\b|\bN[IL]A\b|\bAREA\b|^A-AREA)", RegexOptions.IgnoreCase);
     public Regex Overhead { get; init; } = new(@"(overhead|^Zz_20_40_05|above|over$|bulkhead|beam)", RegexOptions.IgnoreCase);
@@ -91,7 +93,7 @@ public sealed class LayerRules
         }
         return new LayerRules
         {
-            Wall = Wall, Window = Window, Door = Door, LevelText = LevelText, FacesOnly = FacesOnly, RoomName = RoomName, Exclude = Exclude,
+            Wall = Wall, Window = Window, Door = Door, LevelText = LevelText, NotFloorLevel = NotFloorLevel, FacesOnly = FacesOnly, RoomName = RoomName, Exclude = Exclude,
             HeightText = HeightText, CurtainWall = CurtainWall, Stair = Stair, Ramp = Ramp, Lift = Lift, Column = Column, Rooflight = Rooflight,
             Roof = Roof, Chimney = Chimney, Balcony = Balcony, Railing = Railing, Fitting = Fitting, Ceiling = Ceiling, Area = Area,
             Overhead = Overhead, Annotation = Annotation, NotWall = NotWall,
@@ -103,7 +105,8 @@ public sealed class LayerRules
     {
         foreach (var (pattern, role) in Overrides)
             if (pattern.IsMatch(layer)) return role;
-        if (LevelText.IsMatch(layer)) return LayerRole.LevelText;
+        // a level layer for heights other than the floor ("DGS_LEVEL CEILING & BEAM", "LEVEL SILL"): not floor spot heights
+        if (LevelText.IsMatch(layer)) return NotFloorLevel.IsMatch(layer) ? LayerRole.HeightText : LayerRole.LevelText;
         if (RoomName.IsMatch(layer)) return LayerRole.RoomName;
         if (HeightText.IsMatch(layer)) return LayerRole.HeightText;
         if (Exclude.IsMatch(layer)) return Annotation.IsMatch(layer) ? LayerRole.Annotation : LayerRole.Other;

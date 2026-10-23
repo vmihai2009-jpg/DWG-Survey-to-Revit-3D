@@ -102,23 +102,21 @@ public static class SurveyAnalyzer
 {
     /// <summary>Height of a balustrade or parapet in front of windows, where the windows' sill does not give one.</summary>
     public const double ParapetMm = 1100;
-    /// <summary>A floor smaller than this share of the one below is a mezzanine (when the floor after is whole again, or it is named one).</summary>
+    /// <summary>A floor named a mezzanine and smaller than this share of the one below covers only part of it.</summary>
     public const double MezzanineShare = 0.6;
 
     static readonly System.Text.RegularExpressions.Regex MezzanineName = new(@"mezz", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     /// <summary>
-    /// The outline of the mezzanine over floor <paramref name="i"/>, or null. A mezzanine is a part floor within
-    /// a storey: smaller than <see cref="MezzanineShare"/> of the floor below, with the floor after it whole again
-    /// (or named a mezzanine). A building stepping back (every floor above smaller) has no mezzanine.
+    /// The outline of the mezzanine over floor <paramref name="i"/>, or null. Only a floor the survey names a
+    /// mezzanine counts (surveyors always do): a smaller floor that is not named one is a setback or a part
+    /// floor at full storey height (Mount Row, Parkshot House), not a mezzanine within a storey.
     /// </summary>
     static Polygon2? Mezzanine(IReadOnlyList<SurveyLevel> levels, int i)
     {
         if (i + 2 >= levels.Count || levels[i + 1].Outline is not Polygon2 m || levels[i].Outline is not Polygon2 below) return null;
         if (m.Area >= MezzanineShare * below.Area) return null;
-        bool named = MezzanineName.IsMatch(levels[i + 1].Name);
-        bool wholeAfter = levels[i + 2].Outline is Polygon2 after && after.Area >= MezzanineShare * below.Area;
-        return named || wholeAfter ? m : null;
+        return MezzanineName.IsMatch(levels[i + 1].Name) ? m : null;
     }
 
     static double EdgeDistance(Polygon2 poly, Vec2 p)
@@ -160,11 +158,24 @@ public static class SurveyAnalyzer
         var roofPlans = new List<SurveyDrawing>();
         var sectionSheets = new List<SurveyDrawing>();
 
+        var queue = new List<SurveyDrawing>();
         foreach (var path in paths.OrderBy(p => System.IO.Path.GetFileName(p)))
         {
-            SurveyDrawing d;
-            try { d = SurveyDrawing.Read(path, rules); }
+            SurveyDrawing read;
+            try { read = SurveyDrawing.Read(path, rules); }
             catch (Exception ex) { skipped.Add(new(System.IO.Path.GetFileName(path), $"could not be read: {ex.Message}")); continue; }
+            // several floor plans on one sheet: each becomes its own drawing, the rest (sections) stays
+            if (read.Name.LevelCode == null && !RoofsAndDetails.IsRoofPlan(read, rules) && SheetSplitter.Split(read) is { } split)
+            {
+                notes.AddRange(split.Notes);
+                queue.AddRange(split.Plans);
+                if (SectionReader.IsSectionSheet(split.Rest)) sectionSheets.Add(split.Rest);
+                continue;
+            }
+            queue.Add(read);
+        }
+        foreach (var d in queue)
+        {
 
             if (RoofsAndDetails.IsRoofPlan(d, rules)) { roofPlans.Add(d); continue; }
             if (d.Name.LevelCode == null && SectionReader.IsSectionSheet(d)) { sectionSheets.Add(d); continue; }
