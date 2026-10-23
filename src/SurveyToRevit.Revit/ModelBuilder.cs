@@ -57,6 +57,7 @@ public sealed class ModelBuilder
     readonly Phase? _phase;
 
     static double Ft(double mm) => UnitConversion.MmToFeet(mm);
+    static double Mm(double ft) => ft / UnitConversion.MmToFeet(1);
 
     public void Run(BuildOptions o)
     {
@@ -278,6 +279,7 @@ public sealed class ModelBuilder
                     catch (Exception ex) { skipped++; if (skipped <= 5) Log.Add($"{sl.Name}: a wall at ({c.A.X:0}, {c.A.Y:0}) mm was skipped: {ex.Message}"); }
                 }
                 done.Add($"{made} walls" + (skipped > 0 ? $" ({skipped} skipped)" : ""));
+                _placed.Clear();
                 if (o.Windows && sl.Windows.Count > 0) done.Add(CreateWindows(sl, level, created));
                 if (o.Doors && sl.Doors.Count > 0) done.Add(CreateDoors(sl, level, created));
             });
@@ -327,6 +329,7 @@ public sealed class ModelBuilder
                 done.Add($"{made} generic models for areas to check");
             });
             if (o.Details && sl.Details.Count > 0) Step($"{sl.Name}: generic models", done, () => done.Add(BuildDetails(sl, level)));
+            if (_placed.Count > 0) Step($"{sl.Name}: openings check", done, () => done.Add(Unblock(sl.Code, level)));
             if (o.Rooms && o.Walls) Step($"{sl.Name}: rooms", done, () =>
             {
                 try { done.Add(CreateRooms(sl, level, view)); }
@@ -849,6 +852,7 @@ public sealed class ModelBuilder
                     // a door: open to the side, and hang on the jamb, the survey's swing shows
                     if (category == BuiltInCategory.OST_Doors && (hinge != null || swing != null)) TurnDoor(inst, level, c, hinge, swing);
                     Mark(inst, sl.Code, what);
+                    _placed.Add(new Placed(inst, wall, c, width, bottom, top, what));
                 }
                 else Cut(wall, c, width, bottom, top, sl.Code, what + " opening");
                 made++;
@@ -861,6 +865,86 @@ public sealed class ModelBuilder
                     catch { /* does not reach this wall */ }
         }
         return (made, failed, family != null);
+    }
+
+    readonly record struct Placed(FamilyInstance Inst, Wall Host, XYZ At, double WidthMm, double BottomMm, double TopMm, string What);
+    readonly List<Placed> _placed = new();
+
+    /// <summary>
+    /// Checks in Revit's own geometry that every window and door on the floor is open right through, once
+    /// everything on the floor is built, and clears what still fills it: a parallel wall is cut, our own
+    /// generic model (a pier) has the opening carved out, a short wall of ours running across the opening
+    /// is removed, and a host the window family did not cut is cut by hand. Anything else is counted.
+    /// </summary>
+    string Unblock(string code, Level level)
+    {
+        _doc.Regenerate();
+        int cut = 0, carved = 0, removed = 0, hosts = 0, left = 0, clear = 0;
+        var cats = new ElementMulticategoryFilter(new List<BuiltInCategory> { BuiltInCategory.OST_Walls, BuiltInCategory.OST_GenericModel });
+        foreach (var p in _placed)
+        {
+            if (!p.Inst.IsValidObject || !p.Host.IsValidObject || p.Host.Location is not LocationCurve hostCurve) continue;
+            var on = hostCurve.Curve.Project(p.At);
+            var u = (on != null ? hostCurve.Curve.ComputeDerivatives(on.Parameter, false).BasisX : hostCurve.Curve.GetEndPoint(1) - hostCurve.Curve.GetEndPoint(0)).Normalize();
+            var at = on?.XYZPoint ?? p.At;
+            var n = XYZ.BasisZ.CrossProduct(u);
+            // a box inside the opening, kept clear of its jambs, sill and head, reaching 400 mm out each side of the wall
+            double half = Ft(p.WidthMm / 2 - 60), depth = p.Host.Width / 2 + Ft(400);
+            double z0 = level.Elevation + Ft(p.BottomMm + 60), z1 = level.Elevation + Ft(p.TopMm - 60);
+            if (half <= 0 || z1 <= z0) continue;
+            var b = new XYZ(at.X, at.Y, z0);
+            var corners = new[] { b - u * half - n * depth, b + u * half - n * depth, b + u * half + n * depth, b - u * half + n * depth };
+            var loop = CurveLoop.Create(Enumerable.Range(0, 4).Select(i => (Curve)Line.CreateBound(corners[i], corners[(i + 1) % 4])).ToList());
+            var box = GeometryCreationUtilities.CreateExtrusionGeometry(new List<CurveLoop> { loop }, XYZ.BasisZ, z1 - z0);
+            var hits = new FilteredElementCollector(_doc).WherePasses(cats).WherePasses(new ElementIntersectsSolidFilter(box))
+                .Where(e => e.Id != p.Inst.Id).ToList();
+            if (hits.Count == 0) { clear++; continue; }
+            foreach (var e in hits)
+            {
+                try
+                {
+                    if (e is Wall { WallType.Kind: WallKind.Curtain }) continue; // glazing already
+                    if (e.Id == p.Host.Id) { Cut(p.Host, at, p.WidthMm, p.BottomMm, p.TopMm, code, p.What + " opening"); hosts++; }
+                    else if (e is Wall w && w.Location is LocationCurve lc && lc.Curve is Line line && Math.Abs(line.Direction.DotProduct(u)) > 0.99)
+                    {
+                        // the part of the opening that overlaps this wall, on its own line
+                        var mid = line.Project(at).XYZPoint;
+                        double s0 = (line.GetEndPoint(0) - mid).DotProduct(u), s1 = (line.GetEndPoint(1) - mid).DotProduct(u);
+                        double from = Math.Max(-Ft(p.WidthMm / 2), Math.Min(s0, s1)), to = Math.Min(Ft(p.WidthMm / 2), Math.Max(s0, s1));
+                        if (to - from < Ft(30)) continue;
+                        Cut(w, mid + u * ((from + to) / 2), Mm(to - from), p.BottomMm, p.TopMm, code, p.What + " opening");
+                        cut++;
+                    }
+                    else if (e is Wall across && Ours(across) && across.Location is LocationCurve ac && ac.Curve.Length < Ft(1500)
+                             && across.FindInserts(true, false, true, true).Count == 0)
+                    { _doc.Delete(across.Id); removed++; }
+                    else if (e is DirectShape ds && Ours(ds) && Carve(ds, box)) carved++;
+                    else { left++; if (left <= 5) Log.Add($"{code}: {p.What.ToLowerInvariant()} at ({Mm(at.X):0}, {Mm(at.Y):0}) mm still blocked by {e.Category?.Name} '{e.Name}' (id {e.Id.Value})."); }
+                }
+                catch (Exception ex) { left++; if (left <= 5) Log.Add($"{code}: could not clear {e.Category?.Name} id {e.Id.Value} from a {p.What.ToLowerInvariant()}: {ex.Message}"); }
+            }
+        }
+        return $"openings checked: {clear} clear" + (cut > 0 ? $", {cut} more walls cut" : "") + (carved > 0 ? $", {carved} generic models carved" : "")
+               + (removed > 0 ? $", {removed} short walls across openings removed" : "") + (hosts > 0 ? $", {hosts} host walls cut by hand (the family did not cut them)" : "")
+               + (left > 0 ? $", {left} still blocked (see above)" : "");
+    }
+
+    static bool Ours(Element e) =>
+        e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(Tag + "|") == true;
+
+    /// <summary>Takes the opening's box out of a generic model of ours.</summary>
+    static bool Carve(DirectShape ds, Solid box)
+    {
+        var left = new List<GeometryObject>();
+        foreach (var o in ds.get_Geometry(new Options()) ?? Enumerable.Empty<GeometryObject>())
+        {
+            if (o is not Solid s || s.Volume <= 0) continue;
+            var rest = BooleanOperationsUtils.ExecuteBooleanOperation(s, box, BooleanOperationsType.Difference);
+            if (rest != null && rest.Volume > 1e-6) left.Add(rest);
+        }
+        if (left.Count == 0) { ds.Document.Delete(ds.Id); return true; }
+        ds.SetShape(left);
+        return true;
     }
 
     void Cut(Wall wall, XYZ center, double widthMm, double bottomMm, double topMm, string code, string what)
