@@ -28,6 +28,14 @@ internal static class Engine
         return File.Exists(beside) ? new Install(LauncherFolder, "", Installer.VersionOf(beside)) : null;
     }
 
+    /// <summary>The engine's main assembly, loaded once per Revit session.</summary>
+    public static Assembly Load(Install engine)
+    {
+        if (!Loaded.TryGetValue(engine.Folder, out var assembly))
+            Loaded[engine.Folder] = assembly = new EngineContext(engine.Folder).LoadMain("SurveyToRevit.Revit");
+        return assembly;
+    }
+
     public static Result Run(string command, ExternalCommandData data, ref string message, ElementSet elements)
     {
         var engine = Current(UserSettings.Load());
@@ -37,11 +45,7 @@ internal static class Engine
             return Result.Failed;
         }
         Assembly assembly;
-        try
-        {
-            if (!Loaded.TryGetValue(engine.Folder, out assembly!))
-                Loaded[engine.Folder] = assembly = new EngineContext(engine.Folder).LoadMain("SurveyToRevit.Revit");
-        }
+        try { assembly = Load(engine); }
         catch (Exception ex)
         {
             message = $"Could not load Survey to Revit {engine} from {engine.Folder}: {ex.Message}";

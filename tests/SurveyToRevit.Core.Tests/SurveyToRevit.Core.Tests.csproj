@@ -32,6 +32,7 @@
     <Compile Include="..\..\src\SurveyToRevit.Launcher\Releases.cs" Link="Launcher\Releases.cs" />
     <Compile Include="..\..\src\SurveyToRevit.Launcher\Installer.cs" Link="Launcher\Installer.cs" />
     <Compile Include="..\..\src\SurveyToRevit.Launcher\EngineContext.cs" Link="Launcher\EngineContext.cs" />
+    <Compile Include="..\..\src\SurveyToRevit.Launcher\ToolSlots.cs" Link="Launcher\ToolSlots.cs" />
     <Compile Include="..\..\src\Shared\UserSettings.cs" Link="Launcher\UserSettings.cs" />
   </ItemGroup>
 

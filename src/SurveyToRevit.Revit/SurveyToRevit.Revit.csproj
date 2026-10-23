@@ -41,6 +41,8 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Resources\icon96.png" LogicalName="icon96.png" />
+    <!-- Icons of the engine's own ribbon buttons (Tools.cs) -->
+    <EmbeddedResource Include="Resources\Ribbon\*.png" LogicalName="Ribbon.%(Filename)%(Extension)" />
     <!-- Office Test-Fit page (written to a local folder and shown in WebView2) and WebView2's native loader,
          carried inside the engine because the engine is loaded from memory, not from its folder. -->
     <EmbeddedResource Include="TestFit\testfit.html" LogicalName="TestFit.testfit.html" />

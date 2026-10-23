@@ -15,6 +15,7 @@ public class SettingsCommand : IExternalCommand
         using var form = new SettingsForm();
         if (form.ShowDialog() != System.Windows.Forms.DialogResult.OK) return Result.Cancelled;
         App.RefreshUpdater(form.Saved!);
+        Tools.Refresh(form.Saved!); // the version to run may have changed, and with it the tools
         return Result.Succeeded;
     }
 }

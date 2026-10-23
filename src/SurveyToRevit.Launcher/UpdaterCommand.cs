@@ -9,8 +9,8 @@ namespace SurveyToRevit.Launcher;
 
 /// <summary>
 /// Installs a release from its zip, on the spot: the newest SurveyToRevit-x.y.z.zip in the folder set in
-/// Settings (Downloads unless changed), or one picked by hand. The next click on Build from Survey or
-/// Wall from Lines runs it; Revit does not need restarting. Current user only, no admin rights.
+/// Settings (Downloads unless changed), or one picked by hand. The next click on any button runs it, and new
+/// tools' buttons are added straight away; Revit does not need restarting. Current user only, no admin rights.
 /// </summary>
 [Transaction(TransactionMode.ReadOnly)]
 public class UpdaterCommand : IExternalCommand
@@ -69,12 +69,14 @@ public class UpdaterCommand : IExternalCommand
         try { Installer.Tidy(Releases.Root, settings.KeepVersions, Path.GetFileName(done.EngineFolder), null, Engine.LauncherFolder); }
         catch { /* old copies are tidied next time */ }
         App.RefreshUpdater(settings);
+        var buttons = Tools.Refresh(settings);
 
         TaskDialog.Show(Title,
-            $"v{Releases.Short(done.Engine)} is installed and ready. Build from Survey and Wall from Lines use it from now on; " +
-            "no need to restart Revit." +
+            $"v{Releases.Short(done.Engine)} is installed and ready. Every button uses it from now on, and any new tool's " +
+            "button is already on the ribbon: no need to restart Revit." +
+            (!buttons ? "\n\nA new button could not be added to the ribbon while Revit is running; it shows the next time Revit starts." : "") +
             (done.Launcher != null
-                ? "\n\nThis release also changes the ribbon buttons, the Updater or Settings themselves. Those changes show the next time Revit starts; everything else works now."
+                ? "\n\nThis release also changes the Updater or Settings themselves. Those changes show the next time Revit starts; everything else works now."
                 : ""));
         return Result.Succeeded;
     }
