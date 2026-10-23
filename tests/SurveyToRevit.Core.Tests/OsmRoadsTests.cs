@@ -69,3 +69,17 @@ public class OsmRoadsTests
         Assert.Contains(mesh.Points, p => p.Z == 10000);
     }
 }
+
+public class OutlineRepairTests
+{
+    [Fact]
+    public void A_self_crossing_outline_becomes_clean_parts()
+    {
+        // a bow tie: two triangles touching at a crossing
+        var bow = new Polygon2(new[] { new Vec2(0, 0), new Vec2(10000, 10000), new Vec2(10000, 0), new Vec2(0, 10000) });
+        var parts = OutlineRepair.Clean(bow);
+        Assert.Equal(2, parts.Count);
+        Assert.All(parts, p => Assert.True(p.IsSimple()));
+        Assert.InRange(parts.Sum(p => p.Area), 45e6, 55e6);
+    }
+}

@@ -296,9 +296,25 @@ public sealed class ModelBuilder
                 if (loop == null) done.Add("no floor (outline not found)");
                 else Step($"{sl.Name}: floor slab", done, () =>
                 {
-                    floor = Floor.Create(_doc, new List<CurveLoop> { loop }, FloorTypeFor(o.SlabThicknessMm).Id, level.Id);
-                    Mark(floor, sl.Code, "Floor");
-                    done.Add($"floor {sl.Outline!.Area / 1e6:0} m²");
+                    try
+                    {
+                        floor = Floor.Create(_doc, new List<CurveLoop> { loop }, FloorTypeFor(o.SlabThicknessMm).Id, level.Id);
+                        Mark(floor, sl.Code, "Floor");
+                        done.Add($"floor {sl.Outline!.Area / 1e6:0} m²");
+                    }
+                    catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ArgumentException)
+                    {
+                        // the outline crosses itself somewhere: redrawn clean, one slab per part
+                        int parts = 0;
+                        foreach (var part in OutlineRepair.Clean(sl.Outline!))
+                            if (Loop(part, level.Elevation) is CurveLoop l)
+                            {
+                                var f = Floor.Create(_doc, new List<CurveLoop> { l }, FloorTypeFor(o.SlabThicknessMm).Id, level.Id);
+                                Mark(f, sl.Code, "Floor");
+                                floor ??= f; parts++;
+                            }
+                        done.Add($"floor {sl.Outline!.Area / 1e6:0} m² (outline crossed itself: redrawn as {parts} clean slab{(parts == 1 ? "" : "s")})");
+                    }
                 });
                 if (floor != null && floor.IsValidObject && o.Stairs && sl.StairVoids.Count > 0)
                     Step($"{sl.Name}: stair openings", done, () => done.Add(StairVoids(floor, sl, level)));
@@ -308,10 +324,22 @@ public sealed class ModelBuilder
                 try
                 {
                     // under a mezzanine only, where the floor is otherwise double height
+                    var outline = sl.CeilingOutline ?? sl.Outline!;
                     var ceilingLoop = sl.CeilingOutline != null ? Loop(sl.CeilingOutline, level.Elevation) : loop;
-                    var ceiling = Ceiling.Create(_doc, new List<CurveLoop> { ceilingLoop }, CeilingTypeFor().Id, level.Id);
-                    ceiling.get_Parameter(BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM)?.Set(Ft(sl.CeilingHeightMm));
-                    Mark(ceiling, sl.Code, "Ceiling");
+                    var loops = new List<List<CurveLoop>>();
+                    if (ceilingLoop != null) loops.Add(new List<CurveLoop> { ceilingLoop });
+                    void Make(List<CurveLoop> l)
+                    {
+                        var ceiling = Ceiling.Create(_doc, l, CeilingTypeFor().Id, level.Id);
+                        ceiling.get_Parameter(BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM)?.Set(Ft(sl.CeilingHeightMm));
+                        Mark(ceiling, sl.Code, "Ceiling");
+                    }
+                    try { if (ceilingLoop == null) throw new InvalidOperationException("no outline"); Make(loops[0]); }
+                    catch (Exception)
+                    {
+                        foreach (var part in OutlineRepair.Clean(outline))
+                            if (Loop(part, level.Elevation) is CurveLoop l) Make(new List<CurveLoop> { l });
+                    }
                     done.Add($"ceiling at {sl.CeilingHeightMm:0} mm");
                 }
                 catch (Exception ex) { done.Add($"no ceiling ({ex.Message})"); }
@@ -715,7 +743,7 @@ public sealed class ModelBuilder
         int removed = DeleteGenerated(RoofCode);
         var type = RoofTypeFor(300);
         double thick = type?.GetCompoundStructure()?.GetWidth() ?? Ft(300);
-        int native = 0, blocks = 0;
+        int native = 0, blocks = 0, asFloors = 0;
         string? firstError = null;
         foreach (var r in _model.Roofs)
         {
@@ -734,7 +762,20 @@ public sealed class ModelBuilder
             }
             catch (Exception ex)
             {
-                firstError ??= ex.Message + (ex is ArgumentException ae && ae.ParamName != null ? $" [{ae.ParamName}]" : "") + $" at {ex.TargetSite?.Name}";
+                firstError ??= ex.Message + (ex is ArgumentException ae && ae.ParamName != null ? $" [{ae.ParamName}]" : "") + $" at {ex.TargetSite?.Name}"
+                               + $" ({ex.GetType().Name}: {ex.StackTrace?.Split('\n').FirstOrDefault()?.Trim()})";
+                // a flat roof as a floor slab (native, editable) before a generic model
+                try
+                {
+                    var below = levels.Where(l => l.Elevation <= top + Ft(1)).OrderByDescending(l => l.Elevation).FirstOrDefault() ?? level;
+                    var floorLoop = Loop(r.Outline, below.Elevation) ?? throw new InvalidOperationException("outline too small");
+                    var slab = Floor.Create(_doc, new List<CurveLoop> { floorLoop }, FloorTypeFor(300).Id, below.Id);
+                    slab.get_Parameter(BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM)?.Set(top - below.Elevation);
+                    Mark(slab, RoofCode, r.Note);
+                    asFloors++;
+                    continue;
+                }
+                catch { /* a generic model then */ }
                 try
                 {
                     var loop = Loop(r.Outline, top - Ft(300));
@@ -749,7 +790,7 @@ public sealed class ModelBuilder
             }
         }
         t.Commit();
-        Log.Add($"Roofs: {native} flat concept roofs" + (blocks > 0 ? $", {blocks} as generic model slabs" + (firstError != null ? $" (Revit refused the roof: {firstError})" : "") : "")
+        Log.Add($"Roofs: {native} flat concept roofs" + (asFloors > 0 ? $", {asFloors} as 300 mm floor slabs at the roof height (Revit refused the roof: {firstError})" : "") + (blocks > 0 ? $", {blocks} as generic model slabs" + (firstError != null ? $" (Revit refused the roof: {firstError})" : "") : "")
                 + (removed > 0 ? $" (replacing {removed} from an earlier run)." : ".") + " Heights are the middle of the spot heights on each roof; slopes are not modelled.");
     }
 

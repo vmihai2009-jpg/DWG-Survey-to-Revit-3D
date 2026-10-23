@@ -334,7 +334,7 @@ public static class SiteContextBuilder
     }
 
     /// <summary>A corner loop as it is, only the corners where it turns (always a clean outline).</summary>
-    static Polygon2 Corners(List<(int X, int Y)> loop, double minX, double maxY, Func<double, double, Vec2> model)
+    internal static Polygon2 Corners(List<(int X, int Y)> loop, double minX, double maxY, Func<double, double, Vec2> model)
     {
         var kept = loop.Where((p, i) =>
         {
@@ -473,7 +473,7 @@ public static class SiteContextBuilder
     /// the outer loop runs anticlockwise, courtyards clockwise. Where two loops touch at a corner
     /// the walk turns left, so they stay separate.
     /// </summary>
-    static List<List<(int X, int Y)>> Boundary(List<int> cells, int[] region, int id, int n)
+    internal static List<List<(int X, int Y)>> Boundary(List<int> cells, int[] region, int id, int n)
     {
         bool In(int c, int r) => c >= 0 && r >= 0 && c < n && r < n && region[r * n + c] == id;
         var edges = new Dictionary<(int, int), List<(int, int)>>();
@@ -511,7 +511,7 @@ public static class SiteContextBuilder
 
     static int Cross((int X, int Y) a, (int X, int Y) b) => a.X * b.Y - a.Y * b.X;
 
-    static double SignedArea(List<(int X, int Y)> l)
+    internal static double SignedArea(List<(int X, int Y)> l)
     {
         double s = 0;
         for (int i = 0; i < l.Count; i++) { var a = l[i]; var b = l[(i + 1) % l.Count]; s += (double)a.X * b.Y - (double)b.X * a.Y; }
