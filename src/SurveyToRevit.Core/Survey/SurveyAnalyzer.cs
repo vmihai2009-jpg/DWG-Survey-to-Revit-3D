@@ -47,6 +47,8 @@ public sealed record SurveyLevel(
     public bool Partial { get; set; }
     /// <summary>Ceiling height above this floor (mm): the surveyed one when the plan gives it ("u/s 2.52"), else a default to adjust.</summary>
     public double CeilingHeightMm { get; set; }
+    /// <summary>Where the ceiling goes, when not the whole floor (under a mezzanine only: the rest is double height).</summary>
+    public Polygon2? CeilingOutline { get; set; }
     /// <summary>True when <see cref="CeilingHeightMm"/> comes from ceiling heights written on the plan.</summary>
     public bool CeilingFromSurvey { get; set; }
     /// <summary>Wall material no wall covers, as lists of 25 mm cell centres (filled as generic models so nothing is left open).</summary>
@@ -252,6 +254,8 @@ public static class SurveyAnalyzer
 
         // which outside walls line up with the façade on the floors below and above (the building's face)
         var stacked = FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList());
+        // floors with a mezzanine over part of them (see below): outside it they are double height
+        Polygon2? MezzanineOver(int i) => i + 2 < levels.Count && levels[i + 1].Outline is Polygon2 m && levels[i].Outline is Polygon2 b && m.Area < MezzanineShare * b.Area ? m : null;
         for (int i = 0; i < levels.Count; i++)
         {
             var next = levels.Skip(i + 1).FirstOrDefault(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm > levels[i].ElevationMm);
@@ -276,8 +280,15 @@ public static class SurveyAnalyzer
             levels[i].CeilingFromSurvey = surveyedCeiling != null;
             levels[i].CeilingHeightMm = surveyedCeiling ?? DefaultCeilingHeight(levels[i].WallHeightMm);
             var windowWalls = new List<WallCandidate>();
-            levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, levels[i].WallHeightMm, outline: levels[i].Outline, ceilingMm: levels[i].CeilingHeightMm,
+            // under a mezzanine's void the windows can rise to the floor after it; under the mezzanine itself they stop below it
+            var mezzAbove = MezzanineOver(i);
+            double windowStorey = mezzAbove != null && !double.IsNaN(levels[i + 2].ElevationMm) ? levels[i + 2].ElevationMm - levels[i].ElevationMm : levels[i].WallHeightMm;
+            levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, windowStorey, outline: levels[i].Outline, ceilingMm: mezzAbove != null ? null : levels[i].CeilingHeightMm,
                 added: windowWalls, isMaterial: levels[i].IsMaterial, wallSizes: tol.WallTypeSizes);
+            if (mezzAbove != null)
+                levels[i].Windows = levels[i].Windows.Select(w => FacadeWalls.Contains(mezzAbove, w.Center) || EdgeDistance(mezzAbove, w.Center) < 300
+                    ? w with { HeadMm = Math.Min(w.HeadMm, w.HeightsFromSurvey ? levels[i].WallHeightMm - 150 : Math.Min(levels[i].WallHeightMm - 150, Math.Max(w.SillMm + 300, levels[i].CeilingHeightMm))) } : w)
+                    .Where(w => w.HeadMm - w.SillMm >= 300).ToList();
             if (windowWalls.Count > 0)
             {
                 var withWindows = levels[i].Walls.Walls.Concat(windowWalls).ToList();
@@ -394,6 +405,8 @@ public static class SurveyAnalyzer
         {
             if (levels[i + 1].Outline is not Polygon2 mezz || levels[i].Outline is not Polygon2 below || mezz.Area >= MezzanineShare * below.Area) continue;
             levels[i + 1].Partial = true;
+            // the ceiling below is only under the mezzanine; the rest is open to the floor after
+            if (mezz.IsSimple()) levels[i].CeilingOutline = mezz;
             int up = 0;
             var ws = levels[i].Walls.Walls.Select(w =>
             {

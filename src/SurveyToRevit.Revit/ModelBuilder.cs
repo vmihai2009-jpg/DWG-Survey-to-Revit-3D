@@ -307,7 +307,9 @@ public sealed class ModelBuilder
             {
                 try
                 {
-                    var ceiling = Ceiling.Create(_doc, new List<CurveLoop> { loop }, CeilingTypeFor().Id, level.Id);
+                    // under a mezzanine only, where the floor is otherwise double height
+                    var ceilingLoop = sl.CeilingOutline != null ? Loop(sl.CeilingOutline, level.Elevation) : loop;
+                    var ceiling = Ceiling.Create(_doc, new List<CurveLoop> { ceilingLoop }, CeilingTypeFor().Id, level.Id);
                     ceiling.get_Parameter(BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM)?.Set(Ft(sl.CeilingHeightMm));
                     Mark(ceiling, sl.Code, "Ceiling");
                     done.Add($"ceiling at {sl.CeilingHeightMm:0} mm");

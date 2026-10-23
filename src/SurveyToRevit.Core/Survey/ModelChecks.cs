@@ -69,6 +69,7 @@ public static class ModelChecks
             items.AddRange(WallEnds(l));
         }
         items.AddRange(WindowColumns(levels));
+        items.AddRange(MezzanineVoids(levels, frame));
         items.AddRange(FacadeOnOneFloor(levels, stacked));
         return items;
     }
@@ -319,6 +320,21 @@ public static class ModelChecks
                 yield return new CheckItem(floors[w.F].Code, CheckKind.WindowOffPlane, w.C,
                     $"{floors[w.F].Name}: this window sits {Math.Abs(db):0} mm {(db < 0 ? "inside" : "outside")} the windows above and below it.");
         }
+    }
+
+    // ---------- mezzanines ----------
+
+    /// <summary>A mezzanine's floor laid over a part its own plan marks as void ("Void", "open to below"): its edge is misread there.</summary>
+    public static IEnumerable<CheckItem> MezzanineVoids(IReadOnlyList<SurveyLevel> levels, SurveyFrame frame)
+    {
+        foreach (var l in levels.Where(l => l.Partial && l.Outline != null))
+            foreach (var t in l.Plan.Texts)
+            {
+                if (!System.Text.RegularExpressions.Regex.IsMatch(t.Value, @"\bvoid\b|open to below|double height", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) continue;
+                var p = frame.ToModel(t.Position);
+                if (FacadeWalls.Contains(l.Outline!, p))
+                    yield return new CheckItem(l.Code, CheckKind.MezzanineEdge, p, $"{l.Name}: the floor covers a place its plan marks \"{t.Value.Replace("\n", " ").Trim()}\"; check the mezzanine's edge.");
+            }
     }
 
     // ---------- façade on one floor only ----------
