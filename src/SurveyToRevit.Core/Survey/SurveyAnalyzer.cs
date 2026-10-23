@@ -85,6 +85,9 @@ public sealed class SurveyModel
 /// </summary>
 public static class SurveyAnalyzer
 {
+    /// <summary>Height of a balustrade or parapet in front of windows, where the windows' sill does not give one.</summary>
+    public const double ParapetMm = 1100;
+
     public const double DefaultTopWallHeightMm = 3000;
     /// <summary>The least height between a floor and the floor above (mm).</summary>
     public const double MinStoreyMm = 2000;
@@ -279,6 +282,16 @@ public static class SurveyAnalyzer
                 levels[i].Windows = levels[i].Windows.Select(w => w with { HostIndex = map[w.HostIndex] }).ToList();
                 levels[i].Walls = levels[i].Walls with { Walls = kept, ThicknessGroups = kept.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
                 notes.Add($"{levels[i].Name}: {filling.Count} short walls across window or door openings (their reveals) left out.");
+            }
+            // a window must look out: a wall drawn outside it (a balcony balustrade, a parapet) is low, not a storey high
+            var inFront = OpeningCuts.InFront(levels[i].Walls.Walls,
+                levels[i].Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm)).ToList(), levels[i].Outline, levels[i].Doors.Select(d => d.HostIndex));
+            if (inFront.Count > 0)
+            {
+                var ws = levels[i].Walls.Walls.ToList();
+                foreach (var (k, sill) in inFront) ws[k] = ws[k] with { HeightMm = sill is >= 600 and <= ParapetMm ? sill : ParapetMm };
+                levels[i].Walls = levels[i].Walls with { Walls = ws };
+                notes.Add($"{levels[i].Name}: {inFront.Count} walls outside windows (balustrades, parapets) made low, up to the sill or {ParapetMm:0} mm, so the windows look out.");
             }
             if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
         }

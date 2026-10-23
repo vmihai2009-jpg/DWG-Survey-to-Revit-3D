@@ -270,9 +270,10 @@ public sealed class ModelBuilder
                         WallType type;
                         if (w.Curtain) type = _curtainType ??= CurtainTypeFor();
                         else if (!wallTypes.TryGetValue(w.TypeThickness, out type!)) wallTypes[w.TypeThickness] = type = WallTypeFor(w.TypeThickness);
-                        var wall = Wall.Create(_doc, line, type.Id, level.Id, Ft(sl.WallHeightMm), 0, false, false);
-                        if (above != null) wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.Set(above.Id);
-                        Mark(wall, sl.Code, w.Confidence.ToString());
+                        var wall = Wall.Create(_doc, line, type.Id, level.Id, Ft(w.HeightMm ?? sl.WallHeightMm), 0, false, false);
+                        // a low wall (balustrade, parapet) keeps its own height; the rest run up to the next level
+                        if (above != null && w.HeightMm == null) wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.Set(above.Id);
+                        Mark(wall, sl.Code, w.HeightMm != null ? "Parapet" : w.Confidence.ToString());
                         created[w] = wall;
                         made++;
                     }

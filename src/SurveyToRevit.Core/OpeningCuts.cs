@@ -64,4 +64,59 @@ public static class OpeningCuts
     }
 
     const double MaxRevealWallMm = 1500;
+
+    /// <summary>
+    /// Walls standing between windows and the outside: a window must look out, so a wall drawn on the
+    /// outside of it, covering it, cannot be full height. What the survey cuts there is a balustrade,
+    /// a parapet or the outer face of a deep reveal. Returns each such wall with the lowest sill of the
+    /// windows it stands in front of. Walls that hold a window or door themselves are never included.
+    /// </summary>
+    public static Dictionary<int, double> InFront(IReadOnlyList<WallCandidate> walls,
+        IReadOnlyList<(int Host, Vec2 Center, double WidthMm, double SillMm)> windows, Polygon2? outline, IEnumerable<int>? otherHosts = null)
+    {
+        var result = new Dictionary<int, double>();
+        if (outline == null) return result;
+        var hosts = windows.Select(w => w.Host).Concat(otherHosts ?? Enumerable.Empty<int>()).ToHashSet();
+        foreach (var (host, center, width, sill) in windows)
+        {
+            var h = walls[host];
+            double along = WallGeometry.Along(h, center);
+            double a = WallGeometry.AngleDegAt(h, along) * Math.PI / 180;
+            var n = new Vec2(-Math.Sin(a), Math.Cos(a));
+            foreach (var side in new[] { n, n * -1 })
+            {
+                var votes = new Dictionary<int, int>();
+                foreach (var f in new[] { -0.35, -0.15, 0, 0.15, 0.35 })
+                {
+                    var p0 = WallGeometry.PointAt(h, along + f * width);
+                    for (double d = h.TypeThickness / 2 + 20; d <= h.TypeThickness / 2 + 2000; d += 20)
+                    {
+                        var q = p0 + side * d;
+                        int k = FirstBody(walls, q, host);
+                        if (k < 0) continue;
+                        // only a wall whose far side is outside the building stands between the window and the view
+                        var far = q + side * (walls[k].TypeThickness + 400);
+                        if (!hosts.Contains(k) && !walls[k].Curtain && !FacadeWalls.Contains(outline, far))
+                            votes[k] = votes.GetValueOrDefault(k) + 1;
+                        break;
+                    }
+                }
+                foreach (var (k, v) in votes)
+                    if (v >= 3) result[k] = Math.Min(result.GetValueOrDefault(k, double.MaxValue), sill);
+            }
+        }
+        return result;
+    }
+
+    static int FirstBody(IReadOnlyList<WallCandidate> walls, Vec2 p, int skip)
+    {
+        for (int k = 0; k < walls.Count; k++)
+        {
+            if (k == skip) continue;
+            var w = walls[k];
+            double along = WallGeometry.Along(w, p);
+            if (along >= 0 && along <= WallGeometry.Length(w) && Math.Abs(WallGeometry.Offset(w, p)) <= w.TypeThickness / 2) return k;
+        }
+        return -1;
+    }
 }

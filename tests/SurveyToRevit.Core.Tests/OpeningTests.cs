@@ -60,4 +60,22 @@ public class OpeningTests
         Assert.Null(d.Hinge);
         Assert.True(d.Swing!.Value.Y > 0);
     }
+
+    [Fact]
+    public void A_wall_outside_a_window_is_a_balustrade_but_one_inside_is_not()
+    {
+        // building 0..20 m by 0..10 m; façade along y=0 with a window; a balcony line 600 mm outside it;
+        // a partition 1.5 m inside the room, parallel to the façade
+        var outline = new Polygon2(new[] { new Vec2(0, -900), new Vec2(20000, -900), new Vec2(20000, 10000), new Vec2(0, 10000) });
+        var walls = new List<WallCandidate>
+        {
+            W(0, 0, 20000, 0, 400),       // façade
+            W(0, -700, 20000, -700, 100), // balustrade line at the edge of the building
+            W(2000, 1700, 8000, 1700, 100),
+        };
+        var windows = new[] { (0, new Vec2(5000, 0), 1200.0, 1010.0) };
+        var front = OpeningCuts.InFront(walls, windows, outline);
+        Assert.Equal(new[] { 1 }, front.Keys);
+        Assert.Equal(1010, front[1]);
+    }
 }
