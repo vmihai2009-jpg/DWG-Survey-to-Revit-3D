@@ -442,6 +442,15 @@ public static class SurveyAnalyzer
             notes.Add($"{levels[i + 1].Name} covers {mezz.Area / below.Area:P0} of the {levels[i].Name}: read as a mezzanine; {up} {levels[i].Name} walls outside it run up to the {levels[i + 2].Name}.");
         }
 
+        // openings clear of the walls that run into their edges
+        foreach (var l in levels)
+        {
+            var (moved, narrowed, rehosted, trimmed) = OpeningClearance.Fit(l);
+            if (moved + narrowed + rehosted + trimmed > 0)
+                notes.Add($"{l.Name}: openings kept clear of walls running into them: {trimmed} partitions stopped at the wall face, {moved} openings moved along their wall, {narrowed} narrowed to the clear width" +
+                          (rehosted > 0 ? $", {rehosted} doors set into the drawn wall they lie in" : "") + ".");
+        }
+
         notes.Add($"Survey base point E {frame.BasePoint.X / 1000:0.000} m, N {frame.BasePoint.Y / 1000:0.000} m; " +
                   $"model turned {frame.RotationDeg:0.00}° so the main walls are square (grid north = true north).");
         foreach (var l in levels) l.Details = RoofsAndDetails.Details(l, frame, rules);
