@@ -53,6 +53,8 @@ static string Svg(SurveyLevel l, SurveyFrame f)
     var sb = new StringBuilder();
     sb.Append($"<svg xmlns='http://www.w3.org/2000/svg' viewBox='{minX:0} {-maxY:0} {maxX - minX:0} {maxY - minY:0}' width='{Environment.GetEnvironmentVariable("SVGW") ?? "1600"}' style='background:#fff'>");
     foreach (var s in raw) sb.Append($"<line x1='{s.A.X:0}' y1='{-s.A.Y:0}' x2='{s.B.X:0}' y2='{-s.B.Y:0}' stroke='#bbb' stroke-width='20'/>");
+    // wall-layer lines drawn dashed/hidden or thin: not walls
+    foreach (var s in l.Plan.HiddenLines.Select(f.ToModel)) sb.Append($"<line x1='{s.A.X:0}' y1='{-s.A.Y:0}' x2='{s.B.X:0}' y2='{-s.B.Y:0}' stroke='#a0f' stroke-width='40' stroke-dasharray='200 120'/>");
     var palette = new[] { "#d62728", "#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b", "#e377c2", "#17becf", "#bcbd22" };
     var types = walls.Select(x => x.w.TypeThickness).Distinct().OrderBy(t => t).ToList();
     foreach (var (w, c) in walls)

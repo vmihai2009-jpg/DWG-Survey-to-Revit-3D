@@ -19,6 +19,8 @@ public sealed class SurveyDrawing
     public required double MmPerUnit { get; init; }
     public required string UnitsNote { get; init; }
     public required IReadOnlyList<Segment2> WallLines { get; init; }
+    /// <summary>Lines on wall layers that are not cut walls: drawn dashed or hidden (overhead, below or beyond), or much thinner than the walls.</summary>
+    public IReadOnlyList<Segment2> HiddenLines { get; init; } = Array.Empty<Segment2>();
     public required IReadOnlyList<Segment2> OpeningLines { get; init; }
     /// <summary>Curved lines (arcs, bulged polyline pieces) on wall layers, radius 1 m or more.</summary>
     public IReadOnlyList<Arc2> WallArcs { get; init; } = Array.Empty<Arc2>();
@@ -52,25 +54,29 @@ public sealed class SurveyDrawing
         var doc = DwgReader.Read(path, (_, _) => { });
 
         var walls = new List<(string layer, double x1, double y1, double x2, double y2)>();
+        // per wall line: drawn dashed/hidden, and its line weight (1/100 mm, -1 unknown)
+        var wallStyle = new List<(bool dashed, int weight)>();
         var openings = new List<(string layer, double x1, double y1, double x2, double y2)>();
         var features = new List<(string layer, double x1, double y1, double x2, double y2)>();
         var texts = new List<(double x, double y, string value, string layer)>();
         var arcs = new List<(LayerRole role, Arc2 arc)>(); // in drawing units until the units are known
         var counts = new Dictionary<string, int>();
 
+        (bool dashed, int weight) style = (false, -1);
         void AddSeg(string layer, LayerRole role, double x1, double y1, double x2, double y2)
         {
-            if (role is LayerRole.Wall or LayerRole.CurtainWall) walls.Add((layer, x1, y1, x2, y2));
+            if (role is LayerRole.Wall or LayerRole.CurtainWall) { walls.Add((layer, x1, y1, x2, y2)); wallStyle.Add(style); }
             else if (role is LayerRole.Window or LayerRole.Door) openings.Add((layer, x1, y1, x2, y2));
             else if (LayerRules.IsFeature(role)) features.Add((layer, x1, y1, x2, y2));
         }
 
-        void Visit(Entity e, string? inheritedLayer, int depth)
+        void Visit(Entity e, string? inheritedLayer, int depth, (bool dashed, int weight)? inheritedStyle = null)
         {
             var layer = e.Layer?.Name ?? "";
             if (layer == "0" && inheritedLayer != null) layer = inheritedLayer;
             counts[layer] = counts.GetValueOrDefault(layer) + 1;
             var role = rules.Classify(layer);
+            style = Style(e, inheritedStyle);
             switch (e)
             {
                 case Line l:
@@ -84,14 +90,14 @@ public sealed class SurveyDrawing
                         var a = v[i].Location; var b = v[(i + 1) % v.Count].Location;
                         if (Math.Abs(v[i].Bulge) > 1e-6)
                         {
-                            if ((role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role)) && (a.X != b.X || a.Y != b.Y))
+                            if ((role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role)) && (a.X != b.X || a.Y != b.Y) && !(role is LayerRole.Wall && style.dashed))
                                 arcs.Add((role, Arc2.FromBulge(new Vec2(a.X, a.Y), new Vec2(b.X, b.Y), v[i].Bulge, layer)));
                             continue;
                         }
                         AddSeg(layer, role, a.X, a.Y, b.X, b.Y);
                     }
                     break;
-                case Arc arc when role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role):
+                case Arc arc when (role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role)) && !(role is LayerRole.Wall && style.dashed):
                     arcs.Add((role, new Arc2(new Vec2(arc.Center.X, arc.Center.Y), arc.Radius, arc.StartAngle, arc.EndAngle, layer)));
                     break;
                 case Circle circle when LayerRules.IsFeature(role) || role is LayerRole.Wall:
@@ -106,12 +112,41 @@ public sealed class SurveyDrawing
                     break;
                 case Insert ins when depth < 4 && (role is LayerRole.Wall or LayerRole.CurtainWall or LayerRole.Window or LayerRole.Door || LayerRules.IsFeature(role)):
                     // Window/door symbols (and stair, sanitary and furniture symbols) are usually blocks: explode them.
-                    try { foreach (var sub in ins.Explode()) Visit(sub, layer, depth + 1); } catch { /* unusual block: ignore */ }
+                    var own = style;
+                    try { foreach (var sub in ins.Explode()) Visit(sub, layer, depth + 1, own); } catch { /* unusual block: ignore */ }
+                    break;
+                case Hatch hatch when role is LayerRole.Wall:
+                    // solid fill (poché) on a wall layer: its edges are wall faces
+                    foreach (var path in hatch.Paths)
+                        foreach (var edge in path.Edges)
+                            switch (edge)
+                            {
+                                case Hatch.BoundaryPath.Line hl: AddSeg(layer, role, hl.Start.X, hl.Start.Y, hl.End.X, hl.End.Y); break;
+                                case Hatch.BoundaryPath.Polyline hp:
+                                    var pv = hp.Vertices.ToList();
+                                    for (int i = 0; i + 1 < pv.Count + (hp.IsClosed ? 1 : 0); i++)
+                                        AddSeg(layer, role, pv[i].X, pv[i].Y, pv[(i + 1) % pv.Count].X, pv[(i + 1) % pv.Count].Y);
+                                    break;
+                            }
                     break;
             }
         }
 
         foreach (var e in doc.Entities) Visit(e, null, 0);
+
+        // wall-layer lines that are not cut walls: drawn dashed or hidden (overhead, below, beyond), or much
+        // thinner than the drawing's walls (a balustrade or cill below the cut, where the surveyor sets line weights)
+        var weights = wallStyle.Where(w => w.weight >= 0).Select(w => w.weight).OrderBy(w => w).ToList();
+        int typical = weights.Count >= 20 ? weights[weights.Count / 2] : -1;
+        var hidden = new List<(string layer, double x1, double y1, double x2, double y2)>();
+        var cut = new List<(string layer, double x1, double y1, double x2, double y2)>();
+        for (int i = 0; i < walls.Count; i++)
+        {
+            var (dashed, weight) = wallStyle[i];
+            bool thin = typical >= 25 && weight >= 0 && weight <= typical / 2;
+            (dashed || thin ? hidden : cut).Add(walls[i]);
+        }
+        walls = cut;
 
         var (mmPerUnit, note) = Units(doc.Header.InsUnits, walls.Select(w => (w.x1, w.y1, w.x2, w.y2)).ToList());
         Segment2 Seg((string layer, double x1, double y1, double x2, double y2) s) =>
@@ -134,10 +169,32 @@ public sealed class SurveyDrawing
             MmPerUnit = mmPerUnit,
             UnitsNote = note,
             WallLines = walls.Select(Seg).ToList(),
+            HiddenLines = hidden.Select(Seg).ToList(),
             OpeningLines = openingSegs,
             Texts = texts.Select(t => new SurveyText(new Vec2(t.x * mmPerUnit, t.y * mmPerUnit), t.value, t.layer)).ToList(),
             LayerCounts = counts,
         };
+    }
+
+    /// <summary>How an entity is drawn: dashed or hidden (any linetype with a pattern), and its line weight (1/100 mm, -1 when not set).</summary>
+    static (bool dashed, int weight) Style(Entity e, (bool dashed, int weight)? block)
+    {
+        var lt = e.LineType;
+        bool dashed;
+        if (lt == null || lt.Name.Equals("ByLayer", StringComparison.OrdinalIgnoreCase)) dashed = IsDashed(e.Layer?.LineType);
+        else if (lt.Name.Equals("ByBlock", StringComparison.OrdinalIgnoreCase)) dashed = block?.dashed ?? false;
+        else dashed = IsDashed(lt);
+        int w = (int)e.LineWeight;
+        if (w == (int)LineWeightType.ByLayer) w = e.Layer != null ? (int)e.Layer.LineWeight : -1;
+        else if (w == (int)LineWeightType.ByBlock) w = block?.weight ?? -1;
+        return (dashed, w >= 0 ? w : -1);
+    }
+
+    static bool IsDashed(ACadSharp.Tables.LineType? lt)
+    {
+        if (lt == null || lt.Name.Equals("Continuous", StringComparison.OrdinalIgnoreCase)
+            || lt.Name.Equals("ByLayer", StringComparison.OrdinalIgnoreCase) || lt.Name.Equals("ByBlock", StringComparison.OrdinalIgnoreCase)) return false;
+        return lt.Segments.Any() || System.Text.RegularExpressions.Regex.IsMatch(lt.Name, "dash|hid|dot|cent|phant|border|divide", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     /// <summary>
