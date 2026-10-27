@@ -8,9 +8,9 @@ using SurveyToRevit.Core.TestFit;
 namespace SurveyToRevit.Revit;
 
 /// <summary>
-/// Office Test-Fit: opens the workplace test-fit page on the floor of the active floor plan. The floor's
-/// outline (its slabs, or failing that its rooms or walls), existing walls, columns and rooms are read and
-/// handed to the page, which lays out desks, meeting rooms and breakout inside them. Send to Revit on the page
+/// Office Test-Fit: opens the workplace test-fit page on the floor of the active floor plan (or on the rooms
+/// selected in it). The floor's outline, existing walls, columns and rooms are read as the plan shows them
+/// (TestFitReader) and handed to the page, which lays out desks, meeting rooms and breakout inside them. Send to Revit on the page
 /// closes the window and places the layout (TestFitBuilder); closing it without sending changes nothing.
 /// </summary>
 [Transaction(TransactionMode.Manual)]
@@ -23,13 +23,21 @@ public class TestFitCommand : IExternalCommand
         var uidoc = data.Application.ActiveUIDocument;
         var doc = uidoc?.Document;
         if (doc == null || doc.IsFamilyDocument) { message = "Open a project first."; return Result.Failed; }
-        if (uidoc!.ActiveView is not ViewPlan { ViewType: ViewType.FloorPlan, GenLevel: { } level })
+        if (uidoc!.ActiveView is not ViewPlan { ViewType: ViewType.FloorPlan, GenLevel: { } level } plan)
         {
             TaskDialog.Show(Caption, "Open the floor plan of the floor you want to test-fit, then click Office Test-Fit again.");
             return Result.Cancelled;
         }
+        var floors = TestFitReader.Floors(doc);
+        TestFitSite Read(Level l, ICollection<ElementId> selected)
+        {
+            var s = TestFitReader.Read(doc, l, TestFitReader.PlanOf(doc, l, plan), selected);
+            s.LevelId = l.Id.Value.ToString();
+            s.Floors.AddRange(floors.Select(f => (f.Id.Value.ToString(), f.Name)));
+            return s;
+        }
         TestFitSite site;
-        try { site = TestFitReader.Read(doc, level); }
+        try { site = Read(level, uidoc.Selection.GetElementIds()); }
         catch (Exception ex)
         {
             TaskDialog.Show(Caption, $"Could not read {level.Name}: {ex.Message}");
@@ -37,12 +45,14 @@ public class TestFitCommand : IExternalCommand
         }
         if (site.Faces.Count == 0)
         {
-            TaskDialog.Show(Caption, $"There is no floor slab, room or wall on {level.Name} to lay out. " +
+            TaskDialog.Show(Caption, $"There is no floor slab, room or wall on {level.Name} to lay out, in this model or its links. " +
                                      "Build the floor (Build from Survey) or draw its slab first.");
             return Result.Cancelled;
         }
-        string? sent;
-        try { sent = TestFitWindow.Open(site, data.Application.MainWindowHandle); }
+        TestFitSite? Load(string id) =>
+            long.TryParse(id, out var v) && doc.GetElement(new ElementId(v)) is Level l ? Read(l, Array.Empty<ElementId>()) : null;
+        (string Layout, TestFitSite Site)? sent;
+        try { sent = TestFitWindow.Open(site, Load, data.Application.MainWindowHandle); }
         catch (Exception ex)
         {
             TaskDialog.Show(Caption, "The test-fit window could not open: " + ex.Message);
@@ -50,8 +60,10 @@ public class TestFitCommand : IExternalCommand
         }
         if (sent == null) return Result.Succeeded; // looked at, nothing sent
 
+        site = sent.Value.Site;
+        if (doc.GetElement(new ElementId(long.Parse(site.LevelId))) is Level sentLevel) level = sentLevel;
         TestFitLayout layout;
-        try { layout = TestFitLayout.Parse(sent, site.Frame().OriginMm); }
+        try { layout = TestFitLayout.Parse(sent.Value.Layout, site.Frame().OriginMm); }
         catch (Exception ex) { TaskDialog.Show(Caption, "The layout could not be read: " + ex.Message); return Result.Failed; }
         var builder = new TestFitBuilder(doc, level, site.StoreyHeightMm);
         builder.Build(layout);
@@ -68,156 +80,14 @@ public class TestFitCommand : IExternalCommand
             $"Partitions: {b.Walls} walls, {b.Glazed} curtain walls, {b.Doors} doors; {b.Rooms} rooms.",
         };
         if (b.Placed.Count > 0) lines.Add("Families: " + string.Join(", ", b.Placed.Select(p => $"{p.Key} ({p.Value})")) + ".");
-        if (b.Removed > 0) lines.Add($"The last test-fit on this floor was replaced ({b.Removed} elements).");
+        if (b.OptionName != null) lines.Add($"It is in the design option '{b.OptionName}'. Make another option active and send again to keep both side by side.");
+        else lines.Add("Tip: to keep several layouts side by side, add a 'Furniture Layout' set with Option 1, Option 2… in Manage > Design Options, make an option active and send again. Revit lets add-ins fill design options but not create them.");
+        if (b.Removed > 0) lines.Add($"The last test-fit on this floor{(b.OptionName != null ? " in this option" : "")} was replaced ({b.Removed} elements).");
         var viewPhase = view.get_Parameter(BuiltInParameter.VIEW_PHASE)?.AsValueString();
         if (b.PhaseName != null && viewPhase != null && viewPhase != b.PhaseName)
             lines.Add($"It is on the '{b.PhaseName}' phase; this view shows '{viewPhase}', so set the view's phase to '{b.PhaseName}' to see it.");
         lines.Add("Undo removes it all in one step. Send to Revit again from Office Test-Fit to replace it.");
         if (b.Log.Count > 0) lines.Add("\n" + string.Join("\n", b.Log.Distinct().Take(14)));
         return string.Join("\n", lines);
-    }
-}
-
-/// <summary>Reads a floor of the model as the test-fit page needs it (mm, model plan coordinates).</summary>
-internal static class TestFitReader
-{
-    static double Mm(double ft) => UnitConversion.FeetToMm(ft);
-    static double Ft(double mm) => UnitConversion.MmToFeet(mm);
-    static Vec2 P(XYZ p) => new(Mm(p.X), Mm(p.Y));
-
-    // Objects that stand on the floor and must stay clear of furniture.
-    static readonly BuiltInCategory[] Solid =
-    [
-        BuiltInCategory.OST_Columns, BuiltInCategory.OST_StructuralColumns, BuiltInCategory.OST_GenericModel,
-        BuiltInCategory.OST_Stairs, BuiltInCategory.OST_PlumbingFixtures, BuiltInCategory.OST_SpecialityEquipment,
-    ];
-
-    public static TestFitSite Read(Document doc, Level level)
-    {
-        var z0 = level.ProjectElevation;
-        var above = new FilteredElementCollector(doc).OfClass(typeof(Level)).Cast<Level>()
-            .Select(l => l.ProjectElevation).Where(e => e > z0 + Ft(1500)).DefaultIfEmpty(z0 + Ft(3000)).Min();
-        var site = new TestFitSite
-        {
-            Title = $"{doc.Title} · {level.Name}",
-            Level = level.Name,
-            StoreyHeightMm = Math.Clamp(Mm(above - z0), 2400, 6000),
-            NorthDegrees = North(doc),
-            Source = "floor slabs",
-        };
-
-        // Rooms on this floor: names for the plan, and stairs/lifts/WCs become core spaces.
-        var rooms = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_Rooms).WhereElementIsNotElementType()
-            .OfType<Room>().Where(r => r.LevelId == level.Id && r.Area > 0).ToList();
-        var boundary = new SpatialElementBoundaryOptions { SpatialElementBoundaryLocation = SpatialElementBoundaryLocation.Finish };
-        var roomLoops = new List<(string Name, List<IReadOnlyList<Vec2>> Loops)>();
-        foreach (var room in rooms)
-        {
-            try
-            {
-                var loops = room.GetBoundarySegments(boundary)?
-                    .Select(l => (IReadOnlyList<Vec2>)Loop(l.Select(s => s.GetCurve()))).Where(l => l.Count >= 3).ToList();
-                if (loops is not { Count: > 0 }) continue;
-                var name = room.get_Parameter(BuiltInParameter.ROOM_NAME)?.AsString() ?? "";
-                roomLoops.Add((name, loops));
-                site.Rooms.Add(new SiteRoom(name, loops[0]));
-            }
-            catch { /* a room Revit cannot bound is left out */ }
-        }
-
-        // The floor outline: its slabs, else its rooms, else the box round its walls.
-        foreach (var floor in new FilteredElementCollector(doc).OfClass(typeof(Floor)).Cast<Floor>()
-                     .Where(f => f.LevelId == level.Id && !Demolished(f)))
-        {
-            foreach (var r in HostObjectUtils.GetTopFaces(floor))
-            {
-                if (floor.GetGeometryObjectFromReference(r) is not Face face) continue;
-                var loops = face.GetEdgesAsCurveLoops().Select(l => Loop(l)).Where(l => l.Count >= 3)
-                    .OrderByDescending(l => Math.Abs(Area(l))).Cast<IReadOnlyList<Vec2>>().ToList();
-                if (loops.Count > 0 && Math.Abs(Area(loops[0])) > 1e6) site.Faces.Add(loops);
-            }
-        }
-        if (site.Faces.Count == 0 && roomLoops.Count > 0)
-        {
-            site = With(site, "rooms");
-            foreach (var (_, loops) in roomLoops) site.Faces.Add(loops);
-        }
-
-        // Existing walls cut 1 m above the floor.
-        var cut = Band(z0 + Ft(1000));
-        var walls = new FilteredElementCollector(doc).OfClass(typeof(Wall)).WherePasses(cut).Cast<Wall>()
-            .Where(w => !Demolished(w)).ToList();
-        foreach (var wall in walls)
-        {
-            if (wall.Location is not LocationCurve { Curve: { } curve }) continue;
-            var pts = curve.Tessellate().Select(P).ToList();
-            for (var i = 0; i + 1 < pts.Count; i++) site.Walls.Add(new SiteWall(pts[i], pts[i + 1], Mm(wall.Width)));
-        }
-        if (site.Faces.Count == 0 && site.Walls.Count > 0)
-        {
-            site = With(site, "walls");
-            double x0 = site.Walls.Min(w => Math.Min(w.A.X, w.B.X)), x1 = site.Walls.Max(w => Math.Max(w.A.X, w.B.X));
-            double y0 = site.Walls.Min(w => Math.Min(w.A.Y, w.B.Y)), y1 = site.Walls.Max(w => Math.Max(w.A.Y, w.B.Y));
-            site.Faces.Add([new Vec2[] { new(x0, y0), new(x1, y0), new(x1, y1), new(x0, y1) }]);
-        }
-        if (site.Faces.Count == 0) return site;
-
-        // Keep what stands on this floor: walls and objects over the outline (not neighbours on a context workset).
-        var all = site.Faces.SelectMany(f => f[0]).ToList();
-        double fx0 = all.Min(p => p.X) - 1000, fx1 = all.Max(p => p.X) + 1000, fy0 = all.Min(p => p.Y) - 1000, fy1 = all.Max(p => p.Y) + 1000;
-        bool Over(Vec2 p) => p.X >= fx0 && p.X <= fx1 && p.Y >= fy0 && p.Y <= fy1;
-        site.Walls.RemoveAll(w => !Over(w.A) && !Over(w.B));
-        foreach (var e in new FilteredElementCollector(doc).WherePasses(new ElementMulticategoryFilter(Solid)).WhereElementIsNotElementType().WherePasses(cut))
-        {
-            if (Demolished(e) || e.get_BoundingBox(null) is not { } box) continue;
-            Vec2 a = P(box.Min), b = P(box.Max);
-            if (b.X - a.X > 15000 || b.Y - a.Y > 15000 || b.X < fx0 || a.X > fx1 || b.Y < fy0 || a.Y > fy1) continue;
-            site.Columns.Add((a, b));
-        }
-        return site;
-    }
-
-    static TestFitSite With(TestFitSite s, string source)
-    {
-        var n = new TestFitSite { Title = s.Title, Level = s.Level, StoreyHeightMm = s.StoreyHeightMm, NorthDegrees = s.NorthDegrees, Source = source };
-        n.Rooms.AddRange(s.Rooms);
-        n.Walls.AddRange(s.Walls);
-        return n;
-    }
-
-    /// <summary>Elements crossing a horizontal plane at this height (internal feet).</summary>
-    static BoundingBoxIntersectsFilter Band(double z) =>
-        new(new Outline(new XYZ(-1e6, -1e6, z - Ft(20)), new XYZ(1e6, 1e6, z + Ft(20))));
-
-    static List<Vec2> Loop(IEnumerable<Curve> curves)
-    {
-        var pts = new List<Vec2>();
-        foreach (var c in curves)
-        {
-            var t = c.Tessellate();
-            for (var i = 0; i + 1 < t.Count; i++) pts.Add(P(t[i]));
-        }
-        return pts;
-    }
-
-    static double Area(IReadOnlyList<Vec2> l)
-    {
-        double a = 0;
-        for (var i = 0; i < l.Count; i++) a += l[i].Cross(l[(i + 1) % l.Count]);
-        return a / 2;
-    }
-
-    static bool Demolished(Element e) =>
-        e.get_Parameter(BuiltInParameter.PHASE_DEMOLISHED)?.AsElementId() is { } id && id != ElementId.InvalidElementId;
-
-    /// <summary>True north on the plan, in degrees clockwise from the top (the model's +Y).</summary>
-    static double North(Document doc)
-    {
-        try
-        {
-            var n = doc.ActiveProjectLocation.GetTotalTransform().Inverse.OfVector(XYZ.BasisY);
-            return Math.Atan2(n.X, n.Y) * 180 / Math.PI;
-        }
-        catch { return 0; }
     }
 }

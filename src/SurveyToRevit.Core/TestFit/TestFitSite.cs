@@ -31,6 +31,11 @@ public sealed class TestFitSite
     public List<SiteRoom> Rooms { get; } = new();
     /// <summary>What the outline was taken from, for the report ("floor slabs", "rooms" or "walls").</summary>
     public string Source { get; init; } = "";
+    /// <summary>This floor's id in the model, and the floors the window can browse to (id, name), lowest first.</summary>
+    public string LevelId { get; set; } = "";
+    public List<(string Id, string Name)> Floors { get; } = new();
+    /// <summary>The page's own state for this floor from earlier in the session (its JSON), so browsing back keeps the spaces drawn.</summary>
+    public string? State { get; set; }
 
     // Base-build rooms the layout must leave alone: they become "Core" spaces on the page.
     static readonly Regex CoreName = new(
@@ -85,8 +90,11 @@ public sealed class TestFitSite
             }).ToArray(),
             rooms = Rooms.Where(r => r.Outline.Count >= 3).Select(r => new { name = r.Name, pts = Loop(r.Outline) }).ToArray(),
             cores,
+            levelId = LevelId,
+            floors = Floors.Select(f => new { id = f.Id, name = f.Name }).ToArray(),
         };
         var json = JsonSerializer.Serialize(site, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Default });
-        return "window.TESTFIT_SITE=" + json + ";\n";
+        var state = string.IsNullOrWhiteSpace(State) ? "null" : State;
+        return "window.TESTFIT_SITE=" + json + ";\nwindow.TESTFIT_STATE=" + state + ";\n";
     }
 }

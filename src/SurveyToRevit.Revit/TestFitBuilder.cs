@@ -24,9 +24,12 @@ internal sealed class TestFitBuilder
     readonly string _tag;
     readonly Phase? _phase;
     WorksetId? _workset;
-    readonly Dictionary<string, FamilySymbol?> _families = new();
+    readonly Dictionary<string, Family?> _families = new();
     readonly Dictionary<ElementId, XYZ> _offsets = new();
     static List<string>? _library;
+    static bool _saidNoLibrary;
+    readonly Dictionary<string, Family?> _own = new();
+    readonly ElementId _option;
     public List<string> Log { get; } = new();
     public Dictionary<string, int> Placed { get; } = new();
     public int Blocks, Walls, Glazed, Doors, Rooms, Removed;
@@ -36,11 +39,18 @@ internal sealed class TestFitBuilder
         _doc = doc;
         _level = level;
         _heightMm = storeyHeightMm;
-        _tag = TagPrefix + level.Name;
+        // a design option made active in Revit (Manage > Design Options) takes the layout; each option keeps its own
+        _option = DesignOption.GetActiveDesignOptionId(doc);
+        _tag = TagPrefix + level.Name + (_option != ElementId.InvalidElementId ? "|OPTION|" + _option.Value : "");
         _phase = doc.Phases.Size > 0 ? doc.Phases.get_Item(doc.Phases.Size - 1) : null;
     }
 
     public string? PhaseName => _phase?.Name;
+
+    /// <summary>The design option the layout went into ("Furniture Layout : Option 2"), or null for the main model.</summary>
+    public string? OptionName => _option != ElementId.InvalidElementId && _doc.GetElement(_option) is DesignOption o
+        ? (o.get_Parameter(BuiltInParameter.OPTION_SET_ID)?.AsElementId() is { } set && _doc.GetElement(set) is { } s ? s.Name + " : " : "") + o.Name
+        : null;
 
     static double Ft(double mm) => UnitConversion.MmToFeet(mm);
     static double Mm(double ft) => UnitConversion.FeetToMm(ft);
@@ -57,6 +67,7 @@ internal sealed class TestFitBuilder
             if (old.Count > 0) Removed = _doc.Delete(old).Count;
             _workset = Workset();
         });
+        ResolveFurniture(layout);
         Step("Test-fit: partitions and doors", () => Partitions(layout));
         Step("Test-fit: furniture", () => Furniture(layout));
         Step("Test-fit: rooms", () => MakeRooms(layout));
@@ -208,17 +219,40 @@ internal sealed class TestFitBuilder
         (long)BuiltInCategory.OST_Casework, (long)BuiltInCategory.OST_SpecialityEquipment, (long)BuiltInCategory.OST_GenericModel,
     ];
     static bool Sizable(string kind) => kind is "desk" or "recdesk" or "table" or "meettable" or "hightable" or "coffee" or "sofa" or "bench";
+    static bool Fits(Family f) => FurnitureCategories.Contains(f.FamilyCategory?.Id.Value ?? -1)
+        && f.FamilyPlacementType is FamilyPlacementType.OneLevelBased or FamilyPlacementType.WorkPlaneBased;
+
+    /// <summary>
+    /// Finds a family for each kind the layout uses before anything is placed: the project's, else Revit's
+    /// library, else one the add-in makes at each size. Run outside a transaction (families are loaded and made).
+    /// </summary>
+    void ResolveFurniture(TestFitLayout layout)
+    {
+        foreach (var kind in layout.Items.Select(i => i.Kind).Distinct().Where(Kinds.ContainsKey)) FurnitureType(kind);
+        foreach (var it in layout.Items.Where(i => Kinds.ContainsKey(i.Kind) && _families.GetValueOrDefault(i.Kind) == null))
+        {
+            var key = FurnitureFamilies.Name(it.Kind, it.WidthMm, it.DepthMm);
+            if (_own.ContainsKey(key)) continue;
+            var made = FurnitureFamilies.Make(_doc, it.Kind, it.WidthMm, it.DepthMm, Log);
+            _own[key] = made;
+            if (made != null) Log.Add($"{it.Kind}: no family in the project or Revit library, so the add-in made '{made.Name}'.");
+        }
+    }
 
     void Furniture(TestFitLayout layout)
     {
         foreach (var it in layout.Items)
         {
             if (it.Kind == "screen" || !Kinds.TryGetValue(it.Kind, out var spec)) continue;
-            var symbol = FurnitureType(it.Kind);
             try
             {
-                if (symbol == null) Block(it, spec.HeightMm);
-                else Place(it, Sizable(it.Kind) ? Sized(symbol, "Test-Fit " + it.Kind, it.WidthMm, it.DepthMm, false) : symbol);
+                if (_families.GetValueOrDefault(it.Kind) is { } family)
+                {
+                    var symbol = Activate(family);
+                    Place(it, Sizable(it.Kind) ? Sized(symbol, "Test-Fit " + it.Kind, it.WidthMm, it.DepthMm, false) : symbol);
+                }
+                else if (_own.GetValueOrDefault(FurnitureFamilies.Name(it.Kind, it.WidthMm, it.DepthMm)) is { } own) Place(it, Activate(own));
+                else Block(it, spec.HeightMm);
             }
             catch (Exception ex) { Log.Add($"A {it.Kind} at {it.Center} was not placed: {ex.Message}"); }
         }
@@ -227,7 +261,9 @@ internal sealed class TestFitBuilder
     void Place(FitItem it, FamilySymbol symbol)
     {
         var target = At(it.Center);
-        var inst = _doc.Create.NewFamilyInstance(target, symbol, _level, StructuralType.NonStructural);
+        var inst = symbol.Family.FamilyPlacementType == FamilyPlacementType.WorkPlaneBased
+            ? _doc.Create.NewFamilyInstance(_level.GetPlaneReference(), target, XYZ.BasisX, symbol)
+            : _doc.Create.NewFamilyInstance(target, symbol, _level, StructuralType.NonStructural);
         Mark(inst);
         // Families put their insertion point anywhere (a corner, the back edge...): centre each type's plan box
         // on the place the page drew it, measured once per type.
@@ -244,7 +280,7 @@ internal sealed class TestFitBuilder
         Placed[symbol.Family.Name] = Placed.GetValueOrDefault(symbol.Family.Name) + 1;
     }
 
-    /// <summary>No family of this kind anywhere: a plain block of the piece's size, on the Furniture category.</summary>
+    /// <summary>No family of this kind anywhere and none could be made: a plain block of the piece's size, on the Furniture category.</summary>
     void Block(FitItem it, double heightMm)
     {
         double hw = it.WidthMm / 2, hd = it.DepthMm / 2, c = Math.Cos(it.Rotation), s = Math.Sin(it.Rotation);
@@ -260,29 +296,26 @@ internal sealed class TestFitBuilder
         Blocks++;
     }
 
-    FamilySymbol? FurnitureType(string kind)
+    /// <summary>The project's or library's family for a kind (or for the kind it falls back to); null if neither has one.</summary>
+    Family? FurnitureType(string kind)
     {
         if (_families.TryGetValue(kind, out var cached)) return cached;
         var (want, skip, fallback, _) = Kinds[kind];
-        bool Fits(Family f) => FurnitureCategories.Contains(f.FamilyCategory?.Id.Value ?? -1) && f.FamilyPlacementType == FamilyPlacementType.OneLevelBased;
-        var inProject = new FilteredElementCollector(_doc).OfClass(typeof(Family)).Cast<Family>().Where(Fits).ToList();
+        var inProject = new FilteredElementCollector(_doc).OfClass(typeof(Family)).Cast<Family>().Where(Fits)
+            .Where(f => !f.Name.StartsWith(FurnitureFamilies.Prefix, StringComparison.Ordinal)).ToList();
         Family? family = null;
         foreach (var pattern in want)
         {
             family = inProject.Where(f => Regex.IsMatch(f.Name, pattern, RegexOptions.IgnoreCase) && !Regex.IsMatch(f.Name, skip, RegexOptions.IgnoreCase))
-                .OrderBy(f => f.Name.Length).FirstOrDefault()
-                ?? LoadFromLibrary(pattern, skip, Fits);
+                .OrderBy(f => f.Name.Length).FirstOrDefault();
             if (family != null) break;
         }
-        FamilySymbol? symbol = null;
-        if (family != null)
-        {
-            symbol = Activate(family);
-            Log.Add($"{kind}: family '{family.Name}'.");
-        }
-        else if (fallback != null) symbol = FurnitureType(fallback);
-        else Log.Add($"{kind}: no family in the project or Revit library, placed as plain furniture blocks. Load one and send again.");
-        return _families[kind] = symbol;
+        if (family == null)
+            foreach (var pattern in want)
+                if ((family = LoadFromLibrary(pattern, skip, Fits)) != null) break;
+        if (family != null) Log.Add($"{kind}: family '{family.Name}'.");
+        else if (fallback != null && FurnitureType(fallback) is { } other && !Sizable(fallback) == !Sizable(kind)) family = other;
+        return _families[kind] = family;
     }
 
     // ---------- rooms ----------
@@ -293,7 +326,7 @@ internal sealed class TestFitBuilder
         {
             try
             {
-                var c = At(z.Center);
+                var c = At(z.RoomPoint);
                 var room = _doc.Create.NewRoom(_level, new UV(c.X, c.Y));
                 room.Name = z.Name;
                 Mark(room);
@@ -338,38 +371,55 @@ internal sealed class TestFitBuilder
         return symbol;
     }
 
-    /// <summary>The first family in Revit's library whose file name matches, that loads and fits; null if none.</summary>
+    /// <summary>
+    /// The first family in Revit's library (the library paths in Revit's options, then Autodesk's installed
+    /// content) whose file name matches, that loads and fits; null if none. One that loads but does not fit
+    /// (wrong category or hosting) is taken out of the project again.
+    /// </summary>
     Family? LoadFromLibrary(string pattern, string skip, Func<Family, bool> fits)
     {
-        _library ??= _doc.Application.GetLibraryPaths().Values.Where(Directory.Exists).SelectMany(root =>
+        _library ??= ConceptFamilies.LibraryRoots(_doc.Application).SelectMany(root =>
         {
             try { return Directory.EnumerateFiles(root, "*.rfa", SearchOption.AllDirectories).ToList(); }
             catch { return new List<string>(); }
-        }).ToList();
+        }).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (_library.Count == 0 && !_saidNoLibrary)
+        {
+            _saidNoLibrary = true;
+            Log.Add("Revit's family library is not on this PC (no .rfa files in its library folders), so families come from the project or are made by the add-in.");
+        }
         var candidates = _library.Where(f =>
             {
                 var n = Path.GetFileNameWithoutExtension(f);
                 return Regex.IsMatch(n, pattern, RegexOptions.IgnoreCase) && !Regex.IsMatch(n, skip, RegexOptions.IgnoreCase);
             })
-            .OrderBy(f => Path.GetFileNameWithoutExtension(f).Length).Take(6);
+            .OrderBy(f => f.Contains("Furniture", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(f => Path.GetFileNameWithoutExtension(f).Length).Take(8);
         foreach (var file in candidates)
         {
+            var name = Path.GetFileNameWithoutExtension(file);
+            var before = new FilteredElementCollector(_doc).OfClass(typeof(Family)).Cast<Family>().FirstOrDefault(f => f.Name == name);
             try
             {
-                if (!_doc.LoadFamily(file, out Family loaded))
+                var loaded = before ?? ConceptFamilies.Load(_doc, file);
+                if (loaded == null) continue;
+                if (fits(loaded))
                 {
-                    // already in the project under that name
-                    var name = Path.GetFileNameWithoutExtension(file);
-                    loaded = new FilteredElementCollector(_doc).OfClass(typeof(Family)).Cast<Family>().FirstOrDefault(f => f.Name == name)!;
-                }
-                if (loaded != null && fits(loaded))
-                {
-                    Log.Add($"Loaded from the Revit library: {Path.GetFileName(file)}");
+                    if (before == null) Log.Add($"Loaded from the Revit library: {Path.GetFileName(file)}");
                     return loaded;
                 }
+                if (before == null) Remove(loaded);
             }
             catch { /* a file that does not load is skipped */ }
         }
         return null;
+    }
+
+    void Remove(Family family)
+    {
+        if (_doc.IsModifiable) { try { _doc.Delete(family.Id); } catch { } return; }
+        using var t = new Transaction(_doc, "Test-fit: unload " + family.Name);
+        try { t.Start(); _doc.Delete(family.Id); t.Commit(); }
+        catch { if (t.HasStarted() && !t.HasEnded()) t.RollBack(); }
     }
 }

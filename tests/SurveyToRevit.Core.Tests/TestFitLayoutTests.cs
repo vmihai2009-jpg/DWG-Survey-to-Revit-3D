@@ -33,6 +33,19 @@ public class TestFitLayoutTests
     }
 
     [Fact]
+    public void A_drawn_polygon_keeps_its_outline_and_room_point()
+    {
+        const string poly = """
+            {"kind":"testfit-layout","zones":[{"id":"z9","name":"Meeting L","type":"meeting","part":"solid","x":0,"y":0,"w":4,"d":4,
+              "pts":[[0,0],[4,0],[4,2],[2,2],[2,4],[0,4]],"ix":1,"iy":3}]}
+            """;
+        var z = Assert.Single(TestFitLayout.Parse(poly, new Vec2(0, 0)).Zones);
+        Assert.Equal(6, z.Outline!.Count);
+        Assert.Equal(new Vec2(4000, -2000), z.Outline[2]);
+        Assert.Equal(new Vec2(1000, -3000), z.RoomPoint);
+    }
+
+    [Fact]
     public void Furniture_turns_so_its_front_faces_the_way_the_page_drew_it()
     {
         var l = TestFitLayout.Parse(Json, new Vec2(0, 0));

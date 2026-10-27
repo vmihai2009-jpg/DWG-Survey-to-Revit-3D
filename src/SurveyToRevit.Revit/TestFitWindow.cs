@@ -19,25 +19,33 @@ internal sealed class TestFitWindow : Window
     static readonly string Local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SurveyToRevit");
     static readonly string Pages = Path.Combine(Local, "TestFit");
     readonly WebView2 _web = new();
-    readonly string _folder;
+    string _folder;
 
     /// <summary>The layout sent with "Send to Revit" (the page's JSON), or null if the window was closed without it.</summary>
     string? _sent;
+    TestFitSite _site;
+    readonly Func<string, TestFitSite?> _load;
+    readonly Dictionary<string, string> _states = new();
 
-    public static string? Open(TestFitSite site, IntPtr revit)
+    /// <summary>
+    /// Shows the page on a floor; the page's floor list browses to others (read with <paramref name="load"/>, by
+    /// level id). Returns the layout sent and the floor it was sent from, or null if closed without sending.
+    /// </summary>
+    public static (string Layout, TestFitSite Site)? Open(TestFitSite site, Func<string, TestFitSite?> load, IntPtr revit)
     {
         LoadWebView2();
-        var folder = WritePage(site);
-        var window = new TestFitWindow(folder, site.Title);
+        var window = new TestFitWindow(site, load);
         new WindowInteropHelper(window).Owner = revit;
         window.ShowDialog();
-        return window._sent;
+        return window._sent == null ? null : (window._sent, window._site);
     }
 
-    TestFitWindow(string folder, string title)
+    TestFitWindow(TestFitSite site, Func<string, TestFitSite?> load)
     {
-        _folder = folder;
-        Title = "Office Test-Fit · " + title;
+        _site = site;
+        _load = load;
+        _folder = WritePage(site);
+        Title = "Office Test-Fit · " + site.Title;
         Width = Math.Min(1600, SystemParameters.WorkArea.Width - 40);
         Height = Math.Min(980, SystemParameters.WorkArea.Height - 40);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -55,8 +63,11 @@ internal sealed class TestFitWindow : Window
             _web.CoreWebView2.Settings.IsStatusBarEnabled = false;
             _web.CoreWebView2.WebMessageReceived += (_, e) =>
             {
-                try { _sent = e.TryGetWebMessageAsString(); }
+                string message;
+                try { message = e.TryGetWebMessageAsString(); }
                 catch (ArgumentException) { return; }
+                if (FloorRequest(message) is { } go) { Browse(go.Id, go.State); return; }
+                _sent = message;
                 Close();
             };
             _web.Source = new Uri($"https://{Host}/testfit.html");
@@ -67,6 +78,40 @@ internal sealed class TestFitWindow : Window
                  "It installs without admin rights from https://developer.microsoft.com/microsoft-edge/webview2/ (Evergreen Bootstrapper).");
         }
         catch (Exception ex) { Fail("The test-fit page could not start: " + ex.Message); }
+    }
+
+    /// <summary>{"kind":"floor","id":"…","state":{…}}: the page asks for another floor and hands over its own state.</summary>
+    static (string Id, string? State)? FloorRequest(string message)
+    {
+        try
+        {
+            using var json = System.Text.Json.JsonDocument.Parse(message);
+            var root = json.RootElement;
+            if (!root.TryGetProperty("kind", out var k) || k.GetString() != "floor") return null;
+            var state = root.TryGetProperty("state", out var s) && s.ValueKind == System.Text.Json.JsonValueKind.Object ? s.GetRawText() : null;
+            return (root.GetProperty("id").GetString() ?? "", state);
+        }
+        catch { return null; }
+    }
+
+    void Browse(string levelId, string? state)
+    {
+        if (state != null) _states[_site.LevelId] = state;
+        TestFitSite? next;
+        try { next = _load(levelId); }
+        catch (Exception ex) { Autodesk.Revit.UI.TaskDialog.Show("Office Test-Fit", "That floor could not be read: " + ex.Message); return; }
+        if (next == null || next.Faces.Count == 0)
+        {
+            Autodesk.Revit.UI.TaskDialog.Show("Office Test-Fit", "That floor has no slab, room or wall to lay out.");
+            _web.CoreWebView2.ExecuteScriptAsync("window.testfitFloorRefused&&window.testfitFloorRefused()");
+            return;
+        }
+        next.State = _states.GetValueOrDefault(next.LevelId);
+        _site = next;
+        _folder = WritePage(next);
+        _web.CoreWebView2.SetVirtualHostNameToFolderMapping(Host, _folder, CoreWebView2HostResourceAccessKind.Allow);
+        Title = "Office Test-Fit · " + next.Title;
+        _web.CoreWebView2.Navigate($"https://{Host}/testfit.html?t={DateTime.Now.Ticks}");
     }
 
     void Fail(string why)

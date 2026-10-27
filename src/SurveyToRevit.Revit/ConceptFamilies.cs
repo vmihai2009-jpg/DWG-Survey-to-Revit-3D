@@ -60,7 +60,7 @@ internal static class ConceptFamilies
         return roots.Where(r => !string.IsNullOrWhiteSpace(r) && Directory.Exists(r)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    static List<string> TemplateRoots(Autodesk.Revit.ApplicationServices.Application app)
+    internal static List<string> TemplateRoots(Autodesk.Revit.ApplicationServices.Application app)
     {
         var roots = new List<string>();
         try { roots.Add(app.FamilyTemplatePath); } catch { }
@@ -79,7 +79,7 @@ internal static class ConceptFamilies
         return loaded;
     }
 
-    static string? FindTemplate(string root, string kind)
+    internal static string? FindTemplate(string root, string kind)
     {
         if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return null;
         try

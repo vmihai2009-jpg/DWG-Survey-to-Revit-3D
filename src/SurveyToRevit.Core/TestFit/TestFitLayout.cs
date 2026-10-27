@@ -15,10 +15,14 @@ public sealed record FitDoor(Vec2 Hinge, Vec2 Along, Vec2 Into, double WidthMm, 
     public Vec2 Center => Hinge + Along * (WidthMm / 2);
 }
 
-/// <summary>A space from the page: meeting and focus rooms become Revit rooms.</summary>
+/// <summary>A space from the page: meeting and focus rooms become Revit rooms. Outline is set for a drawn polygon.</summary>
 public sealed record FitZone(string Id, string Name, string Type, string Part, Vec2 Min, Vec2 Max)
 {
     public Vec2 Center => (Min + Max) * 0.5;
+    public IReadOnlyList<Vec2>? Outline { get; init; }
+    /// <summary>A point inside the space (for a polygon, the page's pick; the box centre may be outside an L).</summary>
+    public Vec2? Inside { get; init; }
+    public Vec2 RoomPoint => Inside ?? Center;
     public bool Enclosed => Type != "core" && Part != "open";
 }
 
@@ -62,7 +66,13 @@ public sealed class TestFitLayout
         foreach (var z in A("zones"))
         {
             Vec2 a = P(D(z, "x"), D(z, "y") + D(z, "d")), b = P(D(z, "x") + D(z, "w"), D(z, "y"));
-            layout.Zones.Add(new FitZone(S(z, "id"), S(z, "name"), S(z, "type"), S(z, "part"), a, b));
+            List<Vec2>? outline = null;
+            if (z.TryGetProperty("pts", out var pts) && pts.ValueKind == JsonValueKind.Array)
+                outline = pts.EnumerateArray().Where(p => p.ValueKind == JsonValueKind.Array && p.GetArrayLength() >= 2)
+                    .Select(p => P(p[0].GetDouble(), p[1].GetDouble())).ToList();
+            Vec2? inside = z.TryGetProperty("ix", out _) ? P(D(z, "ix"), D(z, "iy")) : null;
+            layout.Zones.Add(new FitZone(S(z, "id"), S(z, "name"), S(z, "type"), S(z, "part"), a, b)
+                { Outline = outline is { Count: >= 3 } ? outline : null, Inside = inside });
         }
         return layout;
     }

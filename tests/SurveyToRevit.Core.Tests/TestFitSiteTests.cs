@@ -13,7 +13,23 @@ public class TestFitSiteTests
     {
         var js = s.ToScript();
         Assert.StartsWith("window.TESTFIT_SITE=", js);
-        return JsonDocument.Parse(js["window.TESTFIT_SITE=".Length..].TrimEnd(';', '\n')).RootElement;
+        var line = js.Split('\n')[0];
+        return JsonDocument.Parse(line["window.TESTFIT_SITE=".Length..].TrimEnd(';')).RootElement;
+    }
+
+    [Fact]
+    public void Lists_the_floors_to_browse_and_hands_back_the_page_state()
+    {
+        var s = new TestFitSite { Title = "T", Level = "06_Sixth Floor", LevelId = "123", State = "{\"zones\":[]}" };
+        s.Faces.Add([Box(0, 0, 10000, 8000)]);
+        s.Floors.Add(("100", "05_Fifth Floor"));
+        s.Floors.Add(("123", "06_Sixth Floor"));
+        var j = Site(s);
+        Assert.Equal("123", j.GetProperty("levelId").GetString());
+        Assert.Equal("05_Fifth Floor", j.GetProperty("floors")[0].GetProperty("name").GetString());
+        Assert.Contains("window.TESTFIT_STATE={\"zones\":[]};", s.ToScript());
+        s.State = null;
+        Assert.Contains("window.TESTFIT_STATE=null;", s.ToScript());
     }
 
     [Fact]
