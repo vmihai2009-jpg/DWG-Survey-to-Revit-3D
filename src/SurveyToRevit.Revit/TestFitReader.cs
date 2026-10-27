@@ -137,7 +137,51 @@ internal static class TestFitReader
         site.Walls.AddRange(walls.Where(w => Over(w.A) || Over(w.B)));
         site.Poche.AddRange(poche.Where(p => p.Loops.Any(l => l.Any(Over))));
         site.Columns.AddRange(columns.Where(c => c.Item2.X >= fx0 && c.Item1.X <= fx1 && c.Item2.Y >= fy0 && c.Item1.Y <= fy1));
+        try { site.Cad.AddRange(Cad(doc, view, new Vec2(fx0 - 3000, fy0 - 3000), new Vec2(fx1 + 3000, fy1 + 3000))); }
+        catch { /* no linework: the page shows the model only */ }
         return site;
+    }
+
+    /// <summary>
+    /// The 2D linework the plan shows over the floor: linked and imported CAD (on the layers the view shows) and
+    /// the view's own detail lines, as plan polylines (mm) for the page to draw spaces over.
+    /// </summary>
+    static List<IReadOnlyList<Vec2>> Cad(Document doc, ViewPlan? view, Vec2 min, Vec2 max)
+    {
+        var lines = new List<IReadOnlyList<Vec2>>();
+        if (view == null) return lines;
+        var points = 0;
+        bool In(Vec2 p) => p.X >= min.X && p.X <= max.X && p.Y >= min.Y && p.Y <= max.Y;
+        void Add(IList<XYZ> pts)
+        {
+            if (points > 150000 || pts.Count < 2) return;
+            var l = pts.Select(P).ToList();
+            if (!l.Any(In)) return;
+            lines.Add(l);
+            points += l.Count;
+        }
+        bool Shown(GeometryObject g) =>
+            doc.GetElement(g.GraphicsStyleId) is not GraphicsStyle { GraphicsStyleCategory: { } c } || !view.GetCategoryHidden(c.Id);
+        void Walk(GeometryElement? geo)
+        {
+            if (geo == null) return;
+            foreach (var g in geo)
+            {
+                switch (g)
+                {
+                    case GeometryInstance gi: Walk(gi.GetInstanceGeometry()); break;
+                    case PolyLine pl when Shown(pl): Add(pl.GetCoordinates()); break;
+                    case Curve c when Shown(c): Add(c is Line ? new[] { c.GetEndPoint(0), c.GetEndPoint(1) } : c.Tessellate()); break;
+                }
+            }
+        }
+        var options = new Options { View = view };
+        foreach (var cad in new FilteredElementCollector(doc, view.Id).OfClass(typeof(ImportInstance)).Cast<ImportInstance>())
+            try { Walk(cad.get_Geometry(options)); } catch { /* a CAD file Revit cannot read back */ }
+        foreach (var line in new FilteredElementCollector(doc, view.Id).OfClass(typeof(CurveElement)).Cast<CurveElement>()
+                     .Where(c => c.OwnerViewId == view.Id && c.CurveElementType == CurveElementType.DetailCurve))
+            try { Add(line.GeometryCurve is Line l ? new[] { l.GetEndPoint(0), l.GetEndPoint(1) } : line.GeometryCurve.Tessellate()); } catch { }
+        return lines;
     }
 
     /// <summary>The floors that have a floor plan, lowest first, to browse in the test-fit window.</summary>

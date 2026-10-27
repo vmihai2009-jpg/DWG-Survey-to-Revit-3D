@@ -40,6 +40,8 @@ public sealed class TestFitSite
     /// <summary>Columns, piers and other solid objects standing on the floor, as plan boxes.</summary>
     public List<(Vec2 Min, Vec2 Max)> Columns { get; } = new();
     public List<SiteRoom> Rooms { get; } = new();
+    /// <summary>The plan's 2D linework (linked or imported CAD, detail lines) as polylines, to draw spaces over.</summary>
+    public List<IReadOnlyList<Vec2>> Cad { get; } = new();
     /// <summary>What the outline was taken from, for the report ("floor slabs", "rooms" or "walls").</summary>
     public string Source { get; init; } = "";
     /// <summary>This floor's id in the model, and the floors the window can browse to (id, name), lowest first.</summary>
@@ -104,6 +106,7 @@ public sealed class TestFitSite
             }).ToArray(),
             rooms = Rooms.Where(r => r.Outline.Count >= 3).Select(r => new { name = r.Name, pts = Loop(r.Outline) }).ToArray(),
             cores,
+            cad = Cad.Select(l => l.SelectMany(page).ToArray()).ToArray(),
             levelId = LevelId,
             floors = Floors.Select(f => new { id = f.Id, name = f.Name }).ToArray(),
             assets = Assets.ToDictionary(a => a.Key, a => a.Value.Select(x => new { id = x.Id, name = x.Name, src = x.Source }).ToArray()),

@@ -216,6 +216,7 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
 .passive{pointer-events:none}
 .s-sheet{fill:var(--sheet);fill-rule:evenodd;stroke:var(--plan-line);stroke-width:1.6px;vector-effect:non-scaling-stroke}
 .s-wall{fill:var(--plan-line);opacity:.78}
+.s-cad{fill:none;stroke:var(--ink);stroke-width:.6px;opacity:.75;vector-effect:non-scaling-stroke;stroke-linejoin:round}
 .s-room{fill:none;stroke:var(--ink3);stroke-width:.7px;stroke-dasharray:4 3;vector-effect:non-scaling-stroke}
 .s-rt{font-family:var(--font-m);fill:var(--ink3);text-anchor:middle;dominant-baseline:central;pointer-events:none}
 
@@ -329,6 +330,7 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
     <section class="sec">
       <h2>Drawing</h2>
       <label class="sw"><input type="checkbox" data-layer="grid" checked><span class="tg"></span>Column grid &amp; dimensions</label>
+      <label class="sw" id="cadRow" hidden title="The plan's 2D linework (linked or imported CAD and detail lines), to draw spaces over; polygon corners snap to it"><input type="checkbox" id="cadT" checked><span class="tg"></span>CAD linework from the plan</label>
       <label class="sw" id="keepRow" hidden><input type="checkbox" id="keepT" checked><span class="tg"></span>Keep existing partitions</label>
       <label class="sw"><input type="checkbox" id="snapT" checked><span class="tg"></span>Snap to 150 mm</label>
       <label class="sw"><input type="checkbox" data-layer="underlay" checked><span class="tg"></span>Show plan underlay</label>
@@ -1204,7 +1206,7 @@ function drawOverlay(px){
 }
 function toast(t){const el=$('#toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>{el.hidden=true;},3200);}
 
-let SITE_SVG=null,SITE_TOP='';
+let SITE_SVG=null,SITE_TOP='',SHOW_CAD=true,CADPTS=null;
 function siteSVG(){
   if(SITE_SVG)return SITE_SVG;
   const P=pts=>'M'+pts.map(p=>f3(p[0])+' '+f3(p[1])).join('L')+'Z';
@@ -1222,6 +1224,11 @@ function siteSVG(){
     if(!r.name)continue;
     let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;for(const p of r.pts){x0=Math.min(x0,p[0]);y0=Math.min(y0,p[1]);x1=Math.max(x1,p[0]);y1=Math.max(y1,p[1]);}
     s+=`<text class="s-rt" x="${f3((x0+x1)/2)}" y="${f3((y0+y1)/2)}" font-size="${f3(Math.max(.18,Math.min(.32,(x1-x0)/12)))}">${esc(r.name)}</text>`;
+  }
+  // the plan's CAD linework on top, to trace spaces over
+  if(SHOW_CAD&&SITE.cad&&SITE.cad.length){
+    let d='';for(const l of SITE.cad){for(let i=0;i<l.length;i+=2)d+=(i?'L':'M')+f3(l[i])+' '+f3(l[i+1]);}
+    s+=`<path class="s-cad passive" d="${d}"/>`;
   }
   SITE_TOP=s;return SITE_SVG;
 }
@@ -1438,6 +1445,13 @@ function drawPoint(p,e){
   // snap onto corners of other spaces and of the drawing itself
   const tol=8/scale();
   for(const q of S.zones)for(const c of zPts(q))if(Math.hypot(c[0]-x,c[1]-y)<tol){x=c[0];y=c[1];}
+  // and onto the ends and corners of the CAD linework
+  if(SHOW_CAD&&SITE&&SITE.cad){
+    if(!CADPTS){CADPTS=[];for(const l of SITE.cad)for(let i=0;i<l.length;i+=2)CADPTS.push(l[i],l[i+1]);}
+    let best=tol,bx=x,by=y;
+    for(let i=0;i<CADPTS.length;i+=2){const d=Math.abs(CADPTS[i]-p.x)+Math.abs(CADPTS[i+1]-p.y);if(d<best){best=d;bx=CADPTS[i];by=CADPTS[i+1];}}
+    x=bx;y=by;
+  }
   return[x,y];
 }
 function closeDraw(){
@@ -1893,6 +1907,7 @@ if(SITE){
   for(const id of['fW','fD','fG'])$('#'+id).disabled=true;
   $('#resetBtn').textContent='Reset';
   $('#keepRow').hidden=false;
+  if(SITE.cad&&SITE.cad.length){$('#cadRow').hidden=false;$('#cadT').addEventListener('change',e=>{SHOW_CAD=e.target.checked;SITE_SVG=null;siteSVG();render2D();});}
   const host=window.chrome&&window.chrome.webview;
   if(host){
     const sb=$('#sendBtn');sb.hidden=false;$('#sheetRow').hidden=false;
