@@ -111,6 +111,11 @@ internal static class FurnitureFamilies
                 yield return B(-hw + 200, -hd + 150, -hw + 260, hd - 150, 0, 1010);
                 yield return B(hw - 260, -hd + 150, hw - 200, hd - 150, 0, 1010);
                 break;
+            case "monitor": // stands on the desk top (740 mm)
+                yield return B(-100, -40, 100, 80, 740, 755);
+                yield return B(-20, 40, 20, 70, 755, 900);
+                yield return B(-hw, 70, hw, 95, 900, 1230);
+                break;
             case "plant":
                 yield return B(-hw * 0.7, -hd * 0.7, hw * 0.7, hd * 0.7, 0, 450, true);   // pot
                 yield return B(-hw, -hd, hw, hd, 450, 1500, true);                      // foliage

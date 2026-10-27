@@ -25,25 +25,28 @@ internal sealed class TestFitWindow : Window
     string? _sent;
     TestFitSite _site;
     readonly Func<string, TestFitSite?> _load;
+    readonly Func<string, string>? _measure;
     readonly Dictionary<string, string> _states = new();
 
     /// <summary>
     /// Shows the page on a floor; the page's floor list browses to others (read with <paramref name="load"/>, by
     /// level id). Returns the layout sent and the floor it was sent from, or null if closed without sending.
     /// </summary>
-    public static (string Layout, TestFitSite Site)? Open(TestFitSite site, Func<string, TestFitSite?> load, IntPtr revit)
+    /// <remarks><paramref name="measure"/> gives the types and sizes of a family picked on the Assets tab (by its id there), as JSON.</remarks>
+    public static (string Layout, TestFitSite Site)? Open(TestFitSite site, Func<string, TestFitSite?> load, Func<string, string>? measure, IntPtr revit)
     {
         LoadWebView2();
-        var window = new TestFitWindow(site, load);
+        var window = new TestFitWindow(site, load, measure);
         new WindowInteropHelper(window).Owner = revit;
         window.ShowDialog();
         return window._sent == null ? null : (window._sent, window._site);
     }
 
-    TestFitWindow(TestFitSite site, Func<string, TestFitSite?> load)
+    TestFitWindow(TestFitSite site, Func<string, TestFitSite?> load, Func<string, string>? measure)
     {
         _site = site;
         _load = load;
+        _measure = measure;
         _folder = WritePage(site);
         Title = "Office Test-Fit · " + site.Title;
         Width = Math.Min(1600, SystemParameters.WorkArea.Width - 40);
@@ -67,6 +70,7 @@ internal sealed class TestFitWindow : Window
                 try { message = e.TryGetWebMessageAsString(); }
                 catch (ArgumentException) { return; }
                 if (FloorRequest(message) is { } go) { Browse(go.Id, go.State); return; }
+                if (AssetRequest(message) is { } asset) { Measure(asset.Slot, asset.Id); return; }
                 _sent = message;
                 Close();
             };
@@ -92,6 +96,27 @@ internal sealed class TestFitWindow : Window
             return (root.GetProperty("id").GetString() ?? "", state);
         }
         catch { return null; }
+    }
+
+    /// <summary>{"kind":"asset","slot":"work:desk","id":"…"}: the Assets tab picked a family and wants its sizes.</summary>
+    static (string Slot, string Id)? AssetRequest(string message)
+    {
+        try
+        {
+            using var json = System.Text.Json.JsonDocument.Parse(message);
+            var root = json.RootElement;
+            if (!root.TryGetProperty("kind", out var k) || k.GetString() != "asset") return null;
+            return (root.GetProperty("slot").GetString() ?? "", root.GetProperty("id").GetString() ?? "");
+        }
+        catch { return null; }
+    }
+
+    void Measure(string slot, string id)
+    {
+        string result;
+        try { result = _measure?.Invoke(id) ?? "{\"error\":\"Not available.\"}"; }
+        catch (Exception ex) { result = System.Text.Json.JsonSerializer.Serialize(new { error = ex.Message }); }
+        _web.CoreWebView2.ExecuteScriptAsync($"window.testfitAsset&&window.testfitAsset({System.Text.Json.JsonSerializer.Serialize(slot)},{System.Text.Json.JsonSerializer.Serialize(id)},{result})");
     }
 
     void Browse(string levelId, string? state)

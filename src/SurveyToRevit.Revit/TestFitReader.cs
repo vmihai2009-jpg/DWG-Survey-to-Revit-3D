@@ -57,14 +57,18 @@ internal static class TestFitReader
             var enclosed = Enclosed(doc, level, view, notes);
             double slabArea = slabs.Sum(f => Math.Abs(Area(f[0]))), roomArea = rooms.Sum(r => Math.Abs(Area(r.Loops[0])));
             double wallArea = enclosed.Sum(f => Math.Abs(Area(f[0])));
-            // rooms or walled spaces win over slabs when they cover most of the floor (a slab is often drawn
-            // to the outside face of the façade, or is an old one; rooms and walls are what people fit out)
+            // the inside of the walls wins: it is what the plan shows and what people fit out (a slab is often drawn
+            // to the outside face of the façade); existing rooms only when the walls do not close
             bool Covers(double a) => a > 5e6 && (slabArea == 0 || a > 0.45 * slabArea);
-            if (Covers(roomArea + wallArea))
+            if (Covers(wallArea))
+            {
+                faces.AddRange(enclosed);
+                source = "the inside of its walls";
+            }
+            else if (Covers(roomArea))
             {
                 faces.AddRange(rooms.Select(r => r.Loops));
-                faces.AddRange(enclosed);
-                source = roomArea >= wallArea ? "the rooms on this floor" : "the spaces inside its walls";
+                source = "the rooms on this floor";
             }
             else if (slabs.Count > 0) { faces.AddRange(slabs); source = "the floor slabs"; }
             else { source = "the box round its walls"; }
@@ -72,7 +76,9 @@ internal static class TestFitReader
 
         // ---- existing walls at the cut plane, then columns and other solid things ----
         var walls = new List<SiteWall>();
+        var poche = new List<SitePoche>();
         var columns = new List<(Vec2, Vec2)>();
+        int cutWalls = 0;
         int linkedWalls = 0;
         foreach (var src in sources)
         {
@@ -82,9 +88,12 @@ internal static class TestFitReader
             foreach (var wall in Of(wallCollector.OfClass(typeof(Wall))).Cast<Wall>())
             {
                 if (Demolished(wall) || Context(src.Doc, wall) || wall.Location is not LocationCurve { Curve: { } curve }) continue;
+                if (!src.Host) linkedWalls++;
+                // as the plan draws it: the wall cut at the cut plane (openings, joins and all); else its centre line
+                var loops = Section(wall, src.Place, cut);
+                if (loops.Count > 0) { poche.Add(new SitePoche(Mm(wall.Width), loops)); cutWalls++; continue; }
                 var pts = curve.Tessellate().Select(p => P(src.Place.OfPoint(p))).ToList();
                 for (var i = 0; i + 1 < pts.Count; i++) walls.Add(new SiteWall(pts[i], pts[i + 1], Mm(wall.Width)));
-                if (!src.Host) linkedWalls++;
             }
             var solidCollector = src.Host && view != null ? new FilteredElementCollector(doc, view.Id) : new FilteredElementCollector(src.Doc);
             foreach (var e in Of(solidCollector.WherePasses(new ElementMulticategoryFilter(Solid))))
@@ -94,15 +103,18 @@ internal static class TestFitReader
                 if (box.Max.Z - box.Min.Z > Ft(8000) && e.Category?.Id.Value is not ((long)BuiltInCategory.OST_Columns or (long)BuiltInCategory.OST_StructuralColumns)) continue;
                 var (a, b) = PlanBox(src.Place, box);
                 if (b.X - a.X > 15000 || b.Y - a.Y > 15000) continue;
-                columns.Add((a, b));
+                var loops = Section(e, src.Place, cut);
+                if (loops.Count > 0) poche.Add(new SitePoche(0, loops));
+                else columns.Add((a, b));
             }
         }
         if (linkedWalls > 0) notes.Add($"{linkedWalls} walls from linked models");
+        if (cutWalls > 0) notes.Add($"{cutWalls} walls cut at {Mm(cut - z0):0} mm as the plan draws them");
 
-        if (faces.Count == 0 && walls.Count > 0)
+        var wallPts = walls.SelectMany(w => new[] { w.A, w.B }).Concat(poche.Where(p => p.ThicknessMm > 0).SelectMany(p => p.Loops.SelectMany(l => l))).ToList();
+        if (faces.Count == 0 && wallPts.Count > 0)
         {
-            double x0 = walls.Min(w => Math.Min(w.A.X, w.B.X)), x1 = walls.Max(w => Math.Max(w.A.X, w.B.X));
-            double y0 = walls.Min(w => Math.Min(w.A.Y, w.B.Y)), y1 = walls.Max(w => Math.Max(w.A.Y, w.B.Y));
+            double x0 = wallPts.Min(p => p.X), x1 = wallPts.Max(p => p.X), y0 = wallPts.Min(p => p.Y), y1 = wallPts.Max(p => p.Y);
             faces.Add([new Vec2[] { new(x0, y0), new(x1, y0), new(x1, y1), new(x0, y1) }]);
         }
 
@@ -123,6 +135,7 @@ internal static class TestFitReader
         double fx0 = all.Min(p => p.X) - 600, fx1 = all.Max(p => p.X) + 600, fy0 = all.Min(p => p.Y) - 600, fy1 = all.Max(p => p.Y) + 600;
         bool Over(Vec2 p) => p.X >= fx0 && p.X <= fx1 && p.Y >= fy0 && p.Y <= fy1;
         site.Walls.AddRange(walls.Where(w => Over(w.A) || Over(w.B)));
+        site.Poche.AddRange(poche.Where(p => p.Loops.Any(l => l.Any(Over))));
         site.Columns.AddRange(columns.Where(c => c.Item2.X >= fx0 && c.Item1.X <= fx1 && c.Item2.Y >= fy0 && c.Item1.Y <= fy1));
         return site;
     }
@@ -146,6 +159,51 @@ internal static class TestFitReader
     }
 
     static Vec2 P(XYZ p) => new(Mm(p.X), Mm(p.Y));
+
+    /// <summary>
+    /// An element's section where the plan cuts it, as the plan's poché shows it: its solids cut by the cut plane,
+    /// the loops of the cut face, in host plan millimetres. Empty if it has no solid there.
+    /// </summary>
+    static List<IReadOnlyList<Vec2>> Section(Element e, Transform place, double zHost)
+    {
+        var loops = new List<IReadOnlyList<Vec2>>();
+        try
+        {
+            var z = place.Inverse.OfPoint(new XYZ(0, 0, zHost)).Z;
+            var plane = Plane.CreateByNormalAndOrigin(XYZ.BasisZ, new XYZ(0, 0, z));
+            foreach (var solid in Solids(e.get_Geometry(new Options { DetailLevel = ViewDetailLevel.Fine })))
+            {
+                var bb = solid.GetBoundingBox();
+                var tf = bb.Transform;
+                double lo = tf.OfPoint(bb.Min).Z, hi = tf.OfPoint(bb.Max).Z;
+                if (z <= Math.Min(lo, hi) + 1e-4 || z >= Math.Max(lo, hi) - 1e-4) continue;
+                Solid above;
+                try { above = BooleanOperationsUtils.CutWithHalfSpace(solid, plane); } catch { continue; }
+                if (above == null) continue;
+                foreach (Face f in above.Faces)
+                {
+                    if (f is not PlanarFace pf || pf.FaceNormal.Z > -0.999 || Math.Abs(pf.Origin.Z - z) > 1e-3) continue;
+                    foreach (var cl in pf.GetEdgesAsCurveLoops())
+                    {
+                        var l = Loop(cl, place);
+                        if (l.Count >= 3 && Math.Abs(Area(l)) > 100) loops.Add(l); // over 1 cm²
+                    }
+                }
+            }
+        }
+        catch { /* geometry Revit cannot cut: the caller falls back */ }
+        return loops;
+    }
+
+    static IEnumerable<Solid> Solids(GeometryElement? g)
+    {
+        if (g == null) yield break;
+        foreach (var o in g)
+        {
+            if (o is Solid { Volume: > 1e-9 } s) yield return s;
+            else if (o is GeometryInstance gi) foreach (var t in Solids(gi.GetInstanceGeometry())) yield return t;
+        }
+    }
 
     /// <summary>The height the plan cuts at (its view range), kept between 0.3 m and 2.5 m above the floor.</summary>
     static double CutHeight(Document doc, ViewPlan? view, double z0)
@@ -237,7 +295,15 @@ internal static class TestFitReader
                 var p = type.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING);
                 if (p is { IsReadOnly: false } && p.AsInteger() == 0) { try { p.Set(1); links++; } catch { } }
             }
-            if (links > 0) doc.Regenerate();
+            // the whole inside of the walls: rooms already placed and room separation lines would leave parts of
+            // the floor out (they are put back when the transaction is undone)
+            var clear = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_Rooms).WhereElementIsNotElementType()
+                .OfType<Room>().Where(r => r.LevelId == level.Id).Select(r => r.Id)
+                .Concat(new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_RoomSeparationLines).WhereElementIsNotElementType()
+                    .OfType<CurveElement>().Where(c => c.LevelId == level.Id || c.SketchPlane?.GetPlane() is { } pl && Math.Abs(pl.Origin.Z - level.Elevation) < Ft(50)).Select(c => c.Id))
+                .ToList();
+            foreach (var id in clear) { try { doc.Delete(id); } catch { /* pinned or owned by someone else: left in */ } }
+            if (links > 0 || clear.Count > 0) doc.Regenerate();
             var phase = doc.GetElement(view?.get_Parameter(BuiltInParameter.VIEW_PHASE)?.AsElementId() ?? ElementId.InvalidElementId) as Phase;
             var made = phase != null ? doc.Create.NewRooms2(level, phase) : doc.Create.NewRooms2(level);
             doc.Regenerate();

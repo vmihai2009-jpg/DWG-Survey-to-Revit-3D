@@ -70,6 +70,13 @@ button,input,select{font:inherit;color:inherit}
 .seg button:hover{color:var(--ink);background:var(--rule2)}
 .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 .seg-wrap{flex-wrap:wrap}.seg-wrap button{flex:1 1 40%}
+.ltabs{position:sticky;top:0;z-index:2;background:var(--panel);padding:10px 16px;border-bottom:1px solid var(--rule2)}
+.left.on-assets>.sec:not(#assets),.left:not(.on-assets)>#assets{display:none}
+.asset{padding:10px 0;border-bottom:1px solid var(--rule2)}.asset:last-child{border-bottom:0}
+.asset .an{display:flex;justify-content:space-between;gap:8px;font-weight:600;font-size:13px;margin-bottom:6px}
+.asset .ad{font-weight:400;color:var(--ink2);font-size:12px;font-variant-numeric:tabular-nums}
+.asset select{width:100%;margin-top:4px;font:inherit;font-size:12.5px;padding:5px 6px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--ink)}
+.sendopt{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink2)}
 .btn{border:1px solid var(--rule);background:var(--panel);border-radius:7px;padding:6px 10px;cursor:pointer;font-size:12.5px}
 .btn:hover{border-color:var(--ink3)}
 .btn.danger{color:var(--bad)}
@@ -178,6 +185,7 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
 .spare{fill:none;stroke:var(--spare);stroke-width:1px;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
 .wl-s{stroke:var(--plan-line);stroke-width:.13;stroke-linecap:square}
 .wl-g{stroke:var(--glass);stroke-width:.09;opacity:.28}
+.wl-d{stroke-dasharray:.25 .12;stroke-linecap:butt}
 .wl-gc{stroke:var(--glass);stroke-width:1.5px;vector-effect:non-scaling-stroke}
 .door{fill:none;stroke:var(--ink2);stroke-width:.8px;vector-effect:non-scaling-stroke}
 .col{fill:var(--plan-line)}
@@ -289,11 +297,14 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
         <button type="button" data-m="3d" aria-pressed="false">3D</button>
       </div>
       <button type="button" class="btn" id="resetBtn">Reset sample</button>
+      <label class="sendopt" id="sheetRow" hidden title="Also make a sheet with the zoning plan, a 3D view and the area schedule"><input type="checkbox" id="sheetT" checked>Study sheet</label>
       <button type="button" class="btn primary" id="sendBtn" hidden>Send to Revit</button>
     </div>
   </header>
 
   <aside class="panel left" id="left">
+    <div class="ltabs"><div class="seg" id="lTabs" role="group" aria-label="Panel"><button type="button" data-t="layout" aria-pressed="true">Layout</button><button type="button" data-t="assets" aria-pressed="false">Assets</button></div></div>
+    <section class="sec" id="assets" aria-live="polite"></section>
     <section class="sec" id="insp" aria-live="polite"></section>
 
     <section class="sec">
@@ -331,6 +342,7 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
         <button type="button" class="btn" data-add="meeting"><i style="background:var(--z-meet-s)"></i>Meeting room</button>
         <button type="button" class="btn" data-add="focus"><i style="background:var(--z-focus-s)"></i>Focus room</button>
         <button type="button" class="btn" data-add="reception"><i style="background:var(--z-rec-s)"></i>Reception</button>
+        <button type="button" class="btn" data-add="core" title="Cores, plant, risers and other areas left out of the NIA"><i style="background:var(--z-core-s)"></i>Core / not NIA</button>
       </div>
       <label class="sw" style="margin-top:10px"><input type="checkbox" id="polyT"><span class="tg"></span>Draw as a polygon</label>
       <p class="note" id="polyNote" hidden>Click the plan to place corners. Click the first corner, double-click or press Enter to close. Backspace removes the last corner, Esc cancels, Shift keeps lines square.</p>
@@ -405,7 +417,7 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
           <g id="gX"></g>
           <g id="gD" class="passive"></g>
         </svg>
-        <div class="legend"><span><i class="lg-solid"></i>Solid</span><span><i class="lg-glazed"></i>Glazed</span><span><i class="lg-open"></i>Open plan</span><span><i class="lg-pinch"></i>Route under 1200</span></div>
+        <div class="legend"><span><i class="lg-solid"></i>Solid</span><span><i class="lg-glazed"></i>Glazed</span><span><i class="lg-solid" style="background:repeating-linear-gradient(90deg,var(--ink) 0 5px,transparent 5px 8px)"></i>Divider</span><span><i class="lg-open"></i>Open plan</span><span><i class="lg-pinch"></i>Route under 1200</span></div>
         <div class="tblock">TF-03-001 · Rev P01<br>Test-fit, not for construction</div>
         <div class="dropcue" id="dropCue" hidden>Drop floor plan image</div>
         <div class="toast" id="toast" hidden></div>
@@ -486,19 +498,32 @@ const SITE=window.TESTFIT_SITE||null;
 let KEEP_PARTS=true,MK=SITE?buildMask(SITE):null;
 function buildMask(s){
   const res=0.05,nx=Math.ceil(s.w/res)+1,ny=Math.ceil(s.d/res)+1,inside=new Uint8Array(nx*ny),block=new Uint8Array(nx*ny);
-  for(const face of s.faces){
-    for(let j=0;j<ny;j++){
+  // fills loops (even-odd: outer loop and its holes) into arr, cell centres on a 50 mm grid
+  const fill=(loops,arr)=>{
+    let y0=1e9,y1=-1e9;for(const l of loops)for(const p of l){y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1]);}
+    for(let j=Math.max(0,Math.floor(y0/res)-1);j<=Math.min(ny-1,Math.ceil(y1/res));j++){
       const y=(j+.5)*res,xs=[];
-      for(const loop of face)for(let k=0;k<loop.length;k++){
+      for(const loop of loops)for(let k=0;k<loop.length;k++){
         const a=loop[k],b=loop[(k+1)%loop.length];
         if((a[1]<=y)!==(b[1]<=y))xs.push(a[0]+(y-a[1])*(b[0]-a[0])/(b[1]-a[1]));
       }
       xs.sort((p,q)=>p-q);
       for(let k=0;k+1<xs.length;k+=2){
         const i0=Math.max(0,Math.ceil(xs[k]/res-.5)),i1=Math.min(nx-1,Math.floor(xs[k+1]/res-.5));
-        for(let i=i0;i<=i1;i++)inside[j*nx+i]=1;
+        for(let i=i0;i<=i1;i++)arr[j*nx+i]=1;
       }
     }
+  };
+  for(const face of s.faces)fill(face,inside);
+  // walls and columns as the plan cuts them; partitions stripped out become floor (rooms stop at their faces)
+  for(const p of s.poche||[]){
+    const strip=!KEEP_PARTS&&p.t<=.155;
+    fill(p.loops,strip?inside:block);
+  }
+  if(!KEEP_PARTS)for(const p of s.poche||[])if(p.t<=.155){ // a cell row either side, so the floor closes over the strip
+    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;for(const l of p.loops)for(const q of l){x0=Math.min(x0,q[0]);y0=Math.min(y0,q[1]);x1=Math.max(x1,q[0]);y1=Math.max(y1,q[1]);}
+    for(let j=Math.max(0,Math.floor(y0/res)-1);j<=Math.min(ny-1,Math.ceil(y1/res)+1);j++)for(let i=Math.max(0,Math.floor(x0/res)-1);i<=Math.min(nx-1,Math.ceil(x1/res)+1);i++){
+      const x=(i+.5)*res,y=(j+.5)*res;if(p.loops.some(l=>distToLoop(l,x,y)<.08))inside[j*nx+i]=1;}
   }
   const mark=(x0,y0,x1,y1,test,arr)=>{arr=arr||block;
     const i0=Math.max(0,Math.floor(x0/res)),i1=Math.min(nx-1,Math.ceil(x1/res)),j0=Math.max(0,Math.floor(y0/res)),j1=Math.min(ny-1,Math.ceil(y1/res));
@@ -520,6 +545,8 @@ function buildMask(s){
   for(let k=0;k<inside.length;k++){area+=inside[k];usable[k]=inside[k]&&!block[k]?1:0;net+=usable[k];}
   return{res,nx,ny,inside,usable,out:sat(k=>1-inside[k]),blk:sat(k=>block[k]),area:area*res*res,net:net*res*res};
 }
+function distToLoop(l,x,y){let m=1e9;for(let i=0;i<l.length;i++){const a=l[i],b=l[(i+1)%l.length],dx=b[0]-a[0],dy=b[1]-a[1],L2=dx*dx+dy*dy||1e-9,
+  u=Math.max(0,Math.min(1,((x-a[0])*dx+(y-a[1])*dy)/L2));m=Math.min(m,Math.hypot(x-a[0]-u*dx,y-a[1]-u*dy));}return m;}
 // Cells in a rectangle: outside the floor (anything beyond the mask counts) or blocked by walls/columns.
 function cnt(S2,x0,y0,x1,y1,edgeOut){
   const {res,nx,ny}=MK;
@@ -665,7 +692,7 @@ function deskSlots(z,obst,cols,opt){
   const x0=z.x+(b.W?R.facade:0),x1=z.x+z.w-(b.E?R.facade:0),y0=z.y+(b.N?R.facade:0),y1=z.y+z.d-(b.S?R.facade:0);
   const along=(opt.dir||z.dir)==='x';
   const u0=along?x0:y0,u1=along?x1:y1,v0=along?y0:x0,v1=along?y1:x1;
-  const dw=B.w,dd=R.deskD,ch=R.chair,bankD=2*dd;
+  const ad=assetDims('work','desk'),dw=ad?ad.w:B.w,dd=ad?ad.d:R.deskD,ch=R.chair,bankD=2*dd;
   let nb=0; while(2*ch+(nb+1)*bankD+nb*B.aisle<=v1-v0+EPS) nb++;
   if(!nb) return [];
   const usedV=2*ch+nb*bankD+(nb-1)*B.aisle, offV=v0+(v1-v0-usedV)*av+ch;
@@ -804,15 +831,22 @@ function edgesOf(z){
   return out;
 }
 // How much of side e another space o runs along (back to back on the same line).
-function sharedLen(e,o){
-  const ux=(e.x2-e.x1)/e.len,uy=(e.y2-e.y1)/e.len;let sh=0;
+function sharedSpans(e,o){
+  const ux=(e.x2-e.x1)/e.len,uy=(e.y2-e.y1)/e.len,out=[];
   for(const f of edgesOf(o)){
     const fx=(f.x2-f.x1)/f.len,fy=(f.y2-f.y1)/f.len;if(Math.abs(ux*fy-uy*fx)>1e-3)continue;
     if(Math.abs((f.x1-e.x1)*uy-(f.y1-e.y1)*ux)>.02)continue;
-    const a=(f.x1-e.x1)*ux+(f.y1-e.y1)*uy,b=(f.x2-e.x1)*ux+(f.y2-e.y1)*uy;
-    sh+=ov(0,e.len,Math.min(a,b),Math.max(a,b));
+    const a=(f.x1-e.x1)*ux+(f.y1-e.y1)*uy,b=(f.x2-e.x1)*ux+(f.y2-e.y1)*uy,lo=Math.max(0,Math.min(a,b)),hi=Math.min(e.len,Math.max(a,b));
+    if(hi-lo>.01)out.push([lo,hi]);
   }
-  return sh;
+  return out;
+}
+const sharedLen=(e,o)=>sharedSpans(e,o).reduce((s,[a,b])=>s+b-a,0);
+// The pieces of [a,b] runs left once the spans are taken out.
+function minus(runs,spans){
+  let out=runs;
+  for(const[s0,s1]of spans){const nx=[];for(const[a,b]of out){if(s1<=a||s0>=b){nx.push([a,b]);continue;}if(s0>a)nx.push([a,s0]);if(s1<b)nx.push([s1,b]);}out=nx;}
+  return out.filter(([a,b])=>b-a>.05);
 }
 
 /* ---------- area raster ---------- */
@@ -888,7 +922,8 @@ function compute(){
   if(SITE){gx.length=0;gy.length=0;cols.length=0;for(const c of SITE.cols)cols.push({x:c.x,y:c.y,w:c.w,h:c.h});}
   const colObs=cols.map(c=>grow(c,.1));
   const A=areaRaster();
-  const coreA=cores.reduce((s,z)=>s+A.by[z.id],0),colA=SITE?0:cols.length*R.col*R.col;
+  // cores and spaces marked "not in NIA" (plant, risers, landlord areas) come off the net internal area
+  const coreA=zs.filter(z=>z.type==='core'||z.nonia).reduce((s,z)=>s+A.by[z.id],0),colA=SITE?0:cols.length*R.col*R.col;
   const gross=MK?MK.area:F.w*F.d,NIA=Math.max(0,(MK?MK.net:gross)-coreA-colA);
   const target=Math.floor(NIA/S.density);
 
@@ -900,7 +935,7 @@ function compute(){
   slotsBy.map((a,i)=>({i,f:cap?want*a.length/cap-take[i]:0})).sort((p,q)=>q.f-p.f).forEach(o=>{if(left>0&&take[o.i]<slotsBy[o.i].length){take[o.i]++;left--;}});
   const items=[],spare=[];let placed=0;
   slotsBy.forEach((a,i)=>a.forEach((s,k)=>{
-    if(k<take[i]){items.push(Object.assign({},s.desk,{cat:'desks'}),Object.assign({},s.chair,{cat:'desks'}));placed++;}
+    if(k<take[i]){const g='ws'+placed;items.push(Object.assign({},s.desk,{cat:'desks',g}),Object.assign({},s.chair,{cat:'desks',g}));placed++;}
     else spare.push(s.desk);
   }));
   for(const z of zs){
@@ -908,11 +943,16 @@ function compute(){
     else if(z.type==='reception')items.push(...recLayout(z,core).filter(it=>fitsIn(z,it)));
     else if(z.type==='meeting'||z.type==='focus')items.push(...roomLayout(z).filter(it=>fitsIn(z,it)));
   }
+  // the families linked on the Assets tab bring their own sizes
+  const zt={};for(const z of zs)zt[z.id]=z.type;
+  for(const it of items){const a=assetDims(zt[it.zid],it.k);if(a&&it.k!=='desk'){it.w=a.w;it.d=a.d;}}
 
   // walls + doors
   const walls=[],doors=[],partLen={glazed:0,solid:0};
   const solidish=zs.filter(o=>enclosed(o)||o.type==='core');
-  for(const z of zs.filter(enclosed)){
+  const encl=zs.filter(enclosed);
+  for(const z of encl){
+    const before=encl.slice(0,encl.indexOf(z));
     const eds=edgesOf(z).filter(e=>!e.fl).map(e=>{
       e.sh=0;e.core=0;
       for(const o of solidish){if(o===z)continue;const l=sharedLen(e,o);if(o.type==='core')e.core+=l;else e.sh+=l;}
@@ -922,28 +962,28 @@ function compute(){
     let de=null,best=1e9;
     for(const e of cand){const d=Math.hypot((e.x1+e.x2)/2-cc.x,(e.y1+e.y2)/2-cc.y);if(d<best){best=d;de=e;}}
     for(const e of eds){
-      partLen[z.part]+=Math.max(0,e.len-e.core);
       const dx=(e.x2-e.x1)/e.len,dy=(e.y2-e.y1)/e.len;
+      let runs=[[0,e.len]];
       if(e===de){
         const proj=(cc.x-e.x1)*dx+(cc.y-e.y1)*dy,W=R.doorW;
         const p=Math.min(Math.max(proj-W/2,0.15),e.len-W-0.15);
-        walls.push({x1:e.x1,y1:e.y1,x2:e.x1+dx*p,y2:e.y1+dy*p,part:z.part,zid:z.id},{x1:e.x1+dx*(p+W),y1:e.y1+dy*(p+W),x2:e.x2,y2:e.y2,part:z.part,zid:z.id});
+        runs=[[0,p],[p+W,e.len]];
         doors.push({hx:e.x1+dx*p,hy:e.y1+dy*p,dx,dy,nx:e.nx,ny:e.ny,w:W,part:z.part,zid:z.id});
-      } else walls.push({x1:e.x1,y1:e.y1,x2:e.x2,y2:e.y2,part:z.part,zid:z.id});
+      }
+      // a side shared with a room already walled is built once; with its other half (a split room) it is the divider
+      for(const o of before){
+        const sp=sharedSpans(e,o);if(!sp.length)continue;
+        if(z.pair&&o.pair===z.pair)for(const[a,b]of sp)walls.push({x1:e.x1+dx*a,y1:e.y1+dy*a,x2:e.x1+dx*b,y2:e.y1+dy*b,part:'divider',zid:z.id});
+        runs=minus(runs,sp);
+      }
+      // its other half, still to come, builds the divider
+      for(const o of encl.slice(encl.indexOf(z)+1))if(z.pair&&o.pair===z.pair)runs=minus(runs,sharedSpans(e,o));
+      for(const[a,b]of runs)walls.push({x1:e.x1+dx*a,y1:e.y1+dy*a,x2:e.x1+dx*b,y2:e.y1+dy*b,part:z.part,zid:z.id});
     }
   }
-  if(MK){
-    clipToSite(walls,doors);
-    partLen.glazed=0;partLen.solid=0;
-    for(const w of walls)partLen[w.part]+=Math.hypot(w.x2-w.x1,w.y2-w.y1);
-    for(const d of doors)partLen[d.part]+=d.w;
-  }
-  const enc=zs.filter(enclosed);
-  for(let i=0;i<enc.length;i++)for(let j=i+1;j<enc.length;j++){
-    const a=enc[i],b=enc[j];let sh=0;
-    for(const e of edgesOf(a))sh+=sharedLen(e,b);
-    partLen[b.part]-=sh;
-  }
+  if(MK)clipToSite(walls,doors);
+  for(const w of walls)partLen[w.part==='divider'?'solid':w.part]+=Math.hypot(w.x2-w.x1,w.y2-w.y1);
+  for(const d of doors)partLen[d.part]+=d.w;
 
   // corridor pinches & overlaps
   const pinches=[],overlaps=[];
@@ -971,7 +1011,7 @@ function compute(){
   const desksShown=Ly.desks?placed:0;
 
   const typeArea={work:0,soft:0,meeting:0,focus:0,reception:0};
-  for(const z of zs)if(z.type!=='core')typeArea[z.type]+=A.by[z.id];
+  for(const z of zs)if(z.type!=='core'&&!z.nonia)typeArea[z.type]+=A.by[z.id];
   const allocated=Object.values(typeArea).reduce((s,v)=>s+v,0);
   const circ=Math.max(0,NIA-allocated);
 
@@ -1085,7 +1125,7 @@ function render2D(){
   for(const w of M.walls){
     if(Math.hypot(w.x2-w.x1,w.y2-w.y1)<.01)continue;
     const a=`x1="${f3(w.x1)}" y1="${f3(w.y1)}" x2="${f3(w.x2)}" y2="${f3(w.y2)}"`;
-    wh+=w.part==='solid'?`<line class="wl-s" ${a}/>`:`<line class="wl-g" ${a}/><line class="wl-gc" ${a}/>`;
+    wh+=w.part==='solid'?`<line class="wl-s" ${a}/>`:w.part==='divider'?`<line class="wl-s wl-d" ${a}/>`:`<line class="wl-g" ${a}/><line class="wl-gc" ${a}/>`;
   }
   for(const d of M.doors){
     const lx=d.hx+d.nx*d.w,ly=d.hy+d.ny*d.w,ex=d.hx+d.dx*d.w,ey=d.hy+d.dy*d.w,cr=d.nx*d.dy-d.ny*d.dx;
@@ -1177,6 +1217,7 @@ function siteSVG(){
     const nx=-(w.y2-w.y1)/L*w.t/2,ny=(w.x2-w.x1)/L*w.t/2;
     s+=`<path class="s-wall passive" d="${P([[w.x1+nx,w.y1+ny],[w.x2+nx,w.y2+ny],[w.x2-nx,w.y2-ny],[w.x1-nx,w.y1-ny]])}"/>`;
   }
+  for(const p of SITE.poche||[]){if(!KEEP_PARTS&&p.t<=.155)continue;s+=`<path class="s-wall passive" fill-rule="evenodd" d="${p.loops.map(P).join(' ')}"/>`;}
   for(const r of SITE.rooms){
     if(!r.name)continue;
     let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;for(const p of r.pts){x0=Math.min(x0,p[0]);y0=Math.min(y0,p[1]);x1=Math.max(x1,p[0]);y1=Math.max(y1,p[1]);}
@@ -1217,7 +1258,7 @@ function renderDash(){
   $('#seats').innerHTML=[['Desks',st.desks],['Meeting',st.meeting],['Focus',st.focus],['Soft',st.soft],['Reception',st.reception]].map(([l,v])=>`<div><b>${v}</b><span>${l}</span></div>`).join('');
   $('#parts').innerHTML=`<div><b>${m.partLen.glazed.toFixed(1)}</b><span>Glazed, m</span></div><div><b>${m.partLen.solid.toFixed(1)}</b><span>Solid, m</span></div><div><b>${m.doors.length}</b><span>Doors</span></div>`;
   $('#sched').innerHTML=`<thead><tr><th>Space</th><th>Enclosure</th><th class="n">m²</th><th class="n">Seats</th></tr></thead><tbody>`+
-    S.zones.map(z=>{const t=TYPES[z.type];return`<tr data-id="${z.id}" class="${z.id===S.sel?'on':''}"><td><span class="nm"><span class="swatch" style="background:var(--z-${t.c}-s)"></span>${esc(z.name)}</span></td><td>${z.type==='core'?'Core':cap1(z.part)}</td><td class="n">${m2(m.areaBy[z.id]||0)}</td><td class="n">${z.type==='core'?'—':m.seatsBy[z.id]}</td></tr>`;}).join('')+`</tbody>`;
+    S.zones.map(z=>{const t=TYPES[z.type];return`<tr data-id="${z.id}" class="${z.id===S.sel?'on':''}"><td><span class="nm"><span class="swatch" style="background:var(--z-${t.c}-s)"></span>${esc(z.name)}</span></td><td>${z.type==='core'?'Core':cap1(z.part)+(z.nonia?' · not NIA':'')}</td><td class="n">${m2(m.areaBy[z.id]||0)}</td><td class="n">${z.type==='core'?'—':m.seatsBy[z.id]}</td></tr>`;}).join('')+`</tbody>`;
   // density panel
   const[bn,B]=m.band;
   $('#densV').textContent='1 : '+S.density.toFixed(1);
@@ -1234,7 +1275,8 @@ function renderInsp(){
   const t=TYPES[z.type],core=z.type==='core';
   el.innerHTML=`<h2>Selected space</h2>
   <div class="ins-h"><span class="swatch" style="background:var(--z-${t.c}-s)"></span><input id="iName" class="iname" value="${esc(z.name)}" aria-label="Space name"></div>
-  ${core?'<p class="hint" style="margin-top:8px">The core is base-build. You can move and resize it to match your floor plate.</p>':`
+  ${core?'<p class="hint" style="margin-top:8px">A core (or plant, riser, landlord area) is base-build and left out of the NIA. Move and resize it to match your floor plate.</p>':`
+  <label class="sw fld"><input type="checkbox" id="iNia"${z.nonia?'':' checked'}><span class="tg"></span>Counts in the NIA</label>
   <div class="fld"><span class="fl">Use</span><div class="seg seg-wrap" id="iType">${ORDER.map(k=>`<button type="button" data-v="${k}" aria-pressed="${z.type===k}">${TYPES[k].label}</button>`).join('')}</div></div>
   <div class="fld"><span class="fl">Enclosure</span><div class="seg" id="iPart">${['open','glazed','solid'].map(p=>`<button type="button" data-v="${p}" aria-pressed="${z.part===p}">${cap1(p)}</button>`).join('')}</div></div>
   ${z.type==='work'?`<div class="fld"><span class="fl">Desk banks run</span><div class="seg" id="iDir"><button type="button" data-v="x" aria-pressed="${z.dir==='x'}">East–west</button><button type="button" data-v="y" aria-pressed="${z.dir==='y'}">North–south</button></div></div>`:''}`}
@@ -1245,8 +1287,9 @@ function renderInsp(){
     <div class="f"><label for="iD">D m</label><input id="iD" type="number" step="0.15" min="1"${isPoly(z)?' disabled title="A polygon is resized by dragging its corners"':''}></div>
   </div>
   <div class="ins-b"><button type="button" class="btn" id="iShape">${isPoly(z)?'Make rectangle':'Make polygon'}</button>${core?'':'<button type="button" class="btn" id="iNext" title="Another equally good layout for this space">↻ Next layout</button>'}</div>
+  ${core?'':'<div class="ins-b"><button type="button" class="btn" id="iSplit" title="Split this space in two across its length, with a divider between the halves (an operable wall in enclosed rooms)">Split with a divider</button></div>'}
   <div class="ins-a"><span class="fl" style="font:600 11px var(--font-d);text-transform:uppercase;letter-spacing:.06em;color:var(--ink2)">Net area</span><strong class="num" id="iArea"></strong></div>
-  ${core?'':'<div class="ins-b"><button type="button" class="btn" id="iDup">Duplicate</button><button type="button" class="btn danger" id="iDel">Delete</button></div>'}`;
+  <div class="ins-b"><button type="button" class="btn" id="iDup" title="Or hold Alt and drag the space">Duplicate</button><button type="button" class="btn danger" id="iDel">Delete</button></div>`;
   syncInsp();
 }
 function syncInsp(){
@@ -1288,6 +1331,98 @@ function refreshZone(id){
   toast(`${z.name}: layout ${n.k} of ${n.n}, all equally good`+(z.type==='work'?` (${n.cap} desk positions, ${n.score} needed here)`:'')+'.');
 }
 
+// Clips a polygon to one side of the line x=at (axis 0) or y=at (axis 1): keep>0 keeps the far side.
+function clipHalf(P,axis,at,keep){
+  const out=[],inS=p=>(p[axis]-at)*keep>=-1e-9;
+  for(let i=0;i<P.length;i++){
+    const a=P[i],b=P[(i+1)%P.length],ia=inS(a),ib=inS(b);
+    if(ia)out.push(a);
+    if(ia!==ib){const t=(at-a[axis])/(b[axis]-a[axis]);out.push([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]);}
+  }
+  return out;
+}
+// Two halves across the space's length, with a divider between them (an operable wall when enclosed).
+function splitZone(z){
+  const axis=z.w>=z.d?0:1,at=snapV(axis?z.y+z.d/2:z.x+z.w/2),pair='p'+(UID++);
+  const halves=[-1,1].map(k=>{
+    const n=mkZone({...z,id:undefined,pair,opt:undefined,name:z.name+(k<0?' A':' B')});n.id='z'+(UID++);
+    if(isPoly(z)){n.pts=clipHalf(z.pts,axis,at,k);syncBox(n);}
+    else if(axis===0){if(k<0)n.w=at-z.x;else{n.x=at;n.w=z.x+z.w-at;}}
+    else{if(k<0)n.d=at-z.y;else{n.y=at;n.d=z.y+z.d-at;}}
+    return n;
+  }).filter(n=>n.w>.5&&n.d>.5&&(!isPoly(n)||n.pts.length>=3));
+  if(halves.length<2){toast('This space is too small to split.');return;}
+  const i=S.zones.indexOf(z);S.zones.splice(i,1,...halves);S.sel=halves[0].id;refresh(true);
+  toast(`${z.name} split in two; the divider between them goes to Revit as an operable wall.`);
+}
+function cloneZone(z){
+  const n=mkZone({...z,id:undefined,name:z.name+' copy',pair:undefined,pts:isPoly(z)?z.pts.map(p=>[...p]):undefined,opt:z.opt?{...z.opt}:undefined});
+  n.id='z'+(UID++);S.zones.push(n);return n;
+}
+
+/* ---------- assets: the family for each piece, per space use ---------- */
+const AKINDS={work:['desk','chair','monitor'],meeting:['meettable','table','chair','arm','coffee'],focus:['table','chair','arm','coffee'],
+  soft:['sofa','arm','coffee','bench','table','hightable','stool','plant'],reception:['recdesk','chair','sofa','arm','coffee','plant']};
+const KLAB={desk:'Desk',chair:'Chair',monitor:'Monitor',meettable:'Meeting table',table:'Table',arm:'Armchair',coffee:'Coffee table',sofa:'Sofa',
+  bench:'Booth bench',hightable:'High table',stool:'Stool',plant:'Plant',recdesk:'Reception desk'};
+// tables, sofas and benches whose family can be stretched keep the size the layout gives them; everything else takes the family's
+const STRETCH=new Set(['recdesk','table','meettable','hightable','coffee','sofa','bench']);
+S.assets=S.assets||{};let ATYPE='work';
+function assetDims(type,k){
+  const a=S.assets[type+':'+k];if(!a||!a.w||!a.d)return null;
+  if(STRETCH.has(k)&&a.sizable)return null;
+  return{w:a.w/1000,d:a.d/1000};
+}
+const mmA=n=>Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g,' ');
+const HOST=()=>window.chrome&&window.chrome.webview;
+function pickAsset(slot,id){
+  const cat=(SITE&&SITE.assets&&SITE.assets[slot.split(':')[1]])||[],c=cat.find(x=>x.id===id);
+  if(!c){delete S.assets[slot];refresh(false);renderAssets();return;}
+  S.assets[slot]={id,name:c.name,src:c.src,pending:true};renderAssets();
+  const h=HOST();
+  if(h){h.postMessage(JSON.stringify({kind:'asset',slot,id}));toast('Loading '+c.name+' to measure it…');}
+  else{S.assets[slot].pending=false;renderAssets();toast('Sizes are read when the page runs inside Revit.');}
+}
+// Revit's answer: the family's types with their sizes (mm)
+window.testfitAsset=(slot,id,res)=>{
+  const a=S.assets[slot];if(!a||a.id!==id)return;a.pending=false;
+  if(!res||res.error){toast((res&&res.error)||'That family could not be read.');delete S.assets[slot];renderAssets();return;}
+  a.types=res.types||[];
+  if(a.types.length){const k=slot.split(':')[1],want=k==='desk'?band()[1].w*1000:0,t=want?a.types.reduce((p,q)=>Math.abs(q.w-want)<Math.abs(p.w-want)?q:p):a.types[0];setType(a,t.name);}
+  refresh(false);renderAssets();
+  if(a.types.length)toast(`${a.name}: ${mmA(a.w)} × ${mmA(a.d)} mm`+(a.sizable&&STRETCH.has(slot.split(':')[1])?' (stretches to the layout)':''));
+};
+function setType(a,name){const t=(a.types||[]).find(t=>t.name===name);if(!t)return;Object.assign(a,{type:t.name,w:t.w,d:t.d,h:t.h,sizable:!!t.sizable});}
+function renderAssets(){
+  const el=$('#assets');if(!el)return;
+  const cat=SITE&&SITE.assets;
+  let h=`<h2>Assets</h2><p class="hint">Pick the family each piece uses in each kind of space. The first one is the add-in's pick (the project's, else the Autodesk library's). A picked family is loaded and measured, and the layout takes its size.</p>
+  <div class="seg seg-wrap" id="aType" style="margin:10px 0 4px">${ORDER.map(k=>`<button type="button" data-v="${k}" aria-pressed="${ATYPE===k}">${TYPES[k].label}</button>`).join('')}</div>`;
+  if(!cat){el.innerHTML=h+'<p class="note">The family lists come from Revit: open the test-fit from Revit to link families.</p>';return;}
+  for(const k of AKINDS[ATYPE]){
+    const slot=ATYPE+':'+k,a=S.assets[slot],list=cat[k]||[];
+    const groups={};for(const c of list)(groups[c.src]=groups[c.src]||[]).push(c);
+    const sel=a?a.id:'';
+    const dims=a&&a.pending?'measuring…':a&&a.w?`${mmA(a.w)} × ${mmA(a.d)}${a.h?' × '+mmA(a.h):''} mm`:'layout size';
+    h+=`<div class="asset"><div class="an"><span>${KLAB[k]}</span><span class="ad">${dims}</span></div>
+      <select data-slot="${slot}" aria-label="${KLAB[k]} family"><option value=""${sel?'':' selected'}>Add-in's pick${list[0]?': '+esc(list[0].name):''}</option>
+      ${Object.entries(groups).map(([g,cs])=>`<optgroup label="${esc(g)}">${cs.map(c=>`<option value="${esc(c.id)}"${c.id===sel?' selected':''}>${esc(c.name)}</option>`).join('')}</optgroup>`).join('')}</select>
+      ${a&&a.types&&a.types.length>1?`<select data-type="${slot}" aria-label="${KLAB[k]} type">${a.types.map(t=>`<option${t.name===a.type?' selected':''} value="${esc(t.name)}">${esc(t.name)} · ${mmA(t.w)} × ${mmA(t.d)}</option>`).join('')}</select>`:''}</div>`;
+  }
+  h+=`<div class="ins-b" style="margin-top:10px"><button type="button" class="btn" id="aAll" title="Load the add-in's pick for every piece in this kind of space and take its sizes">Use the default families' sizes</button></div>`;
+  el.innerHTML=h;
+}
+document.addEventListener('click',e=>{
+  const t=e.target.closest('#lTabs button');
+  if(t){$$('#lTabs button').forEach(b=>b.setAttribute('aria-pressed',b===t));$('#left').classList.toggle('on-assets',t.dataset.t==='assets');if(t.dataset.t==='assets')renderAssets();return;}
+  const b=e.target.closest('#aType button');if(b){ATYPE=b.dataset.v;renderAssets();return;}
+  if(e.target.closest('#aAll')&&SITE&&SITE.assets){for(const k of AKINDS[ATYPE]){const c=(SITE.assets[k]||[])[0];if(c&&c.id!=='own'&&!S.assets[ATYPE+':'+k])pickAsset(ATYPE+':'+k,c.id);}}
+});
+document.addEventListener('change',e=>{
+  const s1=e.target.closest('#assets select[data-slot]');if(s1){pickAsset(s1.dataset.slot,s1.value);return;}
+  const s2=e.target.closest('#assets select[data-type]');if(s2){const a=S.assets[s2.dataset.type];setType(a,s2.value);refresh(false);renderAssets();}
+});
+
 /* ---------- drawing a polygon space ---------- */
 function startDraw(type){DRAW={type,pts:[],cur:null};S.sel=null;$('#app').classList.add('drawing');$('#polyNote').hidden=false;render2D();renderInsp();}
 function endDraw(){DRAW=null;$('#app').classList.remove('drawing');$('#polyNote').hidden=!$('#polyT').checked;render2D();}
@@ -1310,7 +1445,7 @@ function closeDraw(){
   const z=mkZone({name:addName(t,n),type:t,part:TYPES[t].part,pts:P,dir:'y'});syncBox(z);
   S.zones.push(z);S.sel=z.id;endDraw();refresh(true);
 }
-const addName=(t,n)=>(t==='work'?'Workspace':t==='soft'?'Soft seating':t==='meeting'?'Meeting':t==='focus'?'Focus':'Reception')+' '+String(n).padStart(2,'0');
+const addName=(t,n)=>(t==='work'?'Workspace':t==='soft'?'Soft seating':t==='meeting'?'Meeting':t==='focus'?'Focus':t==='core'?'Core':'Reception')+' '+String(n).padStart(2,'0');
 
 /* ---------- plan interaction ---------- */
 function svgPt(e){const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;return p.matrixTransform(svg.getScreenCTM().inverse());}
@@ -1330,8 +1465,9 @@ svg.addEventListener('pointerdown',e=>{
     z.pts.splice(i+1,0,[(a[0]+b[0])/2,(a[1]+b[1])/2]);drag={mode:'vertex',i:i+1,z};svg.setPointerCapture(e.pointerId);return;}
   if(h&&selZone()){const z=selZone();drag={mode:'resize',h:h.dataset.h,p0:p,o:{...z},z};}
   else if(zt&&e.button===0){
-    const z=S.zones.find(q=>q.id===zt.dataset.id);
-    const changed=S.sel!==z.id;S.sel=z.id;drag={mode:'move',p0:p,o:{...z},z};
+    let z=S.zones.find(q=>q.id===zt.dataset.id);
+    if(e.altKey){z=cloneZone(z);} // Alt-drag: drag a copy away
+    const changed=S.sel!==z.id||e.altKey;S.sel=z.id;drag={mode:'move',p0:p,o:{...z,pts:isPoly(z)?z.pts.map(q=>[...q]):undefined},z};
     if(changed){render2D();renderInsp();renderDash();}
   } else {
     drag={mode:'pan',c0:{x:e.clientX,y:e.clientY},v0:{...vb},moved:false};
@@ -1351,7 +1487,7 @@ svg.addEventListener('pointermove',e=>{
     vb.x=drag.v0.x-dx;vb.y=drag.v0.y-dy;autoFit=false;setVB();return;
   }
   const p=svgPt(e),dx=p.x-drag.p0.x,dy=p.y-drag.p0.y,z=drag.z,o=drag.o,F=S.floor;
-  if(drag.mode==='move'){moveZone(z,snapV(o.x+dx),snapV(o.y+dy));}
+  if(drag.mode==='move'){if(isPoly(z))z.pts=o.pts.map(q=>[...q]),syncBox(z);moveZone(z,snapV(o.x+dx),snapV(o.y+dy));}
   else{
     const h=drag.h;let x0=o.x,y0=o.y,x1=o.x+o.w,y1=o.y+o.d;
     if(h.includes('w'))x0=Math.min(snapV(o.x+dx),x1-1);
@@ -1391,7 +1527,7 @@ document.addEventListener('keydown',e=>{
   const z=selZone();if(!z)return;
   const st=e.shiftKey?1.5:0.15,mv={ArrowLeft:[-st,0],ArrowRight:[st,0],ArrowUp:[0,-st],ArrowDown:[0,st]}[e.key];
   if(mv){e.preventDefault();moveZone(z,snapV(z.x+mv[0]),snapV(z.y+mv[1]));refresh(false);}
-  else if((e.key==='Delete'||e.key==='Backspace')&&z.type!=='core'){e.preventDefault();S.zones=S.zones.filter(q=>q!==z);S.sel=null;refresh(true);}
+  else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();S.zones=S.zones.filter(q=>q!==z);S.sel=null;refresh(true);}
   else if(e.key==='Escape'){S.sel=null;render2D();renderInsp();renderDash();}
 });
 
@@ -1403,14 +1539,16 @@ $('#insp').addEventListener('click',e=>{
   if(grp==='iType'){const nt=b.dataset.v;if(nt!==z.type){const wasEnc=enclosed(z);z.type=nt;const def=TYPES[nt].part;if(!(def!=='open'&&wasEnc))z.part=def;if(nt==='work'&&!z.dir)z.dir='y';}refresh(true);}
   else if(grp==='iPart'){z.part=b.dataset.v;refresh(true);}
   else if(grp==='iDir'){z.dir=b.dataset.v;refresh(true);}
-  else if(b.id==='iDup'){const n=mkZone({...z,id:undefined,name:z.name+' copy',pts:isPoly(z)?z.pts.map(p=>[...p]):undefined,opt:z.opt?{...z.opt}:undefined});n.id='z'+(UID++);moveZone(n,z.x+1.2,z.y+1.2);S.zones.push(n);S.sel=n.id;refresh(true);}
+  else if(b.id==='iDup'){const n=cloneZone(z);moveZone(n,z.x+1.2,z.y+1.2);S.sel=n.id;refresh(true);}
   else if(b.id==='iShape'){if(isPoly(z))delete z.pts;else z.pts=zPts(z).map(p=>[...p]);refresh(true);}
   else if(b.id==='iNext'){refreshZone(z.id);}
+  else if(b.id==='iSplit'){splitZone(z);}
   else if(b.id==='iDel'){S.zones=S.zones.filter(q=>q!==z);S.sel=null;refresh(true);}
 });
 $('#insp').addEventListener('input',e=>{
   const z=selZone();if(!z)return;const t=e.target;
   if(t.id==='iName'){z.name=t.value||'Untitled';render2D();renderDash();return;}
+  if(t.id==='iNia'){z.nonia=!t.checked;refresh(false);return;}
   const map={iX:'x',iY:'y',iW:'w',iD:'d'};
   if(map[t.id]){const v=parseFloat(t.value);if(!isFinite(v))return;
     if(isPoly(z)){if(t.id==='iX')moveZone(z,v,z.y);else if(t.id==='iY')moveZone(z,z.x,v);}
@@ -1423,7 +1561,7 @@ $('#dens').addEventListener('input',e=>{S.density=parseFloat(e.target.value);ref
 $$('[data-layer]').forEach(cb=>cb.addEventListener('change',()=>{S.layers[cb.dataset.layer]=cb.checked;refresh(false);}));
 $('#snapT').addEventListener('change',e=>{S.snap=e.target.checked;});
 $('#polyT').addEventListener('change',e=>{$('#polyNote').hidden=!e.target.checked;if(!e.target.checked&&DRAW)endDraw();});
-const SIZES={work:[9,7.5],soft:[6,4.5],meeting:[4.5,3.6],focus:[1.8,2.4],reception:[7.5,6]};
+const SIZES={work:[9,7.5],soft:[6,4.5],meeting:[4.5,3.6],focus:[1.8,2.4],reception:[7.5,6],core:[4.5,4.5]};
 $$('[data-add]').forEach(b=>b.addEventListener('click',()=>{
   const t=b.dataset.add,[w,d]=SIZES[t],F=S.floor;
   if($('#polyT').checked){startDraw(t);return;}
@@ -1631,6 +1769,7 @@ function build3D(){
     const L=Math.hypot(w.x2-w.x1,w.y2-w.y1);if(L<.02)continue;
     const fw={x:(w.x1+w.x2)/2,z:(w.y1+w.y2)/2,r:-Math.atan2(w.y2-w.y1,w.x2-w.x1)};
     if(w.part==='solid')put('box','wall',fw,0,1.35,0,L,2.7,.1);
+    else if(w.part==='divider'){put('box','door',fw,0,1.35,0,L,2.6,.1);put('box','mull',fw,0,2.66,0,L,.08,.1);}
     else{
       put('box','glass',fw,0,1.35,0,L,2.56,.02);
       put('box','mull',fw,0,2.66,0,L,.08,.06);put('box','mull',fw,0,.04,0,L,.08,.06);
@@ -1655,6 +1794,18 @@ function build3D(){
   for(const z of S.zones.filter(isPoly)){
     const g=new T.ShapeGeometry(new T.Shape(z.pts.map(p=>new T.Vector2(p[0],p[1]))));g.rotateX(Math.PI/2);
     const m=new T.Mesh(g,mat(FLOORK[z.type]));m.position.y=.004+TYPES[z.type].pri*.0012;m.receiveShadow=true;V3.world.add(m);
+  }
+  if(SITE)for(const p of SITE.poche||[]){
+    if(!KEEP_PARTS&&p.t<=.155)continue;
+    // each piece (a door splits a wall in two) with the loops inside it as its holes
+    const ls=p.loops.slice().sort((a,b)=>polyArea(b)-polyArea(a)),hole=ls.map((l,i)=>ls.slice(0,i).findIndex(o=>inPoly(o,l[0][0],l[0][1])));
+    for(let i=0;i<ls.length;i++){
+      if(hole[i]>=0)continue;const l=ls[i];
+      const sh=new T.Shape(l.map(q=>new T.Vector2(q[0],q[1])));
+      ls.forEach((h,k)=>{if(hole[k]===i)sh.holes.push(new T.Path(h.map(q=>new T.Vector2(q[0],q[1]))));});
+      const g=new T.ExtrudeGeometry(sh,{depth:H,bevelEnabled:false});g.rotateX(Math.PI/2);g.translate(0,H,0);
+      const m=new T.Mesh(g,mat(p.t>=9?'col':'wall'));m.castShadow=true;m.receiveShadow=true;V3.world.add(m);
+    }
   }
   if(SITE)for(const face of SITE.faces){
     const sh=new T.Shape(face[0].map(p=>new T.Vector2(p[0],p[1])));
@@ -1692,13 +1843,21 @@ function layoutForRevit(){
   const Ly=S.layers,r=n=>Math.round(n*1000)/1000;
   const items=M.items.filter(it=>Ly[it.cat]!==false).map(it=>{
     const s=FRONT[it.k]||-1,a=it.a*Math.PI/180;
-    return{k:it.k,cat:it.cat,zone:it.zid,x:r(it.x),y:r(it.y),w:r(it.w),d:r(it.d),fx:r(-s*Math.sin(a)),fy:r(s*Math.cos(a))};
+    return{k:it.k,cat:it.cat,zone:it.zid,g:it.g||it.zid,x:r(it.x),y:r(it.y),w:r(it.w),d:r(it.d),fx:r(-s*Math.sin(a)),fy:r(s*Math.cos(a))};
   });
-  const zones=S.zones.map(z=>{const o={id:z.id,name:z.name,type:z.type,part:z.part,x:r(z.x),y:r(z.y),w:r(z.w),d:r(z.d)};
-    if(isPoly(z)){const ip=inside(z);o.pts=z.pts.map(p=>[r(p[0]),r(p[1])]);o.ix=r(ip[0]);o.iy=r(ip[1]);}return o;});
+  const zones=S.zones.map(z=>{const o={id:z.id,name:z.name,type:z.type,part:z.part,x:r(z.x),y:r(z.y),w:r(z.w),d:r(z.d),a:r(M.areaBy[z.id]||0),seats:M.seatsBy[z.id]||0};
+    if(isPoly(z)){const ip=inside(z);o.pts=z.pts.map(p=>[r(p[0]),r(p[1])]);o.ix=r(ip[0]);o.iy=r(ip[1]);}
+    if(z.nonia)o.nonia=true;return o;});
   const walls=M.walls.filter(w=>Math.hypot(w.x2-w.x1,w.y2-w.y1)>=.05).map(w=>({x1:r(w.x1),y1:r(w.y1),x2:r(w.x2),y2:r(w.y2),part:w.part,zone:w.zid}));
   const doors=M.doors.map(d=>({x:r(d.hx),y:r(d.hy),dx:r(d.dx),dy:r(d.dy),nx:r(d.nx),ny:r(d.ny),w:r(d.w),part:d.part,zone:d.zid}));
-  return{kind:'testfit-layout',version:1,density:S.density,keepPartitions:KEEP_PARTS,desks:M.desksShown,nia:r(M.NIA),items,walls,doors,zones};
+  const lab={work:'Workspace',soft:'Soft seating',meeting:'Meeting rooms',focus:'Focus rooms',reception:'Reception'};
+  const summary={nia:r(M.NIA),gross:r(M.gross),notNia:r(M.coreA),desks:M.desksShown,target:M.target,density:S.density,achieved:r(M.achieved),band:M.band[0],
+    seats:M.seats,totalSeats:Object.values(M.seats).reduce((a,b)=>a+b,0),
+    mix:[...Object.keys(lab).map(k=>({type:k,label:lab[k],m2:r(M.typeArea[k]),pct:M.NIA?r(M.typeArea[k]/M.NIA*100):0})),{type:'circ',label:'Circulation & unallocated',m2:r(M.circ),pct:M.NIA?r(M.circ/M.NIA*100):0}],
+    partitions:{glazed:r(M.partLen.glazed),solid:r(M.partLen.solid),doors:M.doors.length},
+    checks:$$('#checks li').map(li=>({level:(li.querySelector('.chip')||{}).textContent||'',text:(li.querySelector('span:last-child')||{}).textContent||''}))};
+  const assets={};for(const[k,a]of Object.entries(S.assets))if(a&&a.id&&!a.pending)assets[k]={id:a.id,type:a.type||''};
+  return{kind:'testfit-layout',version:1,density:S.density,keepPartitions:KEEP_PARTS,desks:M.desksShown,nia:r(M.NIA),items,walls,doors,zones,summary,assets,sheet:$('#sheetT').checked};
 }
 
 /* ---------- boot ---------- */
@@ -1716,13 +1875,14 @@ if(SITE){
     bt.innerHTML=`<select class="floorsel" id="floorSel" aria-label="Floor">${SITE.floors.map(f=>`<option value="${esc(f.id)}"${f.id===SITE.levelId?' selected':''}>${esc(f.name)}</option>`).join('')}</select>`;
     $('#floorSel').addEventListener('change',e=>{
       toast('Reading '+e.target.selectedOptions[0].textContent+' from Revit…');
-      host0.postMessage(JSON.stringify({kind:'floor',id:e.target.value,state:{zones:S.zones,density:S.density,keep:KEEP_PARTS,uid:UID}}));
+      host0.postMessage(JSON.stringify({kind:'floor',id:e.target.value,state:{zones:S.zones,density:S.density,keep:KEEP_PARTS,uid:UID,assets:S.assets}}));
     });
     window.testfitFloorRefused=()=>{$('#floorSel').value=SITE.levelId;};
   } else bt.innerHTML=`<span class="floorname">${esc(SITE.level)}</span>`;
   const ST=window.TESTFIT_STATE;
   if(ST&&Array.isArray(ST.zones)){
     S.zones=ST.zones;S.density=+ST.density||S.density;UID=Math.max(UID,+ST.uid||0);
+    if(ST.assets&&typeof ST.assets==='object')S.assets=ST.assets;
     if(ST.keep===false){KEEP_PARTS=false;$('#keepT').checked=false;MK=buildMask(SITE);SITE_SVG=null;}
   }
   for(const id of['fW','fD','fG'])$('#'+id).disabled=true;
@@ -1730,7 +1890,7 @@ if(SITE){
   $('#keepRow').hidden=false;
   const host=window.chrome&&window.chrome.webview;
   if(host){
-    const sb=$('#sendBtn');sb.hidden=false;
+    const sb=$('#sendBtn');sb.hidden=false;$('#sheetRow').hidden=false;
     sb.title='Close this window and place the furniture, partitions, doors and rooms in the model';
     sb.addEventListener('click',()=>host.postMessage(JSON.stringify(layoutForRevit())));
   }

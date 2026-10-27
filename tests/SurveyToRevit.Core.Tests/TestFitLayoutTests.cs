@@ -56,4 +56,36 @@ public class TestFitLayoutTests
         Assert.Equal(1, Front(l.Items[1].Rotation).Y, 6);   // its chair faces back at it
         Assert.Equal(1, Front(l.Items[2].Rotation).X, 6);   // the armchair faces east
     }
+
+    [Fact]
+    public void Dividers_assets_the_summary_and_not_nia_spaces_come_through()
+    {
+        const string json = """
+            {"kind":"testfit-layout","sheet":false,
+             "walls":[{"x1":0,"y1":0,"x2":0,"y2":3,"part":"divider","zone":"z2"}],
+             "zones":[{"id":"z2","name":"Plant","type":"soft","part":"open","x":0,"y":0,"w":2,"d":2,"a":4,"seats":3,"nonia":true}],
+             "assets":{"work:desk":{"id":"f:C:/lib/M_Desk.rfa","type":"1600x800"},"soft:sofa":{"id":""}},
+             "summary":{"nia":600,"gross":700,"notNia":40,"desks":50,"target":60,"density":10,"achieved":12,"band":"Standard",
+               "seats":{"desks":50,"meeting":8},"totalSeats":58,
+               "mix":[{"type":"work","label":"Workspace","m2":400,"pct":66.7}],
+               "partitions":{"glazed":20.5,"solid":10,"doors":3},
+               "checks":[{"level":"OK","text":"All fit."}]}}
+            """;
+        var l = TestFitLayout.Parse(json, new Vec2(0, 0));
+        Assert.True(l.Walls[0].Divider);
+        Assert.False(l.Walls[0].Glazed);
+        var z = Assert.Single(l.Zones);
+        Assert.True(z.NotNia);
+        Assert.Equal(3, z.Seats);
+        Assert.False(l.Sheet);
+        var a = Assert.Single(l.Assets); // one with no id is not a pick
+        Assert.Equal(("f:C:/lib/M_Desk.rfa", "1600x800"), a.Value);
+        var s = l.Summary!;
+        Assert.Equal(600, s.Nia);
+        Assert.Equal(60, s.Target);
+        Assert.Equal(2, s.Seats.Count);
+        Assert.Equal("Workspace", s.Mix[0].Label);
+        Assert.Equal(3, s.Doors);
+        Assert.Equal("All fit.", s.Checks[0].Text);
+    }
 }

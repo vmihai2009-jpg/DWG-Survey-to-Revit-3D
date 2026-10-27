@@ -6,6 +6,12 @@ namespace SurveyToRevit.Core.TestFit;
 /// <summary>An existing wall on the floor: its centre line and thickness (mm, model plan coordinates).</summary>
 public sealed record SiteWall(Vec2 A, Vec2 B, double ThicknessMm);
 
+/// <summary>One wall or column cut by the plan: its section loops (mm, model plan) and its thickness (0 for a column).</summary>
+public sealed record SitePoche(double ThicknessMm, IReadOnlyList<IReadOnlyList<Vec2>> Loops);
+
+/// <summary>A furniture family the page's Assets tab can pick for a kind: the project's (id "p:…") or a library file ("f:path").</summary>
+public sealed record SiteAsset(string Id, string Name, string Source);
+
 /// <summary>A room on the floor, by its name and outline (mm, model plan coordinates).</summary>
 public sealed record SiteRoom(string Name, IReadOnlyList<Vec2> Outline);
 
@@ -26,6 +32,11 @@ public sealed class TestFitSite
     /// <summary>The floor's outline, one entry per slab: outer loop first, then its holes (stairs, voids).</summary>
     public List<List<IReadOnlyList<Vec2>>> Faces { get; } = new();
     public List<SiteWall> Walls { get; } = new();
+    /// <summary>
+    /// Walls and columns as the plan draws them: each element's section at the cut plane (outer loops and holes),
+    /// with its thickness so thin partitions can be stripped out. A wall read this way is not also in Walls.
+    /// </summary>
+    public List<SitePoche> Poche { get; } = new();
     /// <summary>Columns, piers and other solid objects standing on the floor, as plan boxes.</summary>
     public List<(Vec2 Min, Vec2 Max)> Columns { get; } = new();
     public List<SiteRoom> Rooms { get; } = new();
@@ -36,6 +47,8 @@ public sealed class TestFitSite
     public List<(string Id, string Name)> Floors { get; } = new();
     /// <summary>The page's own state for this floor from earlier in the session (its JSON), so browsing back keeps the spaces drawn.</summary>
     public string? State { get; set; }
+    /// <summary>The families each kind of furniture (desk, chair, sofa...) can use, the one the add-in would pick first.</summary>
+    public Dictionary<string, List<SiteAsset>> Assets { get; } = new(StringComparer.Ordinal);
 
     // Base-build rooms the layout must leave alone: they become "Core" spaces on the page.
     static readonly Regex CoreName = new(
@@ -83,6 +96,7 @@ public sealed class TestFitSite
                 var (a, b) = (page(x.A), page(x.B));
                 return new { x1 = a[0], y1 = a[1], x2 = b[0], y2 = b[1], t = Round(x.ThicknessMm / 1000) };
             }).ToArray(),
+            poche = Poche.Where(x => x.Loops.Count > 0).Select(x => new { t = x.ThicknessMm > 0 ? Round(x.ThicknessMm / 1000) : 9, loops = x.Loops.Select(Loop).ToArray() }).ToArray(),
             cols = Columns.Select(c =>
             {
                 var (a, b) = (page(new Vec2(c.Min.X, c.Max.Y)), page(new Vec2(c.Max.X, c.Min.Y)));
@@ -92,6 +106,7 @@ public sealed class TestFitSite
             cores,
             levelId = LevelId,
             floors = Floors.Select(f => new { id = f.Id, name = f.Name }).ToArray(),
+            assets = Assets.ToDictionary(a => a.Key, a => a.Value.Select(x => new { id = x.Id, name = x.Name, src = x.Source }).ToArray()),
         };
         var json = JsonSerializer.Serialize(site, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Default });
         var state = string.IsNullOrWhiteSpace(State) ? "null" : State;

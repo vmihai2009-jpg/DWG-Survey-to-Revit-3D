@@ -34,6 +34,7 @@ public class TestFitCommand : IExternalCommand
             var s = TestFitReader.Read(doc, l, TestFitReader.PlanOf(doc, l, plan), selected);
             s.LevelId = l.Id.Value.ToString();
             s.Floors.AddRange(floors.Select(f => (f.Id.Value.ToString(), f.Name)));
+            try { TestFitAssets.Catalog(doc, s); } catch { /* the Assets tab stays empty: the add-in picks the families */ }
             return s;
         }
         TestFitSite site;
@@ -52,7 +53,8 @@ public class TestFitCommand : IExternalCommand
         TestFitSite? Load(string id) =>
             long.TryParse(id, out var v) && doc.GetElement(new ElementId(v)) is Level l ? Read(l, Array.Empty<ElementId>()) : null;
         (string Layout, TestFitSite Site)? sent;
-        try { sent = TestFitWindow.Open(site, Load, data.Application.MainWindowHandle); }
+        string Measure(string id) => TestFitAssets.Measure(doc, level, id);
+        try { sent = TestFitWindow.Open(site, Load, Measure, data.Application.MainWindowHandle); }
         catch (Exception ex)
         {
             TaskDialog.Show(Caption, "The test-fit window could not open: " + ex.Message);
@@ -65,13 +67,14 @@ public class TestFitCommand : IExternalCommand
         TestFitLayout layout;
         try { layout = TestFitLayout.Parse(sent.Value.Layout, site.Frame().OriginMm); }
         catch (Exception ex) { TaskDialog.Show(Caption, "The layout could not be read: " + ex.Message); return Result.Failed; }
-        var builder = new TestFitBuilder(doc, level, site.StoreyHeightMm);
+        var builder = new TestFitBuilder(doc, level, site.StoreyHeightMm, plan);
         builder.Build(layout);
-        TaskDialog.Show(Caption, Summary(builder, layout, uidoc.ActiveView));
+        var sheet = layout.Sheet ? TestFitSheet.Make(doc, level, layout, site, builder.OptionName, builder.PhaseId, builder.Log) : null;
+        TaskDialog.Show(Caption, Summary(builder, layout, uidoc.ActiveView, sheet));
         return Result.Succeeded;
     }
 
-    static string Summary(TestFitBuilder b, TestFitLayout layout, View view)
+    static string Summary(TestFitBuilder b, TestFitLayout layout, View view, string? sheet)
     {
         var lines = new List<string>
         {
@@ -79,6 +82,9 @@ public class TestFitCommand : IExternalCommand
             $"Furniture: {b.Placed.Values.Sum()} family instances" + (b.Blocks > 0 ? $", {b.Blocks} plain blocks (no family found)" : "") + ".",
             $"Partitions: {b.Walls} walls, {b.Glazed} curtain walls, {b.Doors} doors; {b.Rooms} rooms.",
         };
+        if (b.Grouped > 0) lines.Add($"Grouped: {b.Grouped} groups (one per workstation, meeting room, breakout and reception set).");
+        if (sheet != null) lines.Add($"Study sheet: {sheet}, with its zoning plan, 3D view and summary.");
+        if (sheet != null && b.OptionName != null) lines.Add("Revit shows the primary option in new views: to see this option on the sheet, set Visibility/Graphics > Design Options in its plan and 3D view.");
         if (b.Placed.Count > 0) lines.Add("Families: " + string.Join(", ", b.Placed.Select(p => $"{p.Key} ({p.Value})")) + ".");
         if (b.OptionName != null) lines.Add($"It is in the design option '{b.OptionName}'. Make another option active and send again to keep both side by side.");
         else lines.Add("Tip: to keep several layouts side by side, add a 'Furniture Layout' set with Option 1, Option 2… in Manage > Design Options, make an option active and send again. Revit lets add-ins fill design options but not create them.");
