@@ -23,9 +23,13 @@ public class TestFitCommand : IExternalCommand
         var uidoc = data.Application.ActiveUIDocument;
         var doc = uidoc?.Document;
         if (doc == null || doc.IsFamilyDocument) { message = "Open a project first."; return Result.Failed; }
-        if (uidoc!.ActiveView is not ViewPlan { ViewType: ViewType.FloorPlan, GenLevel: { } level } plan)
+        var picked = uidoc!.Selection.GetElementIds();
+        // on a sheet: the floor plan placed on it (the selected viewport's, else the largest)
+        var active = uidoc.ActiveView is ViewSheet sheet ? PlanOnSheet(doc, sheet, picked) : uidoc.ActiveView;
+        if (uidoc.ActiveView is ViewSheet) picked = new List<ElementId>();
+        if (active is not ViewPlan { ViewType: ViewType.FloorPlan, GenLevel: { } level } plan)
         {
-            TaskDialog.Show(Caption, "Open the floor plan of the floor you want to test-fit, then click Office Test-Fit again.");
+            TaskDialog.Show(Caption, "Open the floor plan of the floor you want to test-fit, or a sheet with that plan on it, then click Office Test-Fit again.");
             return Result.Cancelled;
         }
         var floors = TestFitReader.Floors(doc);
@@ -38,7 +42,7 @@ public class TestFitCommand : IExternalCommand
             return s;
         }
         TestFitSite site;
-        try { site = Read(level, uidoc.Selection.GetElementIds()); }
+        try { site = Read(level, picked); }
         catch (Exception ex)
         {
             TaskDialog.Show(Caption, $"Could not read {level.Name}: {ex.Message}");
@@ -72,6 +76,17 @@ public class TestFitCommand : IExternalCommand
         var sheet = layout.Sheet ? TestFitSheet.Make(doc, level, layout, site, builder.OptionName, builder.PhaseId, builder.Log) : null;
         TaskDialog.Show(Caption, Summary(builder, layout, uidoc.ActiveView, sheet));
         return Result.Succeeded;
+    }
+
+    /// <summary>The floor plan on a sheet to test-fit: the viewport selected, else the largest floor plan on it.</summary>
+    static View? PlanOnSheet(Document doc, ViewSheet sheet, ICollection<ElementId> selected)
+    {
+        var plans = sheet.GetAllViewports().Select(doc.GetElement).OfType<Viewport>()
+            .Select(vp => (vp, view: doc.GetElement(vp.ViewId) as ViewPlan)).Where(x => x.view is { ViewType: ViewType.FloorPlan }).ToList();
+        var chosen = plans.FirstOrDefault(x => selected.Contains(x.vp.Id));
+        if (chosen.view != null) return chosen.view;
+        return plans.OrderByDescending(x => { var o = x.vp.GetBoxOutline(); return (o.MaximumPoint.X - o.MinimumPoint.X) * (o.MaximumPoint.Y - o.MinimumPoint.Y); })
+            .Select(x => x.view).FirstOrDefault();
     }
 
     static string Summary(TestFitBuilder b, TestFitLayout layout, View view, string? sheet)

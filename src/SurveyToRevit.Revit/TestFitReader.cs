@@ -134,19 +134,46 @@ internal static class TestFitReader
         var all = faces.SelectMany(f => f[0]).ToList();
         double fx0 = all.Min(p => p.X) - 600, fx1 = all.Max(p => p.X) + 600, fy0 = all.Min(p => p.Y) - 600, fy1 = all.Max(p => p.Y) + 600;
         bool Over(Vec2 p) => p.X >= fx0 && p.X <= fx1 && p.Y >= fy0 && p.Y <= fy1;
-        site.Walls.AddRange(walls.Where(w => Over(w.A) || Over(w.B)));
-        site.Poche.AddRange(poche.Where(p => p.Loops.Any(l => l.Any(Over))));
-        site.Columns.AddRange(columns.Where(c => c.Item2.X >= fx0 && c.Item1.X <= fx1 && c.Item2.Y >= fy0 && c.Item1.Y <= fy1));
-        try { site.Cad.AddRange(Cad(doc, view, new Vec2(fx0 - 3000, fy0 - 3000), new Vec2(fx1 + 3000, fy1 + 3000))); }
+        // what the plan hides under opaque filled or masking regions drawn in it is not there for the test-fit either
+        var masks = Masks(doc, view);
+        bool Hidden(IEnumerable<Vec2> pts) => masks.Count > 0 && masks.Any(m => pts.All(p => PlanMask.Inside(m, p)));
+        site.Walls.AddRange(walls.Where(w => (Over(w.A) || Over(w.B)) && !Hidden(new[] { w.A, w.B, (w.A + w.B) * 0.5 })));
+        site.Poche.AddRange(poche.Where(p => p.Loops.Any(l => l.Any(Over)) && !Hidden(p.Loops.SelectMany(l => l))));
+        site.Columns.AddRange(columns.Where(c => c.Item2.X >= fx0 && c.Item1.X <= fx1 && c.Item2.Y >= fy0 && c.Item1.Y <= fy1 && !Hidden(new[] { (c.Item1 + c.Item2) * 0.5 })));
+        try { site.Cad.AddRange(Cad(doc, view, new Vec2(fx0 - 3000, fy0 - 3000), new Vec2(fx1 + 3000, fy1 + 3000), masks)); }
         catch { /* no linework: the page shows the model only */ }
         return site;
+    }
+
+    /// <summary>
+    /// Filled regions drawn in the plan that hide what is under them (a solid fill or a masking region; a hatch
+    /// shows through), each as its boundary loops in plan mm.
+    /// </summary>
+    static List<IReadOnlyList<IReadOnlyList<Vec2>>> Masks(Document doc, ViewPlan? view)
+    {
+        var masks = new List<IReadOnlyList<IReadOnlyList<Vec2>>>();
+        if (view == null) return masks;
+        bool Solid(ElementId id) => id != ElementId.InvalidElementId && doc.GetElement(id) is FillPatternElement f && f.GetFillPattern().IsSolidFill;
+        foreach (var region in new FilteredElementCollector(doc, view.Id).OfClass(typeof(FilledRegion)).Cast<FilledRegion>().Where(r => r.OwnerViewId == view.Id))
+        {
+            try
+            {
+                if (doc.GetElement(region.GetTypeId()) is not FilledRegionType type) continue;
+                if (!type.IsMasking && !Solid(type.ForegroundPatternId) && !Solid(type.BackgroundPatternId)) continue;
+                var loops = region.GetBoundaries().Select(loop => (IReadOnlyList<Vec2>)loop.SelectMany(c => { var t = c.Tessellate(); return t.Take(t.Count - 1); }).Select(P).ToList())
+                    .Where(l => l.Count >= 3).ToList();
+                if (loops.Count > 0) masks.Add(loops);
+            }
+            catch { /* a region Revit cannot hand back */ }
+        }
+        return masks;
     }
 
     /// <summary>
     /// The 2D linework the plan shows over the floor: linked and imported CAD (on the layers the view shows) and
     /// the view's own detail lines, as plan polylines (mm) for the page to draw spaces over.
     /// </summary>
-    static List<IReadOnlyList<Vec2>> Cad(Document doc, ViewPlan? view, Vec2 min, Vec2 max)
+    static List<IReadOnlyList<Vec2>> Cad(Document doc, ViewPlan? view, Vec2 min, Vec2 max, List<IReadOnlyList<IReadOnlyList<Vec2>>> masks)
     {
         var lines = new List<IReadOnlyList<Vec2>>();
         if (view == null) return lines;
@@ -157,9 +184,17 @@ internal static class TestFitReader
             if (points > 150000 || pts.Count < 2) return;
             var l = pts.Select(P).ToList();
             if (!l.Any(In)) return;
-            lines.Add(l);
-            points += l.Count;
+            // only what the plan shows: inside its crop, not under a filled or masking region
+            if (masks.Count == 0 && crop == null) { lines.Add(l); points += l.Count; return; }
+            foreach (var piece in PlanMask.Visible(l, masks, crop)) { lines.Add(piece); points += piece.Count; }
         }
+        IReadOnlyList<IReadOnlyList<Vec2>>? crop = null;
+        try
+        {
+            if (view.CropBoxActive && view.GetCropRegionShapeManager()?.GetCropShape() is { Count: > 0 } shape)
+                crop = shape.Select(loop => (IReadOnlyList<Vec2>)loop.SelectMany(c => { var t = c.Tessellate(); return t.Take(t.Count - 1); }).Select(P).ToList()).ToList();
+        }
+        catch { /* no crop: the whole level */ }
         bool Shown(GeometryObject g) =>
             doc.GetElement(g.GraphicsStyleId) is not GraphicsStyle { GraphicsStyleCategory: { } c } || !view.GetCategoryHidden(c.Id);
         void Walk(GeometryElement? geo)

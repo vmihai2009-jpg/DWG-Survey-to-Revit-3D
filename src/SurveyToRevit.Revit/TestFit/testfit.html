@@ -659,7 +659,7 @@ function hitsZone(r,z,m){
   return edgesCut(P,g);
 }
 // Other spaces as obstacles: the rectangle must keep m clear of each.
-const obsOf=(zs,z,m)=>zs.filter(o=>o!==z).map(o=>({z:o,m}));
+const obsOf=(zs,z,m)=>zs.filter(o=>o!==z).map(o=>({z:o,m:z.type==='work'&&(enclosed(o)||o.type==='core')?.05:m}));
 const blocked=(r,obst)=>obst.some(o=>hitsZone(r,o.z,o.m));
 // The largest rectangle inside a polygon space (rooms and reception are furnished in it), cached by shape.
 const RECTS=new Map();
@@ -688,16 +688,37 @@ function inside(z){
 }
 
 /* ---------- desk banks ---------- */
+// Desk banks in a workspace. Without a chosen layout (the ↻ button picks one) the banks are slid along and across
+// the space, and a single row is tried with its desks' backs to a wall, keeping whichever fits the most desks.
 function deskSlots(z,obst,cols,opt){
   opt=opt||z.opt||{};
-  const R=S.rules,B=band()[1],b=onB(z),au=opt.au??.5,av=opt.av??.5;
+  if(opt.au!==undefined&&opt.av!==undefined&&opt.side!==undefined)return bankSlots(z,obst,cols,opt);
+  let best=null;
+  for(const side of opt.side!==undefined?[opt.side]:['','lo','hi'])
+    for(const au of opt.au!==undefined?[opt.au]:[.5,0,1])
+      for(const av of opt.av!==undefined?[opt.av]:[.5,0,1]){
+        const s=bankSlots(z,obst,cols,Object.assign({},opt,{au,av,side}));
+        if(!best||s.length>best.length)best=s;
+      }
+  return best||[];
+}
+function bankSlots(z,obst,cols,opt){
+  const R=S.rules,B=band()[1],b=onB(z),au=opt.au??.5,av=opt.av??.5,side=opt.side||'';
   const x0=z.x+(b.W?R.facade:0),x1=z.x+z.w-(b.E?R.facade:0),y0=z.y+(b.N?R.facade:0),y1=z.y+z.d-(b.S?R.facade:0);
   const along=(opt.dir||z.dir)==='x';
   const u0=along?x0:y0,u1=along?x1:y1,v0=along?y0:x0,v1=along?y1:x1;
   const ad=assetDims('work','desk'),dw=ad?ad.w:B.w,dd=ad?ad.d:R.deskD,ch=R.chair,bankD=2*dd;
-  let nb=0; while(2*ch+(nb+1)*bankD+nb*B.aisle<=v1-v0+EPS) nb++;
-  if(!nb) return [];
-  const usedV=2*ch+nb*bankD+(nb-1)*B.aisle, offV=v0+(v1-v0-usedV)*av+ch;
+  // rows across the space: back-to-back pairs, and with a side, one row whose desks back onto that edge
+  const one=side?dd+B.aisle-ch:0,room=v1-v0-one;
+  let nb=0; while(2*ch+(nb+1)*bankD+nb*B.aisle<=room+EPS) nb++;
+  if(!nb&&!(side&&dd+ch<=v1-v0+EPS)) return [];
+  const usedV=nb?2*ch+nb*bankD+(nb-1)*B.aisle+one:dd+ch, spare=Math.max(0,v1-v0-usedV);
+  const rows=[];// {va, r}: r 0 = chair on the low side, 1 = on the high side
+  let v=side==='lo'?v0:v0+spare*av;
+  if(side==='lo'){rows.push({va:v,r:1});v+=dd+B.aisle-ch;if(nb)v+=spare*av;}
+  v+=ch;
+  for(let k=0;k<nb;k++){rows.push({va:v,r:0},{va:v+dd,r:1});v+=bankD+B.aisle;}
+  if(side==='hi')rows.push({va:v1-dd,r:0});
   const segs=[]; let rem=u1-u0;
   for(let guard=0;guard<200;guard++){
     const n=Math.min(B.per,Math.floor((rem+EPS)/dw)); if(n<1)break;
@@ -708,25 +729,24 @@ function deskSlots(z,obst,cols,opt){
   const usedU=segs.reduce((s,n)=>s+n*dw,0)+(segs.length-1)*R.primary, offU=u0+(u1-u0-usedU)*au;
   const toW=(ua,ub,va,vb)=>along?{x:ua,y:va,w:ub-ua,h:vb-va}:{x:va,y:ua,w:vb-va,h:ub-ua};
   const slots=[];
-  for(let k=0;k<nb;k++){
-    const vb=offV+k*(bankD+B.aisle); let u=offU;
+  for(const{va,r}of rows){
+    let u=offU;
     for(const n of segs){
       for(let i=0;i<n;i++){
         const ua=u+i*dw,ub=ua+dw,uc=ua+dw/2;
-        for(let r=0;r<2;r++){
-          const va=vb+r*dd,vbb=va+dd,cv=r===0?va-0.4:vbb+0.4,face=r===0?1:-1;
-          const a=along?(face>0?180:0):(face>0?90:270);
-          const dR=toW(ua,ub,va,vbb), fp=r===0?toW(ua,ub,va-0.75,vbb):toW(ua,ub,va,vbb+0.75);
-          const cc=along?{x:uc,y:cv}:{x:cv,y:uc};
-          slots.push({zid:z.id,fp,
-            desk:{k:'desk',x:dR.x+dR.w/2,y:dR.y+dR.h/2,w:dw,d:dd,a,zid:z.id},
-            chair:{k:'chair',x:cc.x,y:cc.y,w:.5,d:.5,a,zid:z.id,seats:1}});
-        }
+        const vbb=va+dd,cv=r===0?va-0.4:vbb+0.4,face=r===0?1:-1;
+        const a=along?(face>0?180:0):(face>0?90:270);
+        const dR=toW(ua,ub,va,vbb), fp=r===0?toW(ua,ub,va-0.75,vbb):toW(ua,ub,va,vbb+0.75);
+        const cc=along?{x:uc,y:cv}:{x:cv,y:uc};
+        slots.push({zid:z.id,fp,
+          desk:{k:'desk',x:dR.x+dR.w/2,y:dR.y+dR.h/2,w:dw,d:dd,a,zid:z.id},
+          chair:{k:'chair',x:cc.x,y:cc.y,w:.5,d:.5,a,zid:z.id,seats:1}});
       }
       u+=n*dw+R.primary;
     }
   }
-  return slots.filter(s=>!blocked(s.fp,obst)&&!cols.some(c=>hit(s.fp,c))&&siteOK(s.fp,R.facade)&&(!isPoly(z)||boxIn(z,s.fp,0)));
+  // desks may stand against walls, rooms and cores; open spaces next door keep a route clear
+  return slots.filter(s=>!blocked(s.fp,obst)&&!cols.some(c=>hit(s.fp,c))&&siteOK(s.fp,.05)&&(!isPoly(z)||boxIn(z,s.fp,0)));
 }
 
 /* ---------- soft seating clusters ---------- */
