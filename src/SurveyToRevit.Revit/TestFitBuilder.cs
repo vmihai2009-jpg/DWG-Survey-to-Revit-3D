@@ -238,6 +238,7 @@ internal sealed class TestFitBuilder
         ["table"] = (new[] { @"^(m_)?table([-_ ]?(rect|square|\d))?", @"table" }, @"coffee|night|bedside|end|side|dining[-_ ]?round|picnic|ping|pool|change|chang|operat|lamp", null, 740),
         ["meettable"] = (new[] { @"(conference|meeting|board)", @"table[-_ ]?rect" }, @"chair|room", "table", 740),
         ["hightable"] = (new[] { @"(bar|high|poseur)[-_ ]?table|table[-_ ]?(bar|high)" }, @"chair|stool", "table", 1050),
+        ["kitchen"] = (new[] { @"kitchenette|tea[-_ ]?point|pantry", @"kitchen|counter|base[-_ ]?(unit|cabinet)|sink[-_ ]?unit" }, @"island|wall[-_ ]?(unit|cabinet)|upper|tall|chair|stool|table", null, 900),
         ["plant"] = (new[] { @"plant|planter|ficus|palm|shrub" }, @"power|treatment|room", null, 1200),
         ["monitor"] = (new[] { @"^(m_)?(computer[-_ ]?)?monitor", @"computer[-_ ]?(screen|display)", @"monitor" }, @"tv|televis|patient|heart|wall|arm|bracket|stand[-_ ]?alone", null, 1230),
     };
@@ -246,7 +247,7 @@ internal sealed class TestFitBuilder
         (long)BuiltInCategory.OST_Furniture, (long)BuiltInCategory.OST_FurnitureSystems, (long)BuiltInCategory.OST_Planting,
         (long)BuiltInCategory.OST_Casework, (long)BuiltInCategory.OST_SpecialityEquipment, (long)BuiltInCategory.OST_GenericModel,
     ];
-    internal static bool Sizable(string kind) => kind is "desk" or "recdesk" or "table" or "meettable" or "hightable" or "coffee" or "sofa" or "bench";
+    internal static bool Sizable(string kind) => kind is "kitchen" or "desk" or "recdesk" or "table" or "meettable" or "hightable" or "coffee" or "sofa" or "bench";
     internal static bool Fits(Family f) => FurnitureCategories.Contains(f.FamilyCategory?.Id.Value ?? -1)
         && f.FamilyPlacementType is FamilyPlacementType.OneLevelBased or FamilyPlacementType.WorkPlaneBased;
 
@@ -296,9 +297,12 @@ internal sealed class TestFitBuilder
             var desk = pieces.FirstOrDefault(i => i.Kind == "desk");
             var station = desk != null && set.Key.StartsWith("ws", StringComparison.Ordinal);
             var size = desk == null ? "" : $"{desk.WidthMm:0}x{desk.DepthMm:0}";
+            // hot desks (no monitor) and fixed desks never share a group type, nor do spaces with different picked families
+            var use = _zones.TryGetValue(desk?.Zone ?? "", out var dz) ? dz.Type : "";
+            var key = use + ":" + size;
             try
             {
-                if (station && stations.TryGetValue(size, out var s))
+                if (station && stations.TryGetValue(key, out var s))
                 {
                     var at = At(desk!.Center);
                     var copy = _doc.Create.PlaceGroup(s.Origin + (at - s.Desk), s.Type);
@@ -319,11 +323,11 @@ internal sealed class TestFitBuilder
                 if (ids.Count < 2) continue;
                 _doc.Regenerate();
                 var group = _doc.Create.NewGroup(ids);
-                var name = station ? $"Test-Fit Workstation {size}" : "Test-Fit " + (_zones.TryGetValue(pieces[0].Zone, out var z) ? z.Name : set.Key);
+                var name = station ? $"Test-Fit {(use == "hotdesk" ? "Hot Desk" : "Workstation")} {size}" : "Test-Fit " + (_zones.TryGetValue(pieces[0].Zone, out var z) ? z.Name : set.Key);
                 Name(group.GroupType, name);
                 Mark(group);
                 Grouped++;
-                if (station) stations[size] = (group.GroupType, At(desk!.Center), desk.Rotation, ((LocationPoint)group.Location).Point, families);
+                if (station) stations[key] = (group.GroupType, At(desk!.Center), desk.Rotation, ((LocationPoint)group.Location).Point, families);
             }
             catch (Exception ex) { Log.Add($"The {(station ? "workstation" : "group")} '{set.Key}' was not grouped: {ex.Message}"); }
         }

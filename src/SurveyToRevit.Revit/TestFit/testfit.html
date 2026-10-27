@@ -12,6 +12,7 @@
   --plan-line:#1f2b31; --grid:#9fb3bb; --hatch:#98a5aa; --glass:#2a8fb8; --glass-t:#e2f1f7;
   --z-work:#e3ecf5; --z-work-s:#5d84a8; --z-meet:#ebe5f5; --z-meet-s:#7b64ad; --z-focus:#f4e4e2; --z-focus-s:#a45f58;
   --z-soft:#e2f0e5; --z-soft-s:#4f8f62; --z-rec:#f6edd8; --z-rec-s:#a5812c; --z-core:#e3e6e7; --z-core-s:#6c777c; --circ:#c5cfd3;
+  --z-tea:#f9e6d3; --z-tea-s:#c0702e; --z-brk:#dff1f0; --z-brk-s:#2f8f8a; --z-lng:#f3e2ec; --z-lng-s:#a5507f; --z-hot:#e4eaf7; --z-hot-s:#4a68b8;
   --furn:#2a363c; --furn-fill:#ffffff; --fur-soft:#b9d7c1; --fur-rec:#ecd7a4; --spare:#93a6ad;
   --ok:#2e7a4c; --warn:#a8581c; --bad:#b3261e; --ok-bg:#e1f1e7; --warn-bg:#f8e9dc; --bad-bg:#f9e0de;
   --v3d:#e7ecee;
@@ -25,6 +26,7 @@
   --plan-line:#cdd9dd; --grid:#3f5a64; --hatch:#55646a; --glass:#5cc3e6; --glass-t:#132a33;
   --z-work:#1b2935; --z-work-s:#6f9cc6; --z-meet:#251f36; --z-meet-s:#9d87d1; --z-focus:#33201f; --z-focus-s:#cf8a82;
   --z-soft:#1a2e22; --z-soft-s:#6fb985; --z-rec:#33291a; --z-rec-s:#d0aa52; --z-core:#232c30; --z-core-s:#8a979c; --circ:#3a474c;
+  --z-tea:#35241a; --z-tea-s:#e0955a; --z-brk:#16302f; --z-brk-s:#5cbcb6; --z-lng:#331f2b; --z-lng-s:#d184b0; --z-hot:#1d2538; --z-hot-s:#7f9ae0;
   --furn:#c3cfd3; --furn-fill:#182024; --fur-soft:#2f5a3e; --fur-rec:#6b5728; --spare:#4f6067;
   --ok:#62c48a; --warn:#e3965a; --bad:#f07068; --ok-bg:#15301f; --warn-bg:#352214; --bad-bg:#3a1715;
   --v3d:#182023; color-scheme:dark }}
@@ -34,6 +36,7 @@
   --plan-line:#cdd9dd; --grid:#3f5a64; --hatch:#55646a; --glass:#5cc3e6; --glass-t:#132a33;
   --z-work:#1b2935; --z-work-s:#6f9cc6; --z-meet:#251f36; --z-meet-s:#9d87d1; --z-focus:#33201f; --z-focus-s:#cf8a82;
   --z-soft:#1a2e22; --z-soft-s:#6fb985; --z-rec:#33291a; --z-rec-s:#d0aa52; --z-core:#232c30; --z-core-s:#8a979c; --circ:#3a474c;
+  --z-tea:#35241a; --z-tea-s:#e0955a; --z-brk:#16302f; --z-brk-s:#5cbcb6; --z-lng:#331f2b; --z-lng-s:#d184b0; --z-hot:#1d2538; --z-hot-s:#7f9ae0;
   --furn:#c3cfd3; --furn-fill:#182024; --fur-soft:#2f5a3e; --fur-rec:#6b5728; --spare:#4f6067;
   --ok:#62c48a; --warn:#e3965a; --bad:#f07068; --ok-bg:#15301f; --warn-bg:#352214; --bad-bg:#3a1715;
   --v3d:#182023; color-scheme:dark }
@@ -174,7 +177,8 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
 .zr{stroke-width:1.1px;vector-effect:non-scaling-stroke;cursor:move}
 .z-work{fill:var(--z-work);stroke:var(--z-work-s)}.z-meet{fill:var(--z-meet);stroke:var(--z-meet-s)}
 .z-focus{fill:var(--z-focus);stroke:var(--z-focus-s)}.z-soft{fill:var(--z-soft);stroke:var(--z-soft-s)}
-.z-rec{fill:var(--z-rec);stroke:var(--z-rec-s)}.z-core{fill:var(--z-core);stroke:var(--z-core-s);stroke-width:1.6px}
+.z-rec{fill:var(--z-rec);stroke:var(--z-rec-s)}.z-tea{fill:var(--z-tea);stroke:var(--z-tea-s)}.z-brk{fill:var(--z-brk);stroke:var(--z-brk-s)}
+.z-lng{fill:var(--z-lng);stroke:var(--z-lng-s)}.z-hot{fill:var(--z-hot);stroke:var(--z-hot-s)}.z-core{fill:var(--z-core);stroke:var(--z-core-s);stroke-width:1.6px}
 .zo{stroke-dasharray:6 4}
 .hatch-l{stroke:var(--hatch);stroke-width:.05}
 .fu{fill:var(--furn-fill);stroke:var(--furn);stroke-width:.8px;vector-effect:non-scaling-stroke}
@@ -344,6 +348,10 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
         <button type="button" class="btn" data-add="meeting"><i style="background:var(--z-meet-s)"></i>Meeting room</button>
         <button type="button" class="btn" data-add="focus"><i style="background:var(--z-focus-s)"></i>Focus room</button>
         <button type="button" class="btn" data-add="reception"><i style="background:var(--z-rec-s)"></i>Reception</button>
+        <button type="button" class="btn" data-add="hotdesk"><i style="background:var(--z-hot-s)"></i>Hot desking</button>
+        <button type="button" class="btn" data-add="breakout"><i style="background:var(--z-brk-s)"></i>Breakout</button>
+        <button type="button" class="btn" data-add="lounge"><i style="background:var(--z-lng-s)"></i>Lounge</button>
+        <button type="button" class="btn" data-add="tea"><i style="background:var(--z-tea-s)"></i>Tea point</button>
         <button type="button" class="btn" data-add="core" title="Cores, plant, risers and other areas left out of the NIA"><i style="background:var(--z-core-s)"></i>Core / not NIA</button>
       </div>
       <label class="sw" style="margin-top:10px"><input type="checkbox" id="polyT"><span class="tg"></span>Draw as a polygon</label>
@@ -489,9 +497,17 @@ const TYPES={
   meeting:{label:'Meeting room',c:'meet',part:'glazed',pri:5},
   focus:{label:'Focus room',c:'focus',part:'solid',pri:5},
   reception:{label:'Reception',c:'rec',part:'open',pri:4},
+  hotdesk:{label:'Hot desking',c:'hot',part:'open',pri:2},
+  breakout:{label:'Breakout',c:'brk',part:'open',pri:3},
+  lounge:{label:'Lounge',c:'lng',part:'open',pri:3},
+  tea:{label:'Tea point',c:'tea',part:'open',pri:4},
   core:{label:'Core',c:'core',part:'solid',pri:6}
 };
-const ORDER=['work','soft','meeting','focus','reception'];
+const ORDER=['work','hotdesk','soft','breakout','lounge','meeting','focus','reception','tea'];
+const DESKY=t=>t==='work'||t==='hotdesk';
+// soft furnishing sets per use: which clusters, on what grid
+const SETS={soft:{kinds:['lounge','booth','high'],cell:[4.5,3.1]},breakout:{kinds:['cafe','high','booth'],cell:[2.6,2.6]},lounge:{kinds:['lounge'],cell:[4.5,3.1]}};
+const SOFTY=t=>!!SETS[t];
 
 /* ---------- floor picked in Revit ---------- */
 // TESTFIT_SITE (metres, y down, origin at the outline's top-left): faces (outline loops, even-odd),
@@ -659,7 +675,7 @@ function hitsZone(r,z,m){
   return edgesCut(P,g);
 }
 // Other spaces as obstacles: the rectangle must keep m clear of each.
-const obsOf=(zs,z,m)=>zs.filter(o=>o!==z).map(o=>({z:o,m:z.type==='work'&&(enclosed(o)||o.type==='core')?.05:m}));
+const obsOf=(zs,z,m)=>zs.filter(o=>o!==z).map(o=>({z:o,m:DESKY(z.type)&&(enclosed(o)||o.type==='core')?.05:m}));
 const blocked=(r,obst)=>obst.some(o=>hitsZone(r,o.z,o.m));
 // The largest rectangle inside a polygon space (rooms and reception are furnished in it), cached by shape.
 const RECTS=new Map();
@@ -707,7 +723,7 @@ function bankSlots(z,obst,cols,opt){
   const x0=z.x+(b.W?R.facade:0),x1=z.x+z.w-(b.E?R.facade:0),y0=z.y+(b.N?R.facade:0),y1=z.y+z.d-(b.S?R.facade:0);
   const along=(opt.dir||z.dir)==='x';
   const u0=along?x0:y0,u1=along?x1:y1,v0=along?y0:x0,v1=along?y1:x1;
-  const ad=assetDims('work','desk'),dw=ad?ad.w:B.w,dd=ad?ad.d:R.deskD,ch=R.chair,bankD=2*dd;
+  const ad=assetDims(z.type,'desk'),dw=ad?ad.w:B.w,dd=ad?ad.d:R.deskD,ch=R.chair,bankD=2*dd;
   // rows across the space: back-to-back pairs, and with a side, one row whose desks back onto that edge
   const one=side?dd+B.aisle-ch:0,room=v1-v0-one;
   let nb=0; while(2*ch+(nb+1)*bankD+nb*B.aisle<=room+EPS) nb++;
@@ -753,18 +769,20 @@ function bankSlots(z,obst,cols,opt){
 const CL={
   lounge:()=>[{k:'sofa',x:0,y:.78,w:2.0,d:.85,a:0,seats:2},{k:'coffee',x:0,y:-.2,w:1.1,d:.6,a:0},{k:'arm',x:-1.5,y:-.25,w:.8,d:.8,a:90,seats:1},{k:'arm',x:1.5,y:-.25,w:.8,d:.8,a:270,seats:1}],
   booth:()=>{const o=[];for(const bx of[-.88,.88])o.push({k:'bench',x:bx,y:.72,w:1.6,d:.6,a:0,seats:2},{k:'bench',x:bx,y:-.72,w:1.6,d:.6,a:180,seats:2},{k:'table',x:bx,y:0,w:1.4,d:.7,a:0});return o;},
+  cafe:()=>[{k:'table',x:0,y:0,w:.8,d:.8,a:0},{k:'chair',x:0,y:-.68,w:.5,d:.5,a:180,seats:1},{k:'chair',x:0,y:.68,w:.5,d:.5,a:0,seats:1},{k:'chair',x:-.68,y:0,w:.5,d:.5,a:90,seats:1},{k:'chair',x:.68,y:0,w:.5,d:.5,a:270,seats:1}],
   high:()=>{const o=[{k:'hightable',x:0,y:0,w:2.4,d:.9,a:0}];for(const sx of[-.8,0,.8])o.push({k:'stool',x:sx,y:.72,w:.4,d:.4,a:0,seats:1},{k:'stool',x:sx,y:-.72,w:.4,d:.4,a:180,seats:1});return o;}
 };
 function softLayout(z,obst,cols,opt){
   opt=opt||z.opt||{};
-  const R=S.rules,b=onB(z),c=R.softClear,k0=opt.k||0,cell=opt.g?[3.6,3.6]:[4.5,3.1];
+  const set=SETS[z.type]||SETS.soft;
+  const R=S.rules,b=onB(z),c=R.softClear,k0=opt.k||0,cell=opt.g?[set.cell[0]*.8,set.cell[0]*.8]:set.cell;
   const I={x:z.x+(b.W?R.facade:c),y:z.y+(b.N?R.facade:c)};
   I.w=z.x+z.w-(b.E?R.facade:c)-I.x; I.h=z.y+z.d-(b.S?R.facade:c)-I.y;
   if(I.w<2||I.h<2) return [];
   const nx=Math.max(1,Math.floor(I.w/cell[0])),ny=Math.max(1,Math.floor(I.h/cell[1])),sx=I.w/nx,sy=I.h/ny;
-  const out=[],kinds=['lounge','booth','high'];
+  const out=[],kinds=set.kinds;
   for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){
-    const cx=I.x+sx*(i+.5),cy=I.y+sy*(j+.5),pref=kinds[(i+j*2+k0)%3];
+    const cx=I.x+sx*(i+.5),cy=I.y+sy*(j+.5),pref=kinds[(i+j*2+k0)%kinds.length];
     let placed=null;
     for(const k of[pref,...kinds.filter(q=>q!==pref)]){
       for(const a of opt.a?[90,j%2?180:0]:[j%2?180:0,90]){
@@ -783,6 +801,20 @@ function softLayout(z,obst,cols,opt){
     out.push(p);
   }
   return out.map(it=>Object.assign(it,{zid:z.id,cat:'soft'}));
+}
+
+/* ---------- tea point ---------- */
+// A kitchenette run (sink, fridge, worktop) along one side, a high table with stools in front when there is room.
+function teaLayout(z0,opt){
+  opt=opt||z0.opt||{};const z=frameOf(z0);
+  const E=[{mx:z.x+z.w/2,my:z.y,a:0,L:z.w,D:z.d},{mx:z.x,my:z.y+z.d/2,a:270,L:z.d,D:z.w},{mx:z.x+z.w/2,my:z.y+z.d,a:180,L:z.w,D:z.d},{mx:z.x+z.w,my:z.y+z.d/2,a:90,L:z.d,D:z.w}];
+  // the longer sides first
+  const pool=E.slice().sort((p,q)=>q.L-p.L),e=pool[(opt.e||0)%pool.length];
+  if(e.L<1.8||e.D<1.6)return[];
+  const L=Math.min(e.L-.3,4.8),its=[{k:'kitchen',x:0,y:.33,w:L,d:.65,a:0}];
+  if(e.D>=3.6){const t=Math.min(2.4,L);its.push({k:'hightable',x:0,y:2.05,w:t,d:.8,a:0});
+    for(let i=0;i<Math.max(1,Math.floor(t/.8));i++){const sx=-t/2+.4+i*.8;its.push({k:'stool',x:sx,y:2.85,w:.4,d:.4,a:0,seats:1});}}
+  return placeAll(its,e.mx,e.my,e.a).map(it=>Object.assign(it,{zid:z0.id,cat:'soft'}));
 }
 
 /* ---------- reception ---------- */
@@ -890,8 +922,9 @@ const fitsIn=(z,it)=>siteOK(itemBox(it),.05)&&(!isPoly(z)||boxIn(z,itemBox(it),.
 // Every way the space can be laid out within the same rules; only the best-scoring ones are offered.
 function variantsOf(z){
   const v=[];
-  if(z.type==='work'){for(const dir of['y','x'])for(const au of[.5,0,1])for(const av of[.5,0,1])v.push({dir,au,av});}
-  else if(z.type==='soft'){for(const k of[0,1,2])for(const a of[0,1])for(const g of[0,1])v.push({k,a,g});}
+  if(DESKY(z.type)){for(const dir of['y','x'])for(const au of[.5,0,1])for(const av of[.5,0,1])v.push({dir,au,av});}
+  else if(z.type==='tea'){for(const e of[0,1,2,3])v.push({e});}
+  else if(SOFTY(z.type)){for(const k of[0,1,2])for(const a of[0,1])for(const g of[0,1])v.push({k,a,g});}
   else if(z.type==='meeting'||z.type==='focus'){for(const s of[0,1])for(const r of[0,1])v.push({s,r});}
   else if(z.type==='reception'){for(const e of[0,1,2,3])v.push({e});}
   return v;
@@ -902,11 +935,13 @@ function scoreOf(z,opt){
   if(z.type==='work'){
     // desks this space must hold to reach the floor's target, after the other workspaces: any layout holding
     // them is as good as another (more spare positions only breaks a tie in the order they are offered)
-    const others=zs.filter(q=>q.type==='work'&&q!==z).reduce((n,q)=>n+deskSlots(q,obsOf(zs,q,R.primary),cols).length,0);
+    const others=zs.filter(q=>DESKY(q.type)&&q!==z).reduce((n,q)=>n+deskSlots(q,obsOf(zs,q,R.primary),cols).length,0);
     const need=Math.max(0,(M?M.target:0)-others),cap=deskSlots(z,obsOf(zs,z,R.primary),cols,opt).length;
     return{s:Math.min(cap,need),cap};
   }
-  if(z.type==='soft'){const its=softLayout(z,obsOf(zs,z,R.softClear),cols,opt);return seats(its);}
+  if(z.type==='hotdesk')return deskSlots(z,obsOf(zs,z,R.primary),cols,opt).length;
+  if(z.type==='tea'){const its=teaLayout(z,opt).filter(it=>fitsIn(z,it));return seats(its)+its.length*.01;}
+  if(SOFTY(z.type)){const its=softLayout(z,obsOf(zs,z,R.softClear),cols,opt);return seats(its);}
   if(z.type==='reception'){const its=recLayout(z,core,opt).filter(it=>fitsIn(z,it));return seats(its)*100+its.filter(it=>it.k==='recdesk').length*1000;}
   const its=roomLayout(z,opt).filter(it=>fitsIn(z,it));return seats(its);
 }
@@ -923,7 +958,7 @@ function nextLayout(z){
 }
 function layoutKey(z,opt){
   const R=S.rules,zs=S.zones,cols=(SITE?SITE.cols:M.cols).map(c=>grow({x:c.x,y:c.y,w:c.w,h:c.h},.1)),core=zs.find(q=>q.type==='core')||null;
-  const its=z.type==='work'?deskSlots(z,obsOf(zs,z,R.primary),cols,opt).map(s=>s.desk):z.type==='soft'?softLayout(z,obsOf(zs,z,R.softClear),cols,opt)
+  const its=DESKY(z.type)?deskSlots(z,obsOf(zs,z,R.primary),cols,opt).map(s=>s.desk):SOFTY(z.type)?softLayout(z,obsOf(zs,z,R.softClear),cols,opt):z.type==='tea'?teaLayout(z,opt)
     :z.type==='reception'?recLayout(z,core,opt):roomLayout(z,opt);
   return its.map(it=>[it.k,Math.round(it.x*10),Math.round(it.y*10),Math.round(norm(it.a))]).sort().join(';');
 }
@@ -949,19 +984,23 @@ function compute(){
   const gross=MK?MK.area:F.w*F.d,NIA=Math.max(0,(MK?MK.net:gross)-coreA-colA);
   const target=Math.floor(NIA/S.density);
 
+  // hot desks fill their spaces and count towards the target; fixed workspaces take the rest
+  const items=[],spare=[];let placed=0,hot=0;
+  for(const z of zs.filter(z=>z.type==='hotdesk'))for(const s of deskSlots(z,obsOf(zs,z,R.primary),colObs)){
+    const g='ws'+placed;items.push(Object.assign({},s.desk,{cat:'hotdesk',g}),Object.assign({},s.chair,{cat:'hotdesk',g}));placed++;hot++;}
   const work=zs.filter(z=>z.type==='work');
   const slotsBy=work.map(z=>deskSlots(z,obsOf(zs,z,R.primary),colObs));
-  const cap=slotsBy.reduce((s,a)=>s+a.length,0),want=Math.min(target,cap);
+  const cap=slotsBy.reduce((s,a)=>s+a.length,0)+hot,want=Math.min(Math.max(0,target-hot),cap-hot);
   const take=slotsBy.map(a=>cap?Math.floor(want*a.length/cap):0);
   let left=want-take.reduce((s,n)=>s+n,0);
   slotsBy.map((a,i)=>({i,f:cap?want*a.length/cap-take[i]:0})).sort((p,q)=>q.f-p.f).forEach(o=>{if(left>0&&take[o.i]<slotsBy[o.i].length){take[o.i]++;left--;}});
-  const items=[],spare=[];let placed=0;
   slotsBy.forEach((a,i)=>a.forEach((s,k)=>{
     if(k<take[i]){const g='ws'+placed;items.push(Object.assign({},s.desk,{cat:'desks',g}),Object.assign({},s.chair,{cat:'desks',g}));placed++;}
     else spare.push(s.desk);
   }));
   for(const z of zs){
-    if(z.type==='soft')items.push(...softLayout(z,obsOf(zs,z,R.softClear),colObs));
+    if(SOFTY(z.type))items.push(...softLayout(z,obsOf(zs,z,R.softClear),colObs));
+    else if(z.type==='tea')items.push(...teaLayout(z).filter(it=>fitsIn(z,it)));
     else if(z.type==='reception')items.push(...recLayout(z,core).filter(it=>fitsIn(z,it)));
     else if(z.type==='meeting'||z.type==='focus')items.push(...roomLayout(z).filter(it=>fitsIn(z,it)));
   }
@@ -1026,13 +1065,13 @@ function compute(){
   // seats (visible layers only)
   const vis=it=>Ly[it.cat]!==false;
   const seatsBy={};zs.forEach(z=>seatsBy[z.id]=0);
-  const seats={desks:0,meeting:0,focus:0,soft:0,reception:0};
+  const seats={desks:0,hotdesk:0,meeting:0,focus:0,soft:0,breakout:0,lounge:0,tea:0,reception:0};
   const ztype={};zs.forEach(z=>ztype[z.id]=z.type);
   for(const it of items){if(!it.seats||!vis(it))continue;seatsBy[it.zid]+=it.seats;
-    const t=ztype[it.zid];const key=t==='work'?'desks':t==='meeting'?'meeting':t==='focus'?'focus':t==='soft'?'soft':'reception';seats[key]+=it.seats;}
-  const desksShown=Ly.desks?placed:0;
+    const t=ztype[it.zid];const key=t==='work'?'desks':t in seats?t:'reception';seats[key]+=it.seats;}
+  const desksShown=Ly.desks?placed:hot;
 
-  const typeArea={work:0,soft:0,meeting:0,focus:0,reception:0};
+  const typeArea={work:0,hotdesk:0,soft:0,breakout:0,lounge:0,meeting:0,focus:0,reception:0,tea:0};
   for(const z of zs)if(z.type!=='core'&&!z.nonia)typeArea[z.type]+=A.by[z.id];
   const allocated=Object.values(typeArea).reduce((s,v)=>s+v,0);
   const circ=Math.max(0,NIA-allocated);
@@ -1068,7 +1107,7 @@ function zoomAt(px,py,f){vb.x=px-(px-vb.x)*f;vb.y=py-(py-vb.y)*f;vb.w*=f;vb.h*=f
 function sym(it){
   const w=it.w,d=it.d,hw=f3(w/2),hd=f3(d/2);let s='';
   switch(it.k){
-    case'desk':s=`<rect class="fu" x="${-hw}" y="${-hd}" width="${f3(w)}" height="${f3(d)}"/><line class="fs" x1="${-hw}" y1="${f3(-d/2+.02)}" x2="${hw}" y2="${f3(-d/2+.02)}"/><rect class="fd" x="-.26" y="${f3(-d/2+.12)}" width=".52" height=".05"/>`;break;
+    case'desk':s=`<rect class="fu" x="${-hw}" y="${-hd}" width="${f3(w)}" height="${f3(d)}"/><line class="fs" x1="${-hw}" y1="${f3(-d/2+.02)}" x2="${hw}" y2="${f3(-d/2+.02)}"/>`+(it.cat==='hotdesk'?'':`<rect class="fd" x="-.26" y="${f3(-d/2+.12)}" width=".52" height=".05"/>`);break;
     case'chair':s=`<rect class="fu" x="-.23" y="-.22" width=".46" height=".44" rx=".1"/><rect class="fd" x="-.22" y=".17" width=".44" height=".08" rx=".03"/>`;break;
     case'arm':s=`<rect class="fu ft" x="-.4" y="-.4" width=".8" height=".8" rx=".12"/><rect class="fu" x="-.4" y=".22" width=".8" height=".18" rx=".06"/><rect class="fu" x="-.4" y="-.32" width=".13" height=".62" rx=".05"/><rect class="fu" x=".27" y="-.32" width=".13" height=".62" rx=".05"/>`;break;
     case'sofa':{const n=Math.max(2,Math.round((w-.3)/.7));let cush='';for(let i=1;i<n;i++){const x=f3(-w/2+.15+(w-.3)*i/n);cush+=`<line class="fu" x1="${x}" y1="${f3(-d/2+.05)}" x2="${x}" y2="${f3(d/2-.2)}"/>`;}
@@ -1080,6 +1119,7 @@ function sym(it){
     case'stool':s=`<circle class="fu ft" r=".19"/>`;break;
     case'recdesk':s=`<rect class="fu" x="${-hw}" y="${-hd}" width="${f3(w)}" height="${f3(d)}" rx=".05"/><rect class="fd" x="${-hw}" y="${-hd}" width="${f3(w)}" height=".3" rx=".05"/><line class="fu" x1="${f3(-w/2+.4)}" y1="${f3(-d/2+.3)}" x2="${f3(-w/2+.4)}" y2="${hd}"/><line class="fu" x1="${f3(w/2-.4)}" y1="${f3(-d/2+.3)}" x2="${f3(w/2-.4)}" y2="${hd}"/>`;break;
     case'screen':s=`<rect class="fd" x="${-hw}" y="-.04" width="${f3(w)}" height=".08"/>`;break;
+    case'kitchen':{const fx=f3(w/2-.65);s=`<rect class="fu" x="${-hw}" y="${-hd}" width="${f3(w)}" height="${f3(d)}"/><rect class="fu" x="${f3(-w/2+.35)}" y="${f3(-d/2+.12)}" width=".5" height=".38" rx=".08"/><rect class="fd" x="${fx}" y="${-hd}" width=".6" height="${f3(d)}" opacity=".35"/>`;break;}
     case'plant':s=`<circle class="fu" r=".28"/><circle class="leaf" r=".22"/><circle class="leaf" cx=".12" cy="-.1" r=".14"/>`;break;
   }
   return `<g transform="translate(${f3(it.x)} ${f3(it.y)}) rotate(${f3(it.a)})">${s}</g>`;
@@ -1254,7 +1294,8 @@ function siteSVG(){
 }
 
 /* ---------- dashboard ---------- */
-const TCOL={work:'var(--z-work-s)',soft:'var(--z-soft-s)',meeting:'var(--z-meet-s)',focus:'var(--z-focus-s)',reception:'var(--z-rec-s)',circ:'var(--circ)'};
+const TCOL={work:'var(--z-work-s)',hotdesk:'var(--z-hot-s)',soft:'var(--z-soft-s)',breakout:'var(--z-brk-s)',lounge:'var(--z-lng-s)',meeting:'var(--z-meet-s)',focus:'var(--z-focus-s)',reception:'var(--z-rec-s)',tea:'var(--z-tea-s)',circ:'var(--circ)'};
+const MIXL=[['work','Workspace'],['hotdesk','Hot desking'],['soft','Soft seating'],['breakout','Breakout'],['lounge','Lounge'],['meeting','Meeting rooms'],['focus','Focus rooms'],['reception','Reception'],['tea','Tea points']];
 function renderDash(){
   const m=M,R=S.rules,short=m.placed<m.target;
   $('#kpis').innerHTML=
@@ -1262,7 +1303,7 @@ function renderDash(){
     `<div class="kpi${short?' bad':''}"><span class="kl">Workstations</span><span class="kv">${m.desksShown}<small>/ ${m.target} target</small></span></div>`+
     `<div class="kpi"><span class="kl">Achieved density</span><span class="kv">${m.achieved?'1:'+m.achieved.toFixed(1):'—'}<small>m²/ws</small></span></div>`+
     `<div class="kpi"><span class="kl">Total seats</span><span class="kv">${Object.values(m.seats).reduce((s,v)=>s+v,0)}<small>all settings</small></span></div>`;
-  const rows=[['work','Workspace'],['soft','Soft seating'],['meeting','Meeting rooms'],['focus','Focus rooms'],['reception','Reception'],['circ','Circulation & unallocated']];
+  const rows=[...MIXL.filter(([k])=>k==='work'||m.typeArea[k]>0),['circ','Circulation & unallocated']];
   const val=k=>k==='circ'?m.circ:m.typeArea[k];
   const tot=m.NIA||1;
   $('#mixBar').innerHTML=rows.map(([k,l])=>`<i style="width:${(val(k)/tot*100).toFixed(2)}%;background:${TCOL[k]}" title="${l}"></i>`).join('');
@@ -1282,7 +1323,7 @@ function renderDash(){
   if(m.overlaps.length)ck.push(['warn',`${m.overlaps.map(o=>esc(o[0])+' overlaps '+esc(o[1])).slice(0,2).join('; ')}. The higher-priority space takes the area.`]);
   $('#checks').innerHTML=ck.map(([c,t])=>`<li><span class="chip ${c}">${c==='ok'?'OK':c==='warn'?'Check':'Issue'}</span><span>${t}</span></li>`).join('');
   const st=m.seats;
-  $('#seats').innerHTML=[['Desks',st.desks],['Meeting',st.meeting],['Focus',st.focus],['Soft',st.soft],['Reception',st.reception]].map(([l,v])=>`<div><b>${v}</b><span>${l}</span></div>`).join('');
+  $('#seats').innerHTML=[['Desks',st.desks],['Hot desks',st.hotdesk],['Meeting',st.meeting],['Focus',st.focus],['Soft',st.soft],['Breakout',st.breakout],['Lounge',st.lounge],['Tea point',st.tea],['Reception',st.reception]].filter(([l,v],i)=>i<1||v>0||['Meeting','Focus','Soft','Reception'].includes(l)).map(([l,v])=>`<div><b>${v}</b><span>${l}</span></div>`).join('');
   $('#parts').innerHTML=`<div><b>${m.partLen.glazed.toFixed(1)}</b><span>Glazed, m</span></div><div><b>${m.partLen.solid.toFixed(1)}</b><span>Solid, m</span></div><div><b>${m.doors.length}</b><span>Doors</span></div>`;
   $('#sched').innerHTML=`<thead><tr><th>Space</th><th>Enclosure</th><th class="n">m²</th><th class="n">Seats</th></tr></thead><tbody>`+
     S.zones.map(z=>{const t=TYPES[z.type];return`<tr data-id="${z.id}" class="${z.id===S.sel?'on':''}"><td><span class="nm"><span class="swatch" style="background:var(--z-${t.c}-s)"></span>${esc(z.name)}</span></td><td>${z.type==='core'?'Core':cap1(z.part)+(z.nonia?' · not NIA':'')}</td><td class="n">${m2(m.areaBy[z.id]||0)}</td><td class="n">${z.type==='core'?'—':m.seatsBy[z.id]}</td></tr>`;}).join('')+`</tbody>`;
@@ -1306,7 +1347,7 @@ function renderInsp(){
   <label class="sw fld"><input type="checkbox" id="iNia"${z.nonia?'':' checked'}><span class="tg"></span>Counts in the NIA</label>
   <div class="fld"><span class="fl">Use</span><div class="seg seg-wrap" id="iType">${ORDER.map(k=>`<button type="button" data-v="${k}" aria-pressed="${z.type===k}">${TYPES[k].label}</button>`).join('')}</div></div>
   <div class="fld"><span class="fl">Enclosure</span><div class="seg" id="iPart">${['open','glazed','solid'].map(p=>`<button type="button" data-v="${p}" aria-pressed="${z.part===p}">${cap1(p)}</button>`).join('')}</div></div>
-  ${z.type==='work'?`<div class="fld"><span class="fl">Desk banks run</span><div class="seg" id="iDir"><button type="button" data-v="x" aria-pressed="${z.dir==='x'}">East–west</button><button type="button" data-v="y" aria-pressed="${z.dir==='y'}">North–south</button></div></div>`:''}`}
+  ${DESKY(z.type)?`<div class="fld"><span class="fl">Desk banks run</span><div class="seg" id="iDir"><button type="button" data-v="x" aria-pressed="${z.dir==='x'}">East–west</button><button type="button" data-v="y" aria-pressed="${z.dir==='y'}">North–south</button></div></div>`:''}`}
   <div class="fields fld" style="grid-template-columns:repeat(4,1fr)">
     <div class="f"><label for="iX">X m</label><input id="iX" type="number" step="0.15"></div>
     <div class="f"><label for="iY">Y m</label><input id="iY" type="number" step="0.15"></div>
@@ -1353,7 +1394,7 @@ function refreshZone(id){
   const z=S.zones.find(q=>q.id===id);if(!z)return;
   const n=nextLayout(z);if(!n){toast('This space has no other layouts.');return;}
   if(n.same){toast(`${z.name}: this is already the only best layout for this space.`);return;}
-  z.opt=n.opt;if(z.type==='work')z.dir=n.opt.dir;
+  z.opt=n.opt;if(DESKY(z.type))z.dir=n.opt.dir;
   S.sel=z.id;refresh(true);
   toast(`${z.name}: layout ${n.k} of ${n.n}, all equally good`+(z.type==='work'?` (${n.cap} desk positions, ${n.score} needed here)`:'')+'.');
 }
@@ -1389,11 +1430,12 @@ function cloneZone(z){
 
 /* ---------- assets: the family for each piece, per space use ---------- */
 const AKINDS={work:['desk','chair','monitor'],meeting:['meettable','table','chair','arm','coffee'],focus:['table','chair','arm','coffee'],
-  soft:['sofa','arm','coffee','bench','table','hightable','stool','plant'],reception:['recdesk','chair','sofa','arm','coffee','plant']};
+  soft:['sofa','arm','coffee','bench','table','hightable','stool','plant'],reception:['recdesk','chair','sofa','arm','coffee','plant'],
+  hotdesk:['desk','chair'],breakout:['table','chair','hightable','stool','bench','plant'],lounge:['sofa','arm','coffee','plant'],tea:['kitchen','hightable','stool']};
 const KLAB={desk:'Desk',chair:'Chair',monitor:'Monitor',meettable:'Meeting table',table:'Table',arm:'Armchair',coffee:'Coffee table',sofa:'Sofa',
-  bench:'Booth bench',hightable:'High table',stool:'Stool',plant:'Plant',recdesk:'Reception desk'};
+  bench:'Booth bench',hightable:'High table',stool:'Stool',plant:'Plant',recdesk:'Reception desk',kitchen:'Kitchenette'};
 // tables, sofas and benches whose family can be stretched keep the size the layout gives them; everything else takes the family's
-const STRETCH=new Set(['recdesk','table','meettable','hightable','coffee','sofa','bench']);
+const STRETCH=new Set(['kitchen','recdesk','table','meettable','hightable','coffee','sofa','bench']);
 S.assets=S.assets||{};let ATYPE='work';
 function assetDims(type,k){
   const a=S.assets[type+':'+k];if(!a||!a.w||!a.d)return null;
@@ -1484,7 +1526,7 @@ function closeDraw(){
   const z=mkZone({name:addName(t,n),type:t,part:TYPES[t].part,pts:P,dir:'y'});syncBox(z);
   S.zones.push(z);S.sel=z.id;endDraw();refresh(true);
 }
-const addName=(t,n)=>(t==='work'?'Workspace':t==='soft'?'Soft seating':t==='meeting'?'Meeting':t==='focus'?'Focus':t==='core'?'Core':'Reception')+' '+String(n).padStart(2,'0');
+const addName=(t,n)=>(t==='work'?'Workspace':t==='meeting'?'Meeting':t==='focus'?'Focus':TYPES[t].label)+' '+String(n).padStart(2,'0');
 
 /* ---------- plan interaction ---------- */
 function svgPt(e){const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;return p.matrixTransform(svg.getScreenCTM().inverse());}
@@ -1600,7 +1642,7 @@ $('#dens').addEventListener('input',e=>{S.density=parseFloat(e.target.value);ref
 $$('[data-layer]').forEach(cb=>cb.addEventListener('change',()=>{S.layers[cb.dataset.layer]=cb.checked;refresh(false);}));
 $('#snapT').addEventListener('change',e=>{S.snap=e.target.checked;});
 $('#polyT').addEventListener('change',e=>{$('#polyNote').hidden=!e.target.checked;if(!e.target.checked&&DRAW)endDraw();});
-const SIZES={work:[9,7.5],soft:[6,4.5],meeting:[4.5,3.6],focus:[1.8,2.4],reception:[7.5,6],core:[4.5,4.5]};
+const SIZES={work:[9,7.5],hotdesk:[7.5,6],soft:[6,4.5],breakout:[6,4.5],lounge:[6,4.5],tea:[4.2,3.6],meeting:[4.5,3.6],focus:[1.8,2.4],reception:[7.5,6],core:[4.5,4.5]};
 $$('[data-add]').forEach(b=>b.addEventListener('click',()=>{
   const t=b.dataset.add,[w,d]=SIZES[t],F=S.floor;
   if($('#polyT').checked){startDraw(t);return;}
@@ -1669,7 +1711,7 @@ const PAL={ground:'#cdd3d5',slab:'#a7adaf',fwork:'#8e979b',fmeet:'#857f95',ffocu
   frame:'#30373b',fabric:'#62737a',chair:'#2f3539',mon:'#141719',sofaS:'#6e8f79',sofaR:'#b98f3f',arm:'#b86b4c',booth:'#3f6c77',pot:'#e7e3da',
   leaf:'#4c7d47',screen:'#15181a',span:'#59636a'};
 const DARKS=['mull','frame','chair','mon','screen','span','fabric','booth'];
-const FLOORK={work:'fwork',meeting:'fmeet',focus:'ffocus',soft:'fsoft',reception:'frec',core:'fcore'};
+const FLOORK={work:'fwork',hotdesk:'fwork',meeting:'fmeet',focus:'ffocus',soft:'fsoft',breakout:'fsoft',lounge:'fsoft',tea:'frec',reception:'frec',core:'fcore'};
 function tok(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()||'#e7ecee';}
 function init3D(){
   const host=$('#v3d');
@@ -1761,7 +1803,7 @@ function furn3(it){
   const up=it.cat==='recSeat'?'sofaR':it.cat==='meeting'?'fabric':'sofaS';
   switch(it.k){
     case'desk':put('box','oak',fr,0,.72,0,w-.02,.025,d);put('box','frame',fr,-(w/2-.04),.355,0,.04,.71,d-.12);put('box','frame',fr,w/2-.04,.355,0,.04,.71,d-.12);
-      put('box','fabric',fr,0,.93,-(d/2-.015),w-.02,.4,.025);put('box','mon',fr,0,1.06,-(d/2-.2),.56,.33,.025);put('box','mon',fr,0,.81,-(d/2-.22),.05,.17,.05);break;
+      put('box','fabric',fr,0,.93,-(d/2-.015),w-.02,.4,.025);if(it.cat!=='hotdesk'){put('box','mon',fr,0,1.06,-(d/2-.2),.56,.33,.025);put('box','mon',fr,0,.81,-(d/2-.22),.05,.17,.05);}break;
     case'chair':put('box','chair',fr,0,.47,0,.5,.07,.48);put('box','chair',fr,0,.8,.22,.46,.48,.05);put('cyl','frame',fr,0,.24,0,.06,.4,.06);put('cyl','frame',fr,0,.03,0,.58,.04,.58);break;
     case'arm':{const u=it.cat==='soft'?'arm':up;put('box',u,fr,0,.22,0,.8,.38,.8);put('box',u,fr,0,.6,.31,.8,.42,.18);put('box',u,fr,-.33,.5,-.05,.14,.22,.7);put('box',u,fr,.33,.5,-.05,.14,.22,.7);break;}
     case'sofa':put('box',up,fr,0,.2,0,w,.4,d);put('box',up,fr,0,.62,d/2-.1,w,.44,.2);put('box',up,fr,-(w/2-.08),.51,0,.16,.22,d);put('box',up,fr,w/2-.08,.51,0,.16,.22,d);break;
@@ -1774,6 +1816,7 @@ function furn3(it){
       put('box','white',fr,-(w/2-.02),.36,.15,.04,.72,d-.3);put('box','white',fr,w/2-.02,.36,.15,.04,.72,d-.3);break;
     case'meettable':put('box','oak',fr,0,.74,0,w,.04,d);put('box','frame',fr,-w*.3,.36,0,.1,.72,d*.45);put('box','frame',fr,w*.3,.36,0,.1,.72,d*.45);break;
     case'screen':put('box','screen',fr,0,1.45,0,w,.9,.05);break;
+    case'kitchen':put('box','white',fr,0,.435,0,w,.87,d);put('box','oak',fr,0,.885,0,w+.02,.03,d+.02);put('box','white',fr,w/2-.35,1.0,0,.6,2.0,d);break;
     case'plant':put('cyl','pot',fr,0,.25,0,.5,.5,.5);put('sph','leaf',fr,0,1.05,0,.95,1.1,.95);break;
   }
 }
@@ -1889,10 +1932,10 @@ function layoutForRevit(){
     if(z.nonia)o.nonia=true;return o;});
   const walls=M.walls.filter(w=>Math.hypot(w.x2-w.x1,w.y2-w.y1)>=.05).map(w=>({x1:r(w.x1),y1:r(w.y1),x2:r(w.x2),y2:r(w.y2),part:w.part,zone:w.zid}));
   const doors=M.doors.map(d=>({x:r(d.hx),y:r(d.hy),dx:r(d.dx),dy:r(d.dy),nx:r(d.nx),ny:r(d.ny),w:r(d.w),part:d.part,zone:d.zid}));
-  const lab={work:'Workspace',soft:'Soft seating',meeting:'Meeting rooms',focus:'Focus rooms',reception:'Reception'};
+  const lab=Object.fromEntries(MIXL);
   const summary={nia:r(M.NIA),gross:r(M.gross),notNia:r(M.coreA),desks:M.desksShown,target:M.target,density:S.density,achieved:r(M.achieved),band:M.band[0],
-    seats:M.seats,totalSeats:Object.values(M.seats).reduce((a,b)=>a+b,0),
-    mix:[...Object.keys(lab).map(k=>({type:k,label:lab[k],m2:r(M.typeArea[k]),pct:M.NIA?r(M.typeArea[k]/M.NIA*100):0})),{type:'circ',label:'Circulation & unallocated',m2:r(M.circ),pct:M.NIA?r(M.circ/M.NIA*100):0}],
+    seats:Object.fromEntries([['desks','Desks'],['hotdesk','Hot desks'],['meeting','Meeting'],['focus','Focus'],['soft','Soft seating'],['breakout','Breakout'],['lounge','Lounge'],['tea','Tea point'],['reception','Reception']].filter(([k])=>k==='desks'||M.seats[k]>0).map(([k,l])=>[l,M.seats[k]])),totalSeats:Object.values(M.seats).reduce((a,b)=>a+b,0),
+    mix:[...Object.keys(lab).filter(k=>k==='work'||M.typeArea[k]>0).map(k=>({type:k,label:lab[k],m2:r(M.typeArea[k]),pct:M.NIA?r(M.typeArea[k]/M.NIA*100):0})),{type:'circ',label:'Circulation & unallocated',m2:r(M.circ),pct:M.NIA?r(M.circ/M.NIA*100):0}],
     partitions:{glazed:r(M.partLen.glazed),solid:r(M.partLen.solid),doors:M.doors.length},
     checks:$$('#checks li').map(li=>({level:(li.querySelector('.chip')||{}).textContent||'',text:(li.querySelector('span:last-child')||{}).textContent||''}))};
   const assets={};for(const[k,a]of Object.entries(S.assets))if(a&&a.id&&!a.pending)assets[k]={id:a.id,type:a.type||'',rot:a.rot||0};

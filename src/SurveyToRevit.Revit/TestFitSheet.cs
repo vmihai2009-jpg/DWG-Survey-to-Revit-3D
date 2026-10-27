@@ -18,6 +18,10 @@ internal static class TestFitSheet
     {
         ["work"] = ("Workspace", new Color(0xe3, 0xec, 0xf5), new Color(0x5d, 0x84, 0xa8), 2),
         ["soft"] = ("Soft seating", new Color(0xe2, 0xf0, 0xe5), new Color(0x4f, 0x8f, 0x62), 3),
+        ["hotdesk"] = ("Hot desking", new Color(0xe4, 0xea, 0xf7), new Color(0x4a, 0x68, 0xb8), 2),
+        ["breakout"] = ("Breakout", new Color(0xdf, 0xf1, 0xf0), new Color(0x2f, 0x8f, 0x8a), 3),
+        ["lounge"] = ("Lounge", new Color(0xf3, 0xe2, 0xec), new Color(0xa5, 0x50, 0x7f), 3),
+        ["tea"] = ("Tea point", new Color(0xf9, 0xe6, 0xd3), new Color(0xc0, 0x70, 0x2e), 4),
         ["reception"] = ("Reception", new Color(0xf6, 0xed, 0xd8), new Color(0xa5, 0x81, 0x2c), 4),
         ["meeting"] = ("Meeting room", new Color(0xeb, 0xe5, 0xf5), new Color(0x7b, 0x64, 0xad), 5),
         ["focus"] = ("Focus room", new Color(0xf4, 0xe4, 0xe2), new Color(0xa4, 0x5f, 0x58), 5),
@@ -153,7 +157,7 @@ internal static class TestFitSheet
                 catch (Exception ex) { log.Add($"The filled region for '{z.Name}' was not drawn: {ex.Message}"); }
 
             var use = z.NotNia && z.Type != "core" ? Uses.GetValueOrDefault(z.Type).Label + " (not NIA)" : Uses.GetValueOrDefault(z.Type).Label ?? z.Type;
-            var seats = z.Type == "work" ? layout.Items.Count(it => it.Zone == z.Id && it.Kind == "desk") + " desks" : z.Seats > 0 ? z.Seats + " seats" : null;
+            var seats = z.Type is "work" or "hotdesk" ? layout.Items.Count(it => it.Zone == z.Id && it.Kind == "desk") + (z.Type == "work" ? " desks" : " hot desks") : z.Seats > 0 ? z.Seats + " seats" : null;
             var label = $"{z.Name}\n{use} · {z.AreaM2:0} m²" + (seats != null ? "\n" + seats : "");
             var p = z.RoomPoint;
             var opts = new TextNoteOptions(text) { HorizontalAlignment = HorizontalTextAlignment.Center };
@@ -305,7 +309,7 @@ internal static class TestFitSheet
         Row((0, "Space"), (60, "Use"), (105, "m²"), (125, "Seats / desks"));
         foreach (var z in layout.Zones)
         {
-            var count = z.Type == "work" ? layout.Items.Count(it => it.Zone == z.Id && it.Kind == "desk") : z.Seats;
+            var count = z.Type is "work" or "hotdesk" ? layout.Items.Count(it => it.Zone == z.Id && it.Kind == "desk") : z.Seats;
             Row((0, z.Name), (60, Uses.GetValueOrDefault(z.Type).Label + (z.NotNia && z.Type != "core" ? " (not NIA)" : "")), (105, $"{z.AreaM2:0}"), (125, count > 0 ? count.ToString() : "–"));
         }
         if (s.Checks.Count > 0)

@@ -49,9 +49,9 @@ public sealed class TestFitLayout
 {
     /// <summary>
     /// A monitor on each desk, at the back of the desk facing its user, in the desk's group: the page draws one
-    /// on every desk, so the model gets one too.
+    /// on every desk, so the model gets one too. Hot desks are left bare, as the page draws them.
     /// </summary>
-    public IEnumerable<FitItem> WithMonitors() => Items.SelectMany(it => it.Kind != "desk" ? new[] { it } : new[]
+    public IEnumerable<FitItem> WithMonitors() => Items.SelectMany(it => it.Kind != "desk" || it.Category == "hotdesk" ? new[] { it } : new[]
     {
         it,
         it with { Kind = "monitor", Center = it.Center - it.Front * (it.DepthMm / 2 - 170), WidthMm = 560, DepthMm = 200 },
