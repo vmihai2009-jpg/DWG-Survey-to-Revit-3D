@@ -177,6 +177,13 @@ internal static class TestFitReader
     {
         var lines = new List<IReadOnlyList<Vec2>>();
         if (view == null) return lines;
+        IReadOnlyList<IReadOnlyList<Vec2>>? crop = null;
+        try
+        {
+            if (view.CropBoxActive && view.GetCropRegionShapeManager()?.GetCropShape() is { Count: > 0 } shape)
+                crop = shape.Select(loop => (IReadOnlyList<Vec2>)loop.SelectMany(c => { var t = c.Tessellate(); return t.Take(t.Count - 1); }).Select(P).ToList()).ToList();
+        }
+        catch { /* no crop: the whole level */ }
         var points = 0;
         bool In(Vec2 p) => p.X >= min.X && p.X <= max.X && p.Y >= min.Y && p.Y <= max.Y;
         void Add(IList<XYZ> pts)
@@ -188,13 +195,6 @@ internal static class TestFitReader
             if (masks.Count == 0 && crop == null) { lines.Add(l); points += l.Count; return; }
             foreach (var piece in PlanMask.Visible(l, masks, crop)) { lines.Add(piece); points += piece.Count; }
         }
-        IReadOnlyList<IReadOnlyList<Vec2>>? crop = null;
-        try
-        {
-            if (view.CropBoxActive && view.GetCropRegionShapeManager()?.GetCropShape() is { Count: > 0 } shape)
-                crop = shape.Select(loop => (IReadOnlyList<Vec2>)loop.SelectMany(c => { var t = c.Tessellate(); return t.Take(t.Count - 1); }).Select(P).ToList()).ToList();
-        }
-        catch { /* no crop: the whole level */ }
         bool Shown(GeometryObject g) =>
             doc.GetElement(g.GraphicsStyleId) is not GraphicsStyle { GraphicsStyleCategory: { } c } || !view.GetCategoryHidden(c.Id);
         void Walk(GeometryElement? geo)

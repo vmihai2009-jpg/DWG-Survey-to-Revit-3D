@@ -25,7 +25,7 @@ public class TestFitCommand : IExternalCommand
         if (doc == null || doc.IsFamilyDocument) { message = "Open a project first."; return Result.Failed; }
         var picked = uidoc!.Selection.GetElementIds();
         // on a sheet: the floor plan placed on it (the selected viewport's, else the largest)
-        var active = uidoc.ActiveView is ViewSheet sheet ? PlanOnSheet(doc, sheet, picked) : uidoc.ActiveView;
+        var active = uidoc.ActiveView is ViewSheet onSheet ? PlanOnSheet(doc, onSheet, picked) : uidoc.ActiveView;
         if (uidoc.ActiveView is ViewSheet) picked = new List<ElementId>();
         if (active is not ViewPlan { ViewType: ViewType.FloorPlan, GenLevel: { } level } plan)
         {
