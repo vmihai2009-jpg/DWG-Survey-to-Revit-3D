@@ -1231,7 +1231,7 @@ const TCOL={work:'var(--z-work-s)',soft:'var(--z-soft-s)',meeting:'var(--z-meet-
 function renderDash(){
   const m=M,R=S.rules,short=m.placed<m.target;
   $('#kpis').innerHTML=
-    `<div class="kpi"><span class="kl">Net internal area</span><span class="kv">${m2(m.NIA)}<small>m²</small></span></div>`+
+    `<div class="kpi"><span class="kl">Net internal area</span><span class="kv">${m2(m.NIA)}<small>m²</small></span>${m.coreA>0.05?`<span class="kl" style="margin-top:4px;text-transform:none;letter-spacing:0">${m2(m.coreA)} m² of cores / not NIA left out</span>`:''}</div>`+
     `<div class="kpi${short?' bad':''}"><span class="kl">Workstations</span><span class="kv">${m.desksShown}<small>/ ${m.target} target</small></span></div>`+
     `<div class="kpi"><span class="kl">Achieved density</span><span class="kv">${m.achieved?'1:'+m.achieved.toFixed(1):'—'}<small>m²/ws</small></span></div>`+
     `<div class="kpi"><span class="kl">Total seats</span><span class="kv">${Object.values(m.seats).reduce((s,v)=>s+v,0)}<small>all settings</small></span></div>`;
@@ -1262,7 +1262,7 @@ function renderDash(){
   // density panel
   const[bn,B]=m.band;
   $('#densV').textContent='1 : '+S.density.toFixed(1);
-  $('#densNote').textContent=`Target ${m.target} workstations. ${bn} band: ${mmf(B.w)} mm desks, ${mmf(B.aisle)} mm desk to desk, up to ${B.per} desks per bank side.`;
+  $('#densNote').textContent=`Target ${m.target} workstations (${m2(m.NIA)} m² NIA ÷ ${S.density.toFixed(1)}, after ${m2(m.coreA)} m² of cores and not-NIA areas are taken out). ${bn} band: ${mmf(B.w)} mm desks, ${mmf(B.aisle)} mm desk to desk, up to ${B.per} desks per bank side.`;
   const lo=6,hi=12.5,p1=Math.max(0,Math.min(1,(R.std.min-lo)/(hi-lo))),p2=Math.max(p1,Math.min(1,(R.gen.min-lo)/(hi-lo)));
   const cols=`${p1}fr ${p2-p1}fr ${1-p2}fr`;
   $('#bandBar').style.gridTemplateColumns=cols;$('#bandLbl').style.gridTemplateColumns=cols;
@@ -1371,7 +1371,8 @@ S.assets=S.assets||{};let ATYPE='work';
 function assetDims(type,k){
   const a=S.assets[type+':'+k];if(!a||!a.w||!a.d)return null;
   if(STRETCH.has(k)&&a.sizable)return null;
-  return{w:a.w/1000,d:a.d/1000};
+  const q=(a.rot||0)%180===90;// turned a quarter: its width runs the other way
+  return{w:(q?a.d:a.w)/1000,d:(q?a.w:a.d)/1000};
 }
 const mmA=n=>Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g,' ');
 const HOST=()=>window.chrome&&window.chrome.webview;
@@ -1388,7 +1389,9 @@ window.testfitAsset=(slot,id,res)=>{
   const a=S.assets[slot];if(!a||a.id!==id)return;a.pending=false;
   if(!res||res.error){toast((res&&res.error)||'That family could not be read.');delete S.assets[slot];renderAssets();return;}
   a.types=res.types||[];
-  if(a.types.length){const k=slot.split(':')[1],want=k==='desk'?band()[1].w*1000:0,t=want?a.types.reduce((p,q)=>Math.abs(q.w-want)<Math.abs(p.w-want)?q:p):a.types[0];setType(a,t.name);}
+  if(a.types.length){const k=slot.split(':')[1],want=k==='desk'?band()[1].w*1000:0,t=want?a.types.reduce((p,q)=>Math.abs(q.w-want)<Math.abs(p.w-want)?q:p):a.types[0];setType(a,t.name);
+    // a desk or table drawn deeper than it is wide has its front on a short side: turn it so people sit along the long side
+    if(['desk','recdesk','table','meettable'].includes(k)&&a.d>a.w*1.15&&!a.rot)a.rot=90;}
   refresh(false);renderAssets();
   if(a.types.length)toast(`${a.name}: ${mmA(a.w)} × ${mmA(a.d)} mm`+(a.sizable&&STRETCH.has(slot.split(':')[1])?' (stretches to the layout)':''));
 };
@@ -1396,7 +1399,7 @@ function setType(a,name){const t=(a.types||[]).find(t=>t.name===name);if(!t)retu
 function renderAssets(){
   const el=$('#assets');if(!el)return;
   const cat=SITE&&SITE.assets;
-  let h=`<h2>Assets</h2><p class="hint">Pick the family each piece uses in each kind of space. The first one is the add-in's pick (the project's, else the Autodesk library's). A picked family is loaded and measured, and the layout takes its size.</p>
+  let h=`<h2>Assets</h2><p class="hint">Pick the family each piece uses in each kind of space. The first one is the add-in's pick (the project's, else the Autodesk library's). A picked family is loaded and measured, and the layout takes its size. If a family comes in facing the wrong way (the chair at the end of the desk), turn it here.</p>
   <div class="seg seg-wrap" id="aType" style="margin:10px 0 4px">${ORDER.map(k=>`<button type="button" data-v="${k}" aria-pressed="${ATYPE===k}">${TYPES[k].label}</button>`).join('')}</div>`;
   if(!cat){el.innerHTML=h+'<p class="note">The family lists come from Revit: open the test-fit from Revit to link families.</p>';return;}
   for(const k of AKINDS[ATYPE]){
@@ -1407,6 +1410,7 @@ function renderAssets(){
     h+=`<div class="asset"><div class="an"><span>${KLAB[k]}</span><span class="ad">${dims}</span></div>
       <select data-slot="${slot}" aria-label="${KLAB[k]} family"><option value=""${sel?'':' selected'}>Add-in's pick${list[0]?': '+esc(list[0].name):''}</option>
       ${Object.entries(groups).map(([g,cs])=>`<optgroup label="${esc(g)}">${cs.map(c=>`<option value="${esc(c.id)}"${c.id===sel?' selected':''}>${esc(c.name)}</option>`).join('')}</optgroup>`).join('')}</select>
+      ${a&&a.id&&!a.pending?`<div class="ins-b" style="margin-top:6px;align-items:center"><button type="button" class="btn" data-rot="${slot}" title="Turn the family a quarter in its place, for a family whose front is not where Revit's usually is (the chair at the end of the desk)">↻ Turn 90°</button><span class="ad">${a.rot||0}°</span></div>`:''}
       ${a&&a.types&&a.types.length>1?`<select data-type="${slot}" aria-label="${KLAB[k]} type">${a.types.map(t=>`<option${t.name===a.type?' selected':''} value="${esc(t.name)}">${esc(t.name)} · ${mmA(t.w)} × ${mmA(t.d)}</option>`).join('')}</select>`:''}</div>`;
   }
   h+=`<div class="ins-b" style="margin-top:10px"><button type="button" class="btn" id="aAll" title="Load the add-in's pick for every piece in this kind of space and take its sizes">Use the default families' sizes</button></div>`;
@@ -1416,6 +1420,7 @@ document.addEventListener('click',e=>{
   const t=e.target.closest('#lTabs button');
   if(t){$$('#lTabs button').forEach(b=>b.setAttribute('aria-pressed',b===t));$('#left').classList.toggle('on-assets',t.dataset.t==='assets');if(t.dataset.t==='assets')renderAssets();return;}
   const b=e.target.closest('#aType button');if(b){ATYPE=b.dataset.v;renderAssets();return;}
+  const rb=e.target.closest('[data-rot]');if(rb){const a=S.assets[rb.dataset.rot];if(a){a.rot=((a.rot||0)+90)%360;refresh(false);renderAssets();toast(`${a.name} turned to ${a.rot}°: Revit places it turned that way, with the layout around it.`);}return;}
   if(e.target.closest('#aAll')&&SITE&&SITE.assets){for(const k of AKINDS[ATYPE]){const c=(SITE.assets[k]||[])[0];if(c&&c.id!=='own'&&!S.assets[ATYPE+':'+k])pickAsset(ATYPE+':'+k,c.id);}}
 });
 document.addEventListener('change',e=>{
@@ -1856,7 +1861,7 @@ function layoutForRevit(){
     mix:[...Object.keys(lab).map(k=>({type:k,label:lab[k],m2:r(M.typeArea[k]),pct:M.NIA?r(M.typeArea[k]/M.NIA*100):0})),{type:'circ',label:'Circulation & unallocated',m2:r(M.circ),pct:M.NIA?r(M.circ/M.NIA*100):0}],
     partitions:{glazed:r(M.partLen.glazed),solid:r(M.partLen.solid),doors:M.doors.length},
     checks:$$('#checks li').map(li=>({level:(li.querySelector('.chip')||{}).textContent||'',text:(li.querySelector('span:last-child')||{}).textContent||''}))};
-  const assets={};for(const[k,a]of Object.entries(S.assets))if(a&&a.id&&!a.pending)assets[k]={id:a.id,type:a.type||''};
+  const assets={};for(const[k,a]of Object.entries(S.assets))if(a&&a.id&&!a.pending)assets[k]={id:a.id,type:a.type||'',rot:a.rot||0};
   return{kind:'testfit-layout',version:1,density:S.density,keepPartitions:KEEP_PARTS,desks:M.desksShown,nia:r(M.NIA),items,walls,doors,zones,summary,assets,sheet:$('#sheetT').checked};
 }
 

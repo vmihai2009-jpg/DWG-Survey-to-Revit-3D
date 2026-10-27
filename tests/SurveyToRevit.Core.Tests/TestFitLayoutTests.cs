@@ -64,7 +64,7 @@ public class TestFitLayoutTests
             {"kind":"testfit-layout","sheet":false,
              "walls":[{"x1":0,"y1":0,"x2":0,"y2":3,"part":"divider","zone":"z2"}],
              "zones":[{"id":"z2","name":"Plant","type":"soft","part":"open","x":0,"y":0,"w":2,"d":2,"a":4,"seats":3,"nonia":true}],
-             "assets":{"work:desk":{"id":"f:C:/lib/M_Desk.rfa","type":"1600x800"},"soft:sofa":{"id":""}},
+             "assets":{"work:desk":{"id":"f:C:/lib/M_Desk.rfa","type":"1600x800","rot":90},"soft:sofa":{"id":""}},
              "summary":{"nia":600,"gross":700,"notNia":40,"desks":50,"target":60,"density":10,"achieved":12,"band":"Standard",
                "seats":{"desks":50,"meeting":8},"totalSeats":58,
                "mix":[{"type":"work","label":"Workspace","m2":400,"pct":66.7}],
@@ -79,7 +79,7 @@ public class TestFitLayoutTests
         Assert.Equal(3, z.Seats);
         Assert.False(l.Sheet);
         var a = Assert.Single(l.Assets); // one with no id is not a pick
-        Assert.Equal(("f:C:/lib/M_Desk.rfa", "1600x800"), a.Value);
+        Assert.Equal(("f:C:/lib/M_Desk.rfa", "1600x800", 90.0), a.Value);
         var s = l.Summary!;
         Assert.Equal(600, s.Nia);
         Assert.Equal(60, s.Target);

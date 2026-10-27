@@ -61,8 +61,11 @@ public sealed class TestFitLayout
     public List<FitWall> Walls { get; } = new();
     public List<FitDoor> Doors { get; } = new();
     public List<FitZone> Zones { get; } = new();
-    /// <summary>The family picked on the page's Assets tab per space use and kind ("work:desk"): its id there and the type.</summary>
-    public Dictionary<string, (string Id, string Type)> Assets { get; } = new(StringComparer.Ordinal);
+    /// <summary>
+    /// The family picked on the page's Assets tab per space use and kind ("work:desk"): its id there, the type, and
+    /// the extra turn (degrees anticlockwise) for a family whose front is not towards -Y.
+    /// </summary>
+    public Dictionary<string, (string Id, string Type, double Turn)> Assets { get; } = new(StringComparer.Ordinal);
     /// <summary>The page's dashboard figures, for the sheet; null from an older page.</summary>
     public FitSummary? Summary { get; private set; }
     public int Desks { get; private set; }
@@ -112,7 +115,7 @@ public sealed class TestFitLayout
         }
         if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Object)
             foreach (var a in assets.EnumerateObject())
-                if (a.Value.ValueKind == JsonValueKind.Object && S(a.Value, "id") is { Length: > 0 } id) layout.Assets[a.Name] = (id, S(a.Value, "type"));
+                if (a.Value.ValueKind == JsonValueKind.Object && S(a.Value, "id") is { Length: > 0 } id) layout.Assets[a.Name] = (id, S(a.Value, "type"), D(a.Value, "rot"));
         if (root.TryGetProperty("summary", out var sum) && sum.ValueKind == JsonValueKind.Object) layout.Summary = FitSummary.Parse(sum);
         return layout;
     }

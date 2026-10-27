@@ -36,7 +36,7 @@ internal sealed class TestFitBuilder
     List<FitItem> _items = new();
     Dictionary<string, FitZone> _zones = new();
 
-    readonly Dictionary<string, (Family? Family, string Type)> _picked = new(StringComparer.Ordinal);
+    readonly Dictionary<string, (Family? Family, string Type, double Turn)> _picked = new(StringComparer.Ordinal);
 
     public TestFitBuilder(Document doc, Level level, double storeyHeightMm, View? view = null)
     {
@@ -257,7 +257,7 @@ internal sealed class TestFitBuilder
     void ResolveFurniture(TestFitLayout layout)
     {
         // the families picked on the page's Assets tab, per space use and kind
-        foreach (var (key, (id, type)) in layout.Assets)
+        foreach (var (key, (id, type, turn)) in layout.Assets)
         {
             Family? family = null;
             try
@@ -269,7 +269,7 @@ internal sealed class TestFitBuilder
             }
             catch (Exception ex) { Log.Add($"The family picked for {key} could not be loaded ({ex.Message})."); }
             if (id != TestFitAssets.Own && (family == null || !Fits(family))) { Log.Add($"The family picked for {key} was not found, so the add-in picked one."); continue; }
-            _picked[key] = (family, type);
+            _picked[key] = (family, type, turn);
         }
         foreach (var kind in _items.Where(i => Pick(i) == null).Select(i => i.Kind).Distinct().Where(Kinds.ContainsKey)) FurnitureType(kind);
         foreach (var it in _items.Where(i => Kinds.ContainsKey(i.Kind) && (Pick(i) is { } p ? p.Family == null : _families.GetValueOrDefault(i.Kind) == null)))
@@ -339,7 +339,7 @@ internal sealed class TestFitBuilder
     }
 
     /// <summary>The family picked on the Assets tab for this piece's space use and kind, if any.</summary>
-    (Family? Family, string Type)? Pick(FitItem it) =>
+    (Family? Family, string Type, double Turn)? Pick(FitItem it) =>
         _picked.TryGetValue((_zones.TryGetValue(it.Zone, out var z) ? z.Type : "") + ":" + it.Kind, out var p) ? p : null;
 
     /// <summary>One piece of furniture: its family (sized), the add-in's own family, or a plain block.</summary>
@@ -351,7 +351,10 @@ internal sealed class TestFitBuilder
         {
             var symbol = picked.GetFamilySymbolIds().Select(id => (FamilySymbol)_doc.GetElement(id)).FirstOrDefault(s => s.Name == pick.Value.Type) ?? Activate(picked);
             if (!symbol.IsActive) { symbol.Activate(); _doc.Regenerate(); }
-            var inst = Place(it, Sizable(it.Kind) ? Sized(symbol, "Test-Fit " + it.Kind, it.WidthMm, it.DepthMm, false) : symbol);
+            // a family turned a quarter on the page has its own width along the piece's depth
+            var turn = pick.Value.Turn * Math.PI / 180;
+            var quarter = Math.Abs(Math.Round(pick.Value.Turn / 90)) % 2 == 1;
+            var inst = Place(it, Sizable(it.Kind) ? Sized(symbol, "Test-Fit " + it.Kind, quarter ? it.DepthMm : it.WidthMm, quarter ? it.WidthMm : it.DepthMm, false) : symbol, turn);
             if (it.Kind == "monitor") Raise(inst, 740);
             return inst;
         }
@@ -373,7 +376,7 @@ internal sealed class TestFitBuilder
             if (inst.get_Parameter(bip) is { IsReadOnly: false } p) { p.Set(Ft(mm)); return; }
     }
 
-    FamilyInstance Place(FitItem it, FamilySymbol symbol)
+    FamilyInstance Place(FitItem it, FamilySymbol symbol, double turn = 0)
     {
         var target = At(it.Center);
         var inst = symbol.Family.FamilyPlacementType == FamilyPlacementType.WorkPlaneBased
@@ -390,8 +393,8 @@ internal sealed class TestFitBuilder
             _offsets[symbol.Id] = offset;
         }
         if (!offset.IsZeroLength()) ElementTransformUtils.MoveElement(_doc, inst.Id, -offset);
-        if (Math.Abs(it.Rotation) > 1e-6)
-            ElementTransformUtils.RotateElement(_doc, inst.Id, Line.CreateBound(target, target + XYZ.BasisZ), it.Rotation);
+        if (Math.Abs(it.Rotation + turn) > 1e-6)
+            ElementTransformUtils.RotateElement(_doc, inst.Id, Line.CreateBound(target, target + XYZ.BasisZ), it.Rotation + turn);
         Placed[symbol.Family.Name] = Placed.GetValueOrDefault(symbol.Family.Name) + 1;
         return inst;
     }
