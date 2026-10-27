@@ -135,45 +135,55 @@ internal static class TestFitReader
         double fx0 = all.Min(p => p.X) - 600, fx1 = all.Max(p => p.X) + 600, fy0 = all.Min(p => p.Y) - 600, fy1 = all.Max(p => p.Y) + 600;
         bool Over(Vec2 p) => p.X >= fx0 && p.X <= fx1 && p.Y >= fy0 && p.Y <= fy1;
         // what the plan hides under opaque filled or masking regions drawn in it is not there for the test-fit either
-        var masks = Masks(doc, view);
+        var (masks, fills, sketch) = Regions(doc, view);
         bool Hidden(IEnumerable<Vec2> pts) => masks.Count > 0 && masks.Any(m => pts.All(p => PlanMask.Inside(m, p)));
         site.Walls.AddRange(walls.Where(w => (Over(w.A) || Over(w.B)) && !Hidden(new[] { w.A, w.B, (w.A + w.B) * 0.5 })));
         site.Poche.AddRange(poche.Where(p => p.Loops.Any(l => l.Any(Over)) && !Hidden(p.Loops.SelectMany(l => l))));
+        // grey (coloured) solid regions are walls drawn as poche over the CAD: they stand on the floor like walls
+        site.Poche.AddRange(fills.Where(f => f.Any(l => l.Any(Over)) && !Hidden(f.SelectMany(l => l))).Select(f => new SitePoche(0, f)));
         site.Columns.AddRange(columns.Where(c => c.Item2.X >= fx0 && c.Item1.X <= fx1 && c.Item2.Y >= fy0 && c.Item1.Y <= fy1 && !Hidden(new[] { (c.Item1 + c.Item2) * 0.5 })));
-        try { site.Cad.AddRange(Cad(doc, view, new Vec2(fx0 - 3000, fy0 - 3000), new Vec2(fx1 + 3000, fy1 + 3000), masks)); }
+        try { site.Cad.AddRange(Cad(doc, view, new Vec2(fx0 - 3000, fy0 - 3000), new Vec2(fx1 + 3000, fy1 + 3000), masks, sketch)); }
         catch { /* no linework: the page shows the model only */ }
         return site;
     }
 
     /// <summary>
-    /// Filled regions drawn in the plan that hide what is under them (a solid fill or a masking region; a hatch
-    /// shows through), each as its boundary loops in plan mm.
+    /// Filled regions drawn in the plan, as boundary loops in plan mm: masks (masking regions and white solid
+    /// fills) hide what is under them; fills (solid in a colour, usually grey) are walls drawn as poche. Hatched
+    /// regions show through and count as neither. Sketch: the regions' own boundary lines, which are not linework.
     /// </summary>
-    static List<IReadOnlyList<IReadOnlyList<Vec2>>> Masks(Document doc, ViewPlan? view)
+    static (List<IReadOnlyList<IReadOnlyList<Vec2>>> Masks, List<IReadOnlyList<IReadOnlyList<Vec2>>> Fills, HashSet<ElementId> Sketch) Regions(Document doc, ViewPlan? view)
     {
         var masks = new List<IReadOnlyList<IReadOnlyList<Vec2>>>();
-        if (view == null) return masks;
+        var fills = new List<IReadOnlyList<IReadOnlyList<Vec2>>>();
+        var sketch = new HashSet<ElementId>();
+        if (view == null) return (masks, fills, sketch);
         bool Solid(ElementId id) => id != ElementId.InvalidElementId && doc.GetElement(id) is FillPatternElement f && f.GetFillPattern().IsSolidFill;
+        static bool White(Color c) => c.IsValid && c.Red >= 245 && c.Green >= 245 && c.Blue >= 245;
         foreach (var region in new FilteredElementCollector(doc, view.Id).OfClass(typeof(FilledRegion)).Cast<FilledRegion>().Where(r => r.OwnerViewId == view.Id))
         {
             try
             {
+                try { foreach (var id in region.GetDependentElements(new ElementClassFilter(typeof(CurveElement)))) sketch.Add(id); } catch { }
                 if (doc.GetElement(region.GetTypeId()) is not FilledRegionType type) continue;
-                if (!type.IsMasking && !Solid(type.ForegroundPatternId) && !Solid(type.BackgroundPatternId)) continue;
+                // the colour it shows: a solid foreground over anything, else a solid background; masking shows white
+                Color? shown = Solid(type.ForegroundPatternId) ? type.ForegroundPatternColor : Solid(type.BackgroundPatternId) ? type.BackgroundPatternColor : null;
+                if (!type.IsMasking && shown == null) continue;
                 var loops = region.GetBoundaries().Select(loop => (IReadOnlyList<Vec2>)loop.SelectMany(c => { var t = c.Tessellate(); return t.Take(t.Count - 1); }).Select(P).ToList())
                     .Where(l => l.Count >= 3).ToList();
-                if (loops.Count > 0) masks.Add(loops);
+                if (loops.Count == 0) continue;
+                if (shown == null || White(shown)) masks.Add(loops); else fills.Add(loops);
             }
             catch { /* a region Revit cannot hand back */ }
         }
-        return masks;
+        return (masks, fills, sketch);
     }
 
     /// <summary>
     /// The 2D linework the plan shows over the floor: linked and imported CAD (on the layers the view shows) and
     /// the view's own detail lines, as plan polylines (mm) for the page to draw spaces over.
     /// </summary>
-    static List<IReadOnlyList<Vec2>> Cad(Document doc, ViewPlan? view, Vec2 min, Vec2 max, List<IReadOnlyList<IReadOnlyList<Vec2>>> masks)
+    static List<IReadOnlyList<Vec2>> Cad(Document doc, ViewPlan? view, Vec2 min, Vec2 max, List<IReadOnlyList<IReadOnlyList<Vec2>>> masks, HashSet<ElementId> sketch)
     {
         var lines = new List<IReadOnlyList<Vec2>>();
         if (view == null) return lines;
@@ -214,7 +224,7 @@ internal static class TestFitReader
         foreach (var cad in new FilteredElementCollector(doc, view.Id).OfClass(typeof(ImportInstance)).Cast<ImportInstance>())
             try { Walk(cad.get_Geometry(options)); } catch { /* a CAD file Revit cannot read back */ }
         foreach (var line in new FilteredElementCollector(doc, view.Id).OfClass(typeof(CurveElement)).Cast<CurveElement>()
-                     .Where(c => c.OwnerViewId == view.Id && c.CurveElementType == CurveElementType.DetailCurve))
+                     .Where(c => c.OwnerViewId == view.Id && c.CurveElementType == CurveElementType.DetailCurve && !sketch.Contains(c.Id)))
             try { Add(line.GeometryCurve is Line l ? new[] { l.GetEndPoint(0), l.GetEndPoint(1) } : line.GeometryCurve.Tessellate()); } catch { }
         return lines;
     }
