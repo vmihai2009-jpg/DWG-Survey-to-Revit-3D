@@ -46,6 +46,9 @@ public sealed class TestFitSite
     public string Source { get; init; } = "";
     /// <summary>This floor's id in the model, and the floors the window can browse to (id, name), lowest first.</summary>
     public string LevelId { get; set; } = "";
+    /// <summary>What the floor list shows as picked: a sheet ("s:id") or a level (its id); and the plan view read.</summary>
+    public string Pick { get; set; } = "";
+    public string ViewId { get; set; } = "";
     public List<(string Id, string Name)> Floors { get; } = new();
     /// <summary>The page's own state for this floor from earlier in the session (its JSON), so browsing back keeps the spaces drawn.</summary>
     public string? State { get; set; }
@@ -108,6 +111,7 @@ public sealed class TestFitSite
             cores,
             cad = Cad.Select(l => l.SelectMany(page).ToArray()).ToArray(),
             levelId = LevelId,
+            pick = string.IsNullOrEmpty(Pick) ? LevelId : Pick,
             floors = Floors.Select(f => new { id = f.Id, name = f.Name }).ToArray(),
             assets = Assets.ToDictionary(a => a.Key, a => a.Value.Select(x => new { id = x.Id, name = x.Name, src = x.Source }).ToArray()),
         };

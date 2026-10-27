@@ -121,7 +121,7 @@ internal sealed class TestFitWindow : Window
 
     void Browse(string levelId, string? state)
     {
-        if (state != null) _states[_site.LevelId] = state;
+        if (state != null) _states[Key(_site)] = state;
         TestFitSite? next;
         try { next = _load(levelId); }
         catch (Exception ex) { Autodesk.Revit.UI.TaskDialog.Show("Office Test-Fit", "That floor could not be read: " + ex.Message); return; }
@@ -131,13 +131,15 @@ internal sealed class TestFitWindow : Window
             _web.CoreWebView2.ExecuteScriptAsync("window.testfitFloorRefused&&window.testfitFloorRefused()");
             return;
         }
-        next.State = _states.GetValueOrDefault(next.LevelId);
+        next.State = _states.GetValueOrDefault(Key(next));
         _site = next;
         _folder = WritePage(next);
         _web.CoreWebView2.SetVirtualHostNameToFolderMapping(Host, _folder, CoreWebView2HostResourceAccessKind.Allow);
         Title = "Office Test-Fit · " + next.Title;
         _web.CoreWebView2.Navigate($"https://{Host}/testfit.html?t={DateTime.Now.Ticks}");
     }
+
+    static string Key(TestFitSite s) => string.IsNullOrEmpty(s.Pick) ? s.LevelId : s.Pick;
 
     void Fail(string why)
     {

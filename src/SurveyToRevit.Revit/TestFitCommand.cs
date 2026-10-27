@@ -32,17 +32,28 @@ public class TestFitCommand : IExternalCommand
             TaskDialog.Show(Caption, "Open the floor plan of the floor you want to test-fit, or a sheet with that plan on it, then click Office Test-Fit again.");
             return Result.Cancelled;
         }
-        var floors = TestFitReader.Floors(doc);
-        TestFitSite Read(Level l, ICollection<ElementId> selected)
+        // the floor list: sheets with a floor plan on them (read as that plan, with what is drawn over it), then levels
+        var sheets = new FilteredElementCollector(doc).OfClass(typeof(ViewSheet)).Cast<ViewSheet>()
+            .Where(s => !s.IsPlaceholder && PlanOnSheet(doc, s, Array.Empty<ElementId>()) != null).OrderBy(s => s.SheetNumber).ToList();
+        var floors = sheets.Select(s => ("s:" + s.Id.Value, $"{s.SheetNumber} – {s.Name}"))
+            .Concat(TestFitReader.Floors(doc).Select(f => (f.Id.Value.ToString(), f.Name))).ToList();
+        TestFitSite Read(ViewPlan v, ICollection<ElementId> selected, string pick)
         {
-            var s = TestFitReader.Read(doc, l, TestFitReader.PlanOf(doc, l, plan), selected);
+            var l = v.GenLevel;
+            var s = TestFitReader.Read(doc, l, v, selected);
             s.LevelId = l.Id.Value.ToString();
-            s.Floors.AddRange(floors.Select(f => (f.Id.Value.ToString(), f.Name)));
+            s.Pick = pick;
+            s.ViewId = v.Id.Value.ToString();
+            s.Floors.AddRange(floors);
             try { TestFitAssets.Catalog(doc, s); } catch { /* the Assets tab stays empty: the add-in picks the families */ }
             return s;
         }
+        // started on a sheet, or on a plan that is on one: the list shows that sheet
+        var onSheetId = uidoc.ActiveView is ViewSheet vs ? vs.Id
+            : new FilteredElementCollector(doc).OfClass(typeof(Viewport)).Cast<Viewport>().FirstOrDefault(vp => vp.ViewId == plan.Id)?.SheetId;
+        var first = onSheetId != null && sheets.Any(s => s.Id == onSheetId) ? "s:" + onSheetId.Value : level.Id.Value.ToString();
         TestFitSite site;
-        try { site = Read(level, picked); }
+        try { site = Read(plan, picked, first); }
         catch (Exception ex)
         {
             TaskDialog.Show(Caption, $"Could not read {level.Name}: {ex.Message}");
@@ -54,8 +65,13 @@ public class TestFitCommand : IExternalCommand
                                      "Build the floor (Build from Survey) or draw its slab first.");
             return Result.Cancelled;
         }
-        TestFitSite? Load(string id) =>
-            long.TryParse(id, out var v) && doc.GetElement(new ElementId(v)) is Level l ? Read(l, Array.Empty<ElementId>()) : null;
+        TestFitSite? Load(string id)
+        {
+            if (id.StartsWith("s:") && long.TryParse(id[2..], out var sv) && doc.GetElement(new ElementId(sv)) is ViewSheet sh)
+                return PlanOnSheet(doc, sh, Array.Empty<ElementId>()) is ViewPlan sp ? Read(sp, Array.Empty<ElementId>(), id) : null;
+            return long.TryParse(id, out var v) && doc.GetElement(new ElementId(v)) is Level l && TestFitReader.PlanOf(doc, l, plan) is { } lp
+                ? Read(lp, Array.Empty<ElementId>(), id) : null;
+        }
         (string Layout, TestFitSite Site)? sent;
         string Measure(string id) => TestFitAssets.Measure(doc, level, id);
         try { sent = TestFitWindow.Open(site, Load, Measure, data.Application.MainWindowHandle); }
@@ -68,6 +84,7 @@ public class TestFitCommand : IExternalCommand
 
         site = sent.Value.Site;
         if (doc.GetElement(new ElementId(long.Parse(site.LevelId))) is Level sentLevel) level = sentLevel;
+        if (long.TryParse(site.ViewId, out var sentView) && doc.GetElement(new ElementId(sentView)) is ViewPlan sentPlan) plan = sentPlan;
         TestFitLayout layout;
         try { layout = TestFitLayout.Parse(sent.Value.Layout, site.Frame().OriginMm); }
         catch (Exception ex) { TaskDialog.Show(Caption, "The layout could not be read: " + ex.Message); return Result.Failed; }

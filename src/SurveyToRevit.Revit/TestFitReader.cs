@@ -118,6 +118,9 @@ internal static class TestFitReader
             faces.Add([new Vec2[] { new(x0, y0), new(x1, y0), new(x1, y1), new(x0, y1) }]);
         }
 
+        // filled and masking regions drawn over the plan (in the view, or on its sheet over the viewport)
+        var (masks, fills, sketch, regionNote) = Regions(doc, view);
+        if (regionNote != null) notes.Add(regionNote);
         var site = new TestFitSite
         {
             Title = $"{doc.Title} · {level.Name}",
@@ -135,7 +138,6 @@ internal static class TestFitReader
         double fx0 = all.Min(p => p.X) - 600, fx1 = all.Max(p => p.X) + 600, fy0 = all.Min(p => p.Y) - 600, fy1 = all.Max(p => p.Y) + 600;
         bool Over(Vec2 p) => p.X >= fx0 && p.X <= fx1 && p.Y >= fy0 && p.Y <= fy1;
         // what the plan hides under opaque filled or masking regions drawn in it is not there for the test-fit either
-        var (masks, fills, sketch) = Regions(doc, view);
         bool Hidden(IEnumerable<Vec2> pts) => masks.Count > 0 && masks.Any(m => pts.All(p => PlanMask.Inside(m, p)));
         site.Walls.AddRange(walls.Where(w => (Over(w.A) || Over(w.B)) && !Hidden(new[] { w.A, w.B, (w.A + w.B) * 0.5 })));
         site.Poche.AddRange(poche.Where(p => p.Loops.Any(l => l.Any(Over)) && !Hidden(p.Loops.SelectMany(l => l))));
@@ -152,31 +154,58 @@ internal static class TestFitReader
     /// fills) hide what is under them; fills (solid in a colour, usually grey) are walls drawn as poche. Hatched
     /// regions show through and count as neither. Sketch: the regions' own boundary lines, which are not linework.
     /// </summary>
-    static (List<IReadOnlyList<IReadOnlyList<Vec2>>> Masks, List<IReadOnlyList<IReadOnlyList<Vec2>>> Fills, HashSet<ElementId> Sketch) Regions(Document doc, ViewPlan? view)
+    static (List<IReadOnlyList<IReadOnlyList<Vec2>>> Masks, List<IReadOnlyList<IReadOnlyList<Vec2>>> Fills, HashSet<ElementId> Sketch, string? Note) Regions(Document doc, ViewPlan? view)
     {
         var masks = new List<IReadOnlyList<IReadOnlyList<Vec2>>>();
         var fills = new List<IReadOnlyList<IReadOnlyList<Vec2>>>();
         var sketch = new HashSet<ElementId>();
-        if (view == null) return (masks, fills, sketch);
+        if (view == null) return (masks, fills, sketch, null);
+        int found = 0, hatched = 0, onSheet = 0, failed = 0;
         bool Solid(ElementId id) => id != ElementId.InvalidElementId && doc.GetElement(id) is FillPatternElement f && f.GetFillPattern().IsSolidFill;
         static bool White(Color c) => c.IsValid && c.Red >= 245 && c.Green >= 245 && c.Blue >= 245;
-        foreach (var region in new FilteredElementCollector(doc, view.Id).OfClass(typeof(FilledRegion)).Cast<FilledRegion>().Where(r => r.OwnerViewId == view.Id))
+        // regions in the plan itself, then those drawn on its sheet over the viewport (taken back to the model)
+        var regions = new FilteredElementCollector(doc, view.Id).OfClass(typeof(FilledRegion)).Cast<FilledRegion>()
+            .Where(r => r.OwnerViewId == view.Id).Select(r => (r, (Transform?)null)).ToList();
+        try
         {
+            if (new FilteredElementCollector(doc).OfClass(typeof(Viewport)).Cast<Viewport>().FirstOrDefault(v => v.ViewId == view.Id) is { } vp)
+            {
+                var toSheet = vp.GetProjectionToSheetTransform();
+                var toProjection = view.GetModelToProjectionTransforms().First().GetModelToProjectionTransform();
+                var back = toProjection.Inverse.Multiply(toSheet.Inverse);
+                // only regions over this viewport on the sheet
+                var box = vp.GetBoxOutline();
+                foreach (var r in new FilteredElementCollector(doc, vp.SheetId).OfClass(typeof(FilledRegion)).Cast<FilledRegion>().Where(r => r.OwnerViewId == vp.SheetId))
+                {
+                    var bb = r.get_BoundingBox(null);
+                    if (bb == null || bb.Max.X < box.MinimumPoint.X || bb.Min.X > box.MaximumPoint.X || bb.Max.Y < box.MinimumPoint.Y || bb.Min.Y > box.MaximumPoint.Y) continue;
+                    regions.Add((r, back));
+                    onSheet++;
+                }
+            }
+        }
+        catch { /* Revit could not relate the sheet to the plan: only the plan's own regions count */ }
+        foreach (var (region, back) in regions)
+        {
+            found++;
             try
             {
                 try { foreach (var id in region.GetDependentElements(new ElementClassFilter(typeof(CurveElement)))) sketch.Add(id); } catch { }
                 if (doc.GetElement(region.GetTypeId()) is not FilledRegionType type) continue;
                 // the colour it shows: a solid foreground over anything, else a solid background; masking shows white
                 Color? shown = Solid(type.ForegroundPatternId) ? type.ForegroundPatternColor : Solid(type.BackgroundPatternId) ? type.BackgroundPatternColor : null;
-                if (!type.IsMasking && shown == null) continue;
-                var loops = region.GetBoundaries().Select(loop => (IReadOnlyList<Vec2>)loop.SelectMany(c => { var t = c.Tessellate(); return t.Take(t.Count - 1); }).Select(P).ToList())
+                if (!type.IsMasking && shown == null) { hatched++; continue; }
+                var loops = region.GetBoundaries().Select(loop => (IReadOnlyList<Vec2>)loop.SelectMany(c => { var t = c.Tessellate(); return t.Take(t.Count - 1); })
+                        .Select(p => P(back == null ? p : back.OfPoint(p))).ToList())
                     .Where(l => l.Count >= 3).ToList();
                 if (loops.Count == 0) continue;
                 if (shown == null || White(shown)) masks.Add(loops); else fills.Add(loops);
             }
-            catch { /* a region Revit cannot hand back */ }
+            catch { failed++; /* a region Revit cannot hand back */ }
         }
-        return (masks, fills, sketch);
+        string? note = found == 0 ? null
+            : $"filled regions: {found} found ({onSheet} on the sheet), {masks.Count} white or masking hide what is under them, {fills.Count} grey read as walls, {hatched} hatched ignored" + (failed > 0 ? $", {failed} unreadable" : "");
+        return (masks, fills, sketch, note);
     }
 
     /// <summary>

@@ -1911,12 +1911,14 @@ if(SITE){
   const host0=window.chrome&&window.chrome.webview,bt=$('.bar-t span');
   if(host0&&SITE.floors&&SITE.floors.length>1){
     // browse to another floor: Revit reads it and reopens the page there; this floor's spaces are kept for coming back
-    bt.innerHTML=`<select class="floorsel" id="floorSel" aria-label="Floor">${SITE.floors.map(f=>`<option value="${esc(f.id)}"${f.id===SITE.levelId?' selected':''}>${esc(f.name)}</option>`).join('')}</select>`;
+    const cur=SITE.pick||SITE.levelId,opt=f=>`<option value="${esc(f.id)}"${f.id===cur?' selected':''}>${esc(f.name)}</option>`;
+    const sh=SITE.floors.filter(f=>f.id.startsWith('s:')),lv=SITE.floors.filter(f=>!f.id.startsWith('s:'));
+    bt.innerHTML=`<select class="floorsel" id="floorSel" aria-label="Sheet or floor">${sh.length?`<optgroup label="Sheets">${sh.map(opt).join('')}</optgroup><optgroup label="Floor plans">${lv.map(opt).join('')}</optgroup>`:lv.map(opt).join('')}</select>`;
     $('#floorSel').addEventListener('change',e=>{
       toast('Reading '+e.target.selectedOptions[0].textContent+' from Revit…');
       host0.postMessage(JSON.stringify({kind:'floor',id:e.target.value,state:{zones:S.zones,density:S.density,keep:KEEP_PARTS,uid:UID,assets:S.assets}}));
     });
-    window.testfitFloorRefused=()=>{$('#floorSel').value=SITE.levelId;};
+    window.testfitFloorRefused=()=>{$('#floorSel').value=SITE.pick||SITE.levelId;};
   } else bt.innerHTML=`<span class="floorname">${esc(SITE.level)}</span>`;
   const ST=window.TESTFIT_STATE;
   if(ST&&Array.isArray(ST.zones)){
