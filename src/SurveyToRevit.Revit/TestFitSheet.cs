@@ -36,6 +36,46 @@ internal static class TestFitSheet
 
     static double Ft(double mm) => UnitConversion.MmToFeet(mm);
 
+    /// <summary>
+    /// The office drawing standards' text: Arial at 2.5 mm for general text and notes (A1), 3.5 mm for
+    /// sub-headings, 5.0 mm for titles. Each size is one text type, "BG_Arial_2.5mm", made from the default once.
+    /// </summary>
+    static ElementId TextType(Document doc, double mm)
+    {
+        var name = $"BG_Arial_{mm:0.0}mm";
+        var all = new FilteredElementCollector(doc).OfClass(typeof(TextNoteType)).Cast<TextNoteType>().ToList();
+        if (all.FirstOrDefault(t => t.Name == name) is { } found) return found.Id;
+        var source = doc.GetElement(doc.GetDefaultElementTypeId(ElementTypeGroup.TextNoteType)) as TextNoteType ?? all.FirstOrDefault();
+        if (source == null) return ElementId.InvalidElementId;
+        try
+        {
+            var type = (TextNoteType)source.Duplicate(name);
+            type.get_Parameter(BuiltInParameter.TEXT_FONT)?.Set("Arial");
+            type.get_Parameter(BuiltInParameter.TEXT_SIZE)?.Set(Ft(mm));
+            type.get_Parameter(BuiltInParameter.TEXT_BACKGROUND)?.Set(1); // transparent
+            return type.Id;
+        }
+        catch { return source.Id; }
+    }
+
+    /// <summary>The office level code for a level's name: 00 Ground Floor, 01 First Floor, B1, LG, M1, R1; ZZ if unknown.</summary>
+    internal static string LevelCode(string name)
+    {
+        var n = name.ToLowerInvariant();
+        string[] ord = ["ground", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
+        var num = System.Text.RegularExpressions.Regex.Match(n, @"\d+");
+        int k(int fallback) => num.Success ? int.Parse(num.Value) : fallback;
+        if (n.Contains("lower ground")) return "LG";
+        if (n.Contains("upper ground")) return "UG";
+        if (n.Contains("basement")) return "B" + k(1);
+        if (n.Contains("mezzanine")) return "M" + k(1);
+        if (n.Contains("roof")) return "R" + k(1);
+        for (var i = 0; i < ord.Length; i++) if (System.Text.RegularExpressions.Regex.IsMatch(n, $@"\b{ord[i]}\b")) return i.ToString("00");
+        if (num.Success && (n.Contains("floor") || n.Contains("level") || n.Trim() == num.Value || n.StartsWith(num.Value)))
+            return int.Parse(num.Value).ToString("00");
+        return "ZZ";
+    }
+
     /// <summary>Makes the sheet; returns its number and name, or null (with why in the log).</summary>
     public static string? Make(Document doc, Level level, TestFitLayout layout, TestFitSite site, string? option, ElementId? phase, List<string> log)
     {
@@ -64,9 +104,10 @@ internal static class TestFitSheet
             var sheet = ViewSheet.Create(doc, tb?.Id ?? ElementId.InvalidElementId);
             sheet.Name = name;
             var taken = new FilteredElementCollector(doc).OfClass(typeof(ViewSheet)).Cast<ViewSheet>().Select(s => s.SheetNumber).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var code = LevelCode(level.Name);
             for (var i = 1; i < 1000; i++)
             {
-                var number = $"TF-{i:000}";
+                var number = $"TF-{code}-{i:000}";
                 if (taken.Contains(number)) continue;
                 sheet.SheetNumber = number;
                 break;
@@ -135,7 +176,7 @@ internal static class TestFitSheet
         var types = new Dictionary<string, ElementId>();
         var floor = FloorSolid(site, level);
         var zones = layout.Zones.Select((z, i) => (z, i, solid: Prism(Outline(z), level))).ToList();
-        var text = doc.GetDefaultElementTypeId(ElementTypeGroup.TextNoteType);
+        var text = TextType(doc, 2.5);
         foreach (var (z, i, solid) in zones)
         {
             if (solid == null) continue;
@@ -250,9 +291,10 @@ internal static class TestFitSheet
         var view = ViewDrafting.Create(doc, vft.Id);
         view.Name = name + " - Summary";
         view.Scale = 1; // drawn at paper size
-        var text = doc.GetDefaultElementTypeId(ElementTypeGroup.TextNoteType);
+        ElementId text = TextType(doc, 2.5), sub = TextType(doc, 3.5), title = TextType(doc, 5.0);
         var y = 0.0; // paper mm, going down
-        void Line(double x, string s, double step = 6) { TextNote.Create(doc, view.Id, new XYZ(Ft(x), Ft(-y), 0), s, text); y += step; }
+        // headings (step 7) are sub-headings, the first line (step 9) the title
+        void Line(double x, string s, double step = 6) { TextNote.Create(doc, view.Id, new XYZ(Ft(x), Ft(-y), 0), s, step >= 9 ? title : step >= 7 ? sub : text); y += step; }
         void Row(params (double X, string S)[] cells) { foreach (var (x, s) in cells) TextNote.Create(doc, view.Id, new XYZ(Ft(x), Ft(-y), 0), s, text); y += 5.5; }
         void Box(double x, double w, double h, ElementId type)
         {

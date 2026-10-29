@@ -239,6 +239,7 @@ internal sealed class TestFitBuilder
         ["meettable"] = (new[] { @"(conference|meeting|board)", @"table[-_ ]?rect" }, @"chair|room", "table", 740),
         ["hightable"] = (new[] { @"(bar|high|poseur)[-_ ]?table|table[-_ ]?(bar|high)" }, @"chair|stool", "table", 1050),
         ["kitchen"] = (new[] { @"kitchenette|tea[-_ ]?point|pantry", @"kitchen|counter|base[-_ ]?(unit|cabinet)|sink[-_ ]?unit" }, @"island|wall[-_ ]?(unit|cabinet)|upper|tall|chair|stool|table", null, 900),
+        ["credenza"] = (new[] { @"credenza|sideboard", @"(low|storage)[-_ ]?(cabinet|unit)" }, @"tall|wall|kitchen|sink|desk|table|chair", null, 750),
         ["plant"] = (new[] { @"plant|planter|ficus|palm|shrub" }, @"power|treatment|room", null, 1200),
         ["monitor"] = (new[] { @"^(m_)?(computer[-_ ]?)?monitor", @"computer[-_ ]?(screen|display)", @"monitor" }, @"tv|televis|patient|heart|wall|arm|bracket|stand[-_ ]?alone", null, 1230),
     };
@@ -247,7 +248,7 @@ internal sealed class TestFitBuilder
         (long)BuiltInCategory.OST_Furniture, (long)BuiltInCategory.OST_FurnitureSystems, (long)BuiltInCategory.OST_Planting,
         (long)BuiltInCategory.OST_Casework, (long)BuiltInCategory.OST_SpecialityEquipment, (long)BuiltInCategory.OST_GenericModel,
     ];
-    internal static bool Sizable(string kind) => kind is "kitchen" or "desk" or "recdesk" or "table" or "meettable" or "hightable" or "coffee" or "sofa" or "bench";
+    internal static bool Sizable(string kind) => kind is "credenza" or "kitchen" or "desk" or "recdesk" or "table" or "meettable" or "hightable" or "coffee" or "sofa" or "bench";
     internal static bool Fits(Family f) => FurnitureCategories.Contains(f.FamilyCategory?.Id.Value ?? -1)
         && f.FamilyPlacementType is FamilyPlacementType.OneLevelBased or FamilyPlacementType.WorkPlaneBased;
 
@@ -426,7 +427,7 @@ internal sealed class TestFitBuilder
         if (_families.TryGetValue(kind, out var cached)) return cached;
         var (want, skip, fallback, _) = Kinds[kind];
         var inProject = new FilteredElementCollector(_doc).OfClass(typeof(Family)).Cast<Family>().Where(Fits)
-            .Where(f => !f.Name.StartsWith(FurnitureFamilies.Prefix, StringComparison.Ordinal)).ToList();
+            .Where(f => !FurnitureFamilies.Own(f.Name)).ToList();
         Family? family = null;
         foreach (var pattern in want)
         {

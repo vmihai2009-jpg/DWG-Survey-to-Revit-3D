@@ -20,7 +20,7 @@ internal static class TestFitAssets
     {
         var library = TestFitBuilder.Library(doc.Application);
         var project = new FilteredElementCollector(doc).OfClass(typeof(Family)).Cast<Family>().Where(TestFitBuilder.Fits)
-            .Where(f => !f.Name.StartsWith(FurnitureFamilies.Prefix, StringComparison.Ordinal)).OrderBy(f => f.Name).ToList();
+            .Where(f => !FurnitureFamilies.Own(f.Name)).OrderBy(f => f.Name).ToList();
         foreach (var (kind, (want, skip, _, _)) in TestFitBuilder.Kinds)
         {
             var list = new List<SiteAsset>();

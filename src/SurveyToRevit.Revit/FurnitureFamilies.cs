@@ -10,18 +10,23 @@ namespace SurveyToRevit.Revit;
 /// </summary>
 internal static class FurnitureFamilies
 {
-    public const string Prefix = "Test-Fit ";
+    // named to the office convention Source_Type_Subtype (as BG_Door_Int910)
+    public const string Prefix = "BG_Furniture_";
+
+    /// <summary>A family the add-in made: today's names, and the "Test-Fit Sofa 2200x850" ones of earlier versions.</summary>
+    public static bool Own(string name) =>
+        name.StartsWith(Prefix, StringComparison.Ordinal) || name.StartsWith("Test-Fit ", StringComparison.Ordinal);
 
     static double Ft(double mm) => mm / 304.8;
 
-    /// <summary>The family's name for a kind and size, e.g. "Test-Fit Sofa 2200x850".</summary>
+    /// <summary>The family's name for a kind and size, e.g. "BG_Furniture_Sofa2200x850".</summary>
     public static string Name(string kind, double widthMm, double depthMm) =>
-        $"{Prefix}{Label(kind)} {Math.Round(widthMm / 10) * 10:0}x{Math.Round(depthMm / 10) * 10:0}";
+        $"{Prefix}{Label(kind).Replace(" ", "")}{Math.Round(widthMm / 10) * 10:0}x{Math.Round(depthMm / 10) * 10:0}";
 
     static string Label(string kind) => kind switch
     {
         "recdesk" => "Reception Desk", "arm" => "Armchair", "coffee" => "Coffee Table", "meettable" => "Meeting Table",
-        "hightable" => "High Table", "kitchen" => "Kitchen Counter", _ => char.ToUpperInvariant(kind[0]) + kind[1..],
+        "hightable" => "High Table", "kitchen" => "Kitchen Counter", "credenza" => "Credenza", _ => char.ToUpperInvariant(kind[0]) + kind[1..],
     };
 
     /// <summary>Makes and loads the family (or finds it from an earlier send); null, with why in the log, if Revit has no furniture template.</summary>
@@ -110,6 +115,10 @@ internal static class FurnitureFamilies
                 yield return B(-hw, -hd, hw, hd, 1010, 1050);
                 yield return B(-hw + 200, -hd + 150, -hw + 260, hd - 150, 0, 1010);
                 yield return B(hw - 260, -hd + 150, hw - 200, hd - 150, 0, 1010);
+                break;
+            case "credenza": // a low cabinet with a top
+                yield return B(-hw, -hd + 20, hw, hd, 0, 720);
+                yield return B(-hw, -hd, hw, hd, 720, 750);
                 break;
             case "kitchen": // base units with a worktop, the user side towards -Y; a tall fridge housing at the +X end
                 yield return B(-hw, -hd + 50, hw - 600, hd, 0, 870);

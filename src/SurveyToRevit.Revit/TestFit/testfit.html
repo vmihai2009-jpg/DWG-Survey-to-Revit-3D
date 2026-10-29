@@ -293,7 +293,7 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
   <header class="top">
     <div class="brand">
       <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-      <div><h1>Workplace Test-Fit</h1><p>Level 03 sample floor plate · BCO-informed placeholder rules</p></div>
+      <div><h1>Workplace Test-Fit</h1><p>Level 03 sample floor plate · office space planning guidelines</p></div>
     </div>
     <div class="top-r">
       <div class="seg" id="modeSeg" role="group" aria-label="Layout of views">
@@ -382,11 +382,12 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:4px 0}
 
     <details class="sec rules">
       <summary>Planning rules</summary>
-      <p class="hint">Placeholder values informed by BCO practice. Replace them with the figures from the BCO Guide edition you are working to; the plan re-flows straight away.</p>
+      <p class="hint">The office space planning guidelines: 1400 × 800 mm desks (1600 × 800 generous, 1200 × 700 hot desks), no more than 3 desks in a row, 1800 mm desk to desk, 1300 mm desk to wall, never facing a wall, 1200 mm around meeting tables and credenzas. Change any figure and the plan re-flows straight away.</p>
       <div class="fields two" style="margin-top:10px">
         <div class="f"><label for="r_primary">Primary route mm</label><input id="r_primary" data-r="primary" data-u="mm" type="number" step="50"></div>
-        <div class="f"><label for="r_chair">Chair zone mm</label><input id="r_chair" data-r="chair" data-u="mm" type="number" step="50"></div>
+        <div class="f"><label for="r_chair">Desk to wall mm</label><input id="r_chair" data-r="chair" data-u="mm" type="number" step="50"></div>
         <div class="f"><label for="r_deskD">Desk depth mm</label><input id="r_deskD" data-r="deskD" data-u="mm" type="number" step="50"></div>
+        <div class="f"><label for="r_meet">Around meeting tables mm</label><input id="r_meet" data-r="meetClear" data-u="mm" type="number" step="50"></div>
         <div class="f"><label for="r_facade">Façade setback mm</label><input id="r_facade" data-r="facade" data-u="mm" type="number" step="50"></div>
         <div class="f"><label for="r_typMin">Typical band from</label><input id="r_typMin" data-r="typMin" data-u="m2" type="number" step="0.5"></div>
         <div class="f"><label for="r_typMax">Typical band to</label><input id="r_typMax" data-r="typMax" data-u="m2" type="number" step="0.5"></div>
@@ -610,8 +611,9 @@ function defaults(){
     floor:{w:45,d:22.5,grid:7.5},
     density:10,
     layers:{desks:true,soft:true,recDesk:true,recSeat:true,meeting:true,spare:true,grid:true,underlay:true},
-    rules:{primary:1.2,chair:1.0,deskD:0.8,facade:0.5,softClear:0.6,col:0.4,doorW:0.9,
-      gen:{min:10,w:1.6,aisle:2.4,per:3},std:{min:8,w:1.4,aisle:2.1,per:3},dense:{w:1.2,aisle:1.8,per:4},
+    // the office space planning guidelines: desk sizes, rows of no more than 3, 1800 desk to desk, 1300 desk to wall
+    rules:{primary:1.2,chair:1.3,deskD:0.8,facade:0.5,softClear:0.6,col:0.4,doorW:0.9,meetClear:1.2,hotW:1.2,hotD:0.7,
+      gen:{min:10,w:1.6,aisle:1.8,per:3},std:{min:8,w:1.4,aisle:1.8,per:3},dense:{w:1.4,aisle:1.8,per:3},
       typMin:8,typMax:13},
     zones:[
       mkZone({name:'Core',type:'core',part:'solid',x:16.5,y:8.25,w:12,d:6}),
@@ -704,37 +706,34 @@ function inside(z){
 }
 
 /* ---------- desk banks ---------- */
-// Desk banks in a workspace. Without a chosen layout (the ↻ button picks one) the banks are slid along and across
-// the space, and a single row is tried with its desks' backs to a wall, keeping whichever fits the most desks.
+// Desk banks in a workspace: back-to-back pairs only, so no desk faces a wall. Without a chosen layout (the ↻ button
+// picks one) the banks are slid along and across the space, keeping whichever fits the most desks.
 function deskSlots(z,obst,cols,opt){
   opt=opt||z.opt||{};
-  if(opt.au!==undefined&&opt.av!==undefined&&opt.side!==undefined)return bankSlots(z,obst,cols,opt);
+  if(opt.au!==undefined&&opt.av!==undefined)return bankSlots(z,obst,cols,opt);
   let best=null;
-  for(const side of opt.side!==undefined?[opt.side]:['','lo','hi'])
-    for(const au of opt.au!==undefined?[opt.au]:[.5,0,1])
-      for(const av of opt.av!==undefined?[opt.av]:[.5,0,1]){
-        const s=bankSlots(z,obst,cols,Object.assign({},opt,{au,av,side}));
-        if(!best||s.length>best.length)best=s;
-      }
+  for(const au of opt.au!==undefined?[opt.au]:[.5,0,1])
+    for(const av of opt.av!==undefined?[opt.av]:[.5,0,1]){
+      const s=bankSlots(z,obst,cols,Object.assign({},opt,{au,av}));
+      if(!best||s.length>best.length)best=s;
+    }
   return best||[];
 }
 function bankSlots(z,obst,cols,opt){
-  const R=S.rules,B=band()[1],b=onB(z),au=opt.au??.5,av=opt.av??.5,side=opt.side||'';
+  const R=S.rules,B=band()[1],b=onB(z),au=opt.au??.5,av=opt.av??.5;
   const x0=z.x+(b.W?R.facade:0),x1=z.x+z.w-(b.E?R.facade:0),y0=z.y+(b.N?R.facade:0),y1=z.y+z.d-(b.S?R.facade:0);
   const along=(opt.dir||z.dir)==='x';
-  const u0=along?x0:y0,u1=along?x1:y1,v0=along?y0:x0,v1=along?y1:x1;
-  const ad=assetDims(z.type,'desk'),dw=ad?ad.w:B.w,dd=ad?ad.d:R.deskD,ch=R.chair,bankD=2*dd;
-  // rows across the space: back-to-back pairs, and with a side, one row whose desks back onto that edge
-  const one=side?dd+B.aisle-ch:0,room=v1-v0-one;
+  // desk ends keep the façade setback; across the banks the desk-to-wall gap is measured from the wall itself
+  const u0=along?x0:y0,u1=along?x1:y1,v0=along?z.y:z.x,v1=along?z.y+z.d:z.x+z.w;
+  const hot=z.type==='hotdesk',ad=assetDims(z.type,'desk'),dw=ad?ad.w:hot?R.hotW:B.w,dd=ad?ad.d:hot?R.hotD:R.deskD,ch=R.chair,bankD=2*dd;
+  // rows across the space: back-to-back pairs, desk to wall (or the space's edge) at least ch, desk to desk B.aisle
+  const room=v1-v0;
   let nb=0; while(2*ch+(nb+1)*bankD+nb*B.aisle<=room+EPS) nb++;
-  if(!nb&&!(side&&dd+ch<=v1-v0+EPS)) return [];
-  const usedV=nb?2*ch+nb*bankD+(nb-1)*B.aisle+one:dd+ch, spare=Math.max(0,v1-v0-usedV);
+  if(!nb) return [];
+  const usedV=2*ch+nb*bankD+(nb-1)*B.aisle, spare=Math.max(0,room-usedV);
   const rows=[];// {va, r}: r 0 = chair on the low side, 1 = on the high side
-  let v=side==='lo'?v0:v0+spare*av;
-  if(side==='lo'){rows.push({va:v,r:1});v+=dd+B.aisle-ch;if(nb)v+=spare*av;}
-  v+=ch;
+  let v=v0+spare*av+ch;
   for(let k=0;k<nb;k++){rows.push({va:v,r:0},{va:v+dd,r:1});v+=bankD+B.aisle;}
-  if(side==='hi')rows.push({va:v1-dd,r:0});
   const segs=[]; let rem=u1-u0;
   for(let guard=0;guard<200;guard++){
     const n=Math.min(B.per,Math.floor((rem+EPS)/dw)); if(n<1)break;
@@ -860,12 +859,23 @@ function roomLayout(z0,opt){
       if(Dr>=2.7) it.push({k:'chair',x:0,y:-.8,w:.5,d:.5,a:180,seats:1},{k:'chair',x:0,y:.8,w:.5,d:.5,a:0,seats:1});
     }
   } else {
-    const tl=Math.max(1.6,Lr-2.8),tw=Math.min(1.6,Math.max(1.0,Dr-2.4)),off=-.2;
-    it.push({k:'meettable',x:off,y:0,w:tl,d:tw,a:0});
-    const n=Math.max(1,Math.floor((tl-.1)/.75));
-    for(let i=0;i<n;i++){const x=off-tl/2+(i+.5)*tl/n;it.push({k:'chair',x,y:-(tw/2+.36),w:.5,d:.5,a:180,seats:1},{k:'chair',x,y:tw/2+.36,w:.5,d:.5,a:0,seats:1});}
-    it.push({k:'chair',x:off-tl/2-.42,y:0,w:.5,d:.5,a:90,seats:1});
-    it.push({k:'screen',x:Lr/2-.12,y:0,w:Math.min(2.0,Dr-1.2),d:.06,a:90});
+    // the guidelines: 1200 clear from the table's edge to the walls and to the credenza on the end wall;
+    // a long room keeps the spare length by the door, as a turning space
+    const C=S.rules.meetClear,cd=.45,tw=Math.min(1.6,Dr-2*C),tl=Math.min(4.8,Lr-2*C-cd);
+    if(tw>=.9&&tl>=1.6){
+      const tx=Lr/2-cd-C-tl/2;
+      it.push({k:'meettable',x:tx,y:0,w:tl,d:tw,a:0});
+      const n=Math.max(1,Math.floor((tl-.1)/.7));
+      for(let i=0;i<n;i++){const x=tx-tl/2+(i+.5)*tl/n;it.push({k:'chair',x,y:-(tw/2+.36),w:.5,d:.5,a:180,seats:1},{k:'chair',x,y:tw/2+.36,w:.5,d:.5,a:0,seats:1});}
+      const cw=Math.min(2.0,Dr-1.2);
+      it.push({k:'credenza',x:Lr/2-cd/2,y:0,w:cw,d:cd,a:90},{k:'screen',x:Lr/2-.12,y:0,w:Math.min(1.8,cw),d:.06,a:90});
+    } else {
+      // too tight for the full clearances: a table across the middle, chairs along its sides
+      const tl2=Math.max(1.6,Lr-2.8),tw2=Math.min(1.6,Math.max(1.0,Dr-2.4));
+      it.push({k:'meettable',x:0,y:0,w:tl2,d:tw2,a:0});
+      const n=Math.max(1,Math.floor((tl2-.1)/.7));
+      for(let i=0;i<n;i++){const x=-tl2/2+(i+.5)*tl2/n;it.push({k:'chair',x,y:-(tw2/2+.36),w:.5,d:.5,a:180,seats:1},{k:'chair',x,y:tw2/2+.36,w:.5,d:.5,a:0,seats:1});}
+    }
   }
   return placeAll(it,cx,cy,a).map(q=>Object.assign(q,{zid:z.id,cat:'meeting'}));
 }
@@ -1119,6 +1129,7 @@ function sym(it){
     case'stool':s=`<circle class="fu ft" r=".19"/>`;break;
     case'recdesk':s=`<rect class="fu" x="${-hw}" y="${-hd}" width="${f3(w)}" height="${f3(d)}" rx=".05"/><rect class="fd" x="${-hw}" y="${-hd}" width="${f3(w)}" height=".3" rx=".05"/><line class="fu" x1="${f3(-w/2+.4)}" y1="${f3(-d/2+.3)}" x2="${f3(-w/2+.4)}" y2="${hd}"/><line class="fu" x1="${f3(w/2-.4)}" y1="${f3(-d/2+.3)}" x2="${f3(w/2-.4)}" y2="${hd}"/>`;break;
     case'screen':s=`<rect class="fd" x="${-hw}" y="-.04" width="${f3(w)}" height=".08"/>`;break;
+    case'credenza':s=`<rect class="fu" x="${-hw}" y="${-hd}" width="${f3(w)}" height="${f3(d)}"/><path class="fd" opacity=".35" d="M${-hw} ${-hd}L${hw} ${hd}M${-hw} ${hd}L${hw} ${-hd}"/>`;break;
     case'kitchen':{const fx=f3(w/2-.65);s=`<rect class="fu" x="${-hw}" y="${-hd}" width="${f3(w)}" height="${f3(d)}"/><rect class="fu" x="${f3(-w/2+.35)}" y="${f3(-d/2+.12)}" width=".5" height=".38" rx=".08"/><rect class="fd" x="${fx}" y="${-hd}" width=".6" height="${f3(d)}" opacity=".35"/>`;break;}
     case'plant':s=`<circle class="fu" r=".28"/><circle class="leaf" r=".22"/><circle class="leaf" cx=".12" cy="-.1" r=".14"/>`;break;
   }
@@ -1429,13 +1440,13 @@ function cloneZone(z){
 }
 
 /* ---------- assets: the family for each piece, per space use ---------- */
-const AKINDS={work:['desk','chair','monitor'],meeting:['meettable','table','chair','arm','coffee'],focus:['table','chair','arm','coffee'],
+const AKINDS={work:['desk','chair','monitor'],meeting:['meettable','table','chair','credenza','arm','coffee'],focus:['table','chair','arm','coffee'],
   soft:['sofa','arm','coffee','bench','table','hightable','stool','plant'],reception:['recdesk','chair','sofa','arm','coffee','plant'],
   hotdesk:['desk','chair'],breakout:['table','chair','hightable','stool','bench','plant'],lounge:['sofa','arm','coffee','plant'],tea:['kitchen','hightable','stool']};
 const KLAB={desk:'Desk',chair:'Chair',monitor:'Monitor',meettable:'Meeting table',table:'Table',arm:'Armchair',coffee:'Coffee table',sofa:'Sofa',
-  bench:'Booth bench',hightable:'High table',stool:'Stool',plant:'Plant',recdesk:'Reception desk',kitchen:'Kitchenette'};
+  bench:'Booth bench',hightable:'High table',stool:'Stool',plant:'Plant',recdesk:'Reception desk',kitchen:'Kitchenette',credenza:'Credenza'};
 // tables, sofas and benches whose family can be stretched keep the size the layout gives them; everything else takes the family's
-const STRETCH=new Set(['kitchen','recdesk','table','meettable','hightable','coffee','sofa','bench']);
+const STRETCH=new Set(['credenza','kitchen','recdesk','table','meettable','hightable','coffee','sofa','bench']);
 S.assets=S.assets||{};let ATYPE='work';
 function assetDims(type,k){
   const a=S.assets[type+':'+k];if(!a||!a.w||!a.d)return null;
@@ -1816,6 +1827,7 @@ function furn3(it){
       put('box','white',fr,-(w/2-.02),.36,.15,.04,.72,d-.3);put('box','white',fr,w/2-.02,.36,.15,.04,.72,d-.3);break;
     case'meettable':put('box','oak',fr,0,.74,0,w,.04,d);put('box','frame',fr,-w*.3,.36,0,.1,.72,d*.45);put('box','frame',fr,w*.3,.36,0,.1,.72,d*.45);break;
     case'screen':put('box','screen',fr,0,1.45,0,w,.9,.05);break;
+    case'credenza':put('box','white',fr,0,.375,0,w,.75,d);put('box','oak',fr,0,.765,0,w+.02,.03,d+.02);break;
     case'kitchen':put('box','white',fr,0,.435,0,w,.87,d);put('box','oak',fr,0,.885,0,w+.02,.03,d+.02);put('box','white',fr,w/2-.35,1.0,0,.6,2.0,d);break;
     case'plant':put('cyl','pot',fr,0,.25,0,.5,.5,.5);put('sph','leaf',fr,0,1.05,0,.95,1.1,.95);break;
   }
@@ -1950,7 +1962,7 @@ if(SITE){
   pa.setAttribute('d',SITE.faces.map(f=>f.map(l=>'M'+l.map(q=>q[0]+' '+q[1]).join('L')+'Z').join(' ')).join(' '));
   cp.appendChild(pa);$('#plan defs').appendChild(cp);$('#gZ').setAttribute('clip-path','url(#siteClip)');
   $('.brand h1').textContent=`Workplace Test-Fit · ${SITE.level}`;
-  $('.brand p').textContent=`${SITE.title} · outline from ${SITE.source||'Revit'} · BCO-informed placeholder rules`;
+  $('.brand p').textContent=`${SITE.title} · outline from ${SITE.source||'Revit'} · office space planning guidelines`;
   const host0=window.chrome&&window.chrome.webview,bt=$('.bar-t span');
   if(host0&&SITE.floors&&SITE.floors.length>1){
     // browse to another floor: Revit reads it and reopens the page there; this floor's spaces are kept for coming back
