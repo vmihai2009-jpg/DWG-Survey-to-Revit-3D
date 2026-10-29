@@ -14,7 +14,7 @@
     <PlatformTarget>x64</PlatformTarget>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <!-- Release number: the Updater compares it with the zips it finds, and names the install folder after it -->
-    <Version>0.22.6</Version>
+    <Version>0.22.7</Version>
   </PropertyGroup>
 
   <ItemGroup>
