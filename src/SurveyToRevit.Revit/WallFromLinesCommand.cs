@@ -99,7 +99,7 @@ public class WallFromLinesCommand : IExternalCommand
     }
 
     /// <summary>Builds the wall; returns a reason if the two lines do not make one.</summary>
-    static string? Build(Document doc, Level level, Curve a, Curve b)
+    internal static string? Build(Document doc, Level level, Curve a, Curve b)
     {
         double Mm(double ft) => UnitConversion.FeetToMm(ft);
         double Ft(double mm) => UnitConversion.MmToFeet(mm);

@@ -36,6 +36,8 @@ if (Environment.GetEnvironmentVariable("TEXTS") != null)
 var sb = new StringBuilder();
 sb.AppendLine(SurveyReport.Build(model));
 File.WriteAllText(Path.Combine(outDir, "report.txt"), sb.ToString());
+// the same reading as numbers, for scripts and assistants (what survey_analyze returns in Revit)
+File.WriteAllText(Path.Combine(outDir, "summary.json"), SurveySummary.From(model).ToJson());
 Console.WriteLine(sb);
 
 foreach (var l in model.Levels)

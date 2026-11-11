@@ -46,6 +46,11 @@ public sealed class BuildOptions
     public bool InteriorSharedPlacement { get; set; }
     /// <summary>Interior Survey: the survey's turn in the project (degrees), for linking plans that are not placed by shared coordinates.</summary>
     public double InteriorTurnDeg { get; set; }
+    /// <summary>
+    /// Rebuild only these floors (level codes); null for all. Coordinates and levels are still set from every
+    /// included floor, so the project's 0 does not move; only these floors' elements are cleared and built again.
+    /// </summary>
+    public IReadOnlyCollection<string>? OnlyLevels { get; set; }
 
     /// <summary>Options for the overlay: the project set up with the survey drawings aligned, nothing built.</summary>
     public static BuildOptions Overlay(IReadOnlyList<string> otherDrawings) => new()
@@ -108,6 +113,17 @@ public sealed class ModelBuilder
                                : $"All elements are created in the '{_phase.Name}' phase.");
         using var group = new TransactionGroup(_doc, "Build from survey");
         group.Start();
+        // a build that fails part-way leaves nothing behind: everything done so far is undone before the error goes on
+        try { RunSteps(o, group); }
+        catch
+        {
+            try { if (group.GetStatus() == TransactionStatus.Started) group.RollBack(); } catch { /* the original error matters more */ }
+            throw;
+        }
+    }
+
+    void RunSteps(BuildOptions o, TransactionGroup group)
+    {
         if (o.Interior)
         {
             // the exterior model already here owns the coordinates, base points and levels
@@ -428,6 +444,7 @@ public sealed class ModelBuilder
             var above = i + 1 < ordered.Count ? ordered[i + 1].Value.level : null;
             // over a mezzanine's floor, walls outside the mezzanine run up to the floor after it
             var past = i + 2 < ordered.Count && ordered[i + 1].Key.Partial ? ordered[i + 2].Value.level : null;
+            if (o.OnlyLevels != null && !o.OnlyLevels.Contains(sl.Code)) continue; // a floor left as it is
             int removed = 0;
             var done = new List<string>();
             Step($"{sl.Name}: clearing an earlier run", done, () => removed = DeleteGenerated(sl.Code));
@@ -592,7 +609,7 @@ public sealed class ModelBuilder
     void Step(string what, List<string> done, Action build)
     {
         using var t = new Transaction(_doc, "Survey: " + what);
-        t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()).SetClearAfterRollback(true));
+        t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower(Log, what)).SetClearAfterRollback(true));
         t.Start();
         try { build(); }
         catch (Exception ex) { t.RollBack(); done.Add($"{what} failed ({ex.Message})"); Log.Add($"WARNING: {what} failed: {ex.Message}"); return; }
@@ -1614,20 +1631,41 @@ public sealed class ModelBuilder
     /// </summary>
     internal sealed class WarningSwallower : IFailuresPreprocessor
     {
+        readonly List<string>? _log;
+        readonly string _what;
+
+        /// <summary>With a log, every error Revit fixed by its own means or by dropping elements is written down (what, why, how many).</summary>
+        public WarningSwallower(List<string>? log = null, string what = "") { _log = log; _what = what; }
+
         public FailureProcessingResult PreprocessFailures(FailuresAccessor a)
         {
             bool resolved = false;
             foreach (var f in a.GetFailureMessages())
             {
                 if (f.GetSeverity() == FailureSeverity.Warning) a.DeleteWarning(f);
-                else if (f.GetSeverity() == FailureSeverity.Error && f.HasResolutions()) { a.ResolveFailure(f); resolved = true; }
+                else if (f.GetSeverity() == FailureSeverity.Error && f.HasResolutions())
+                {
+                    Note(f, "Revit's own fix was applied (this can remove the elements)");
+                    a.ResolveFailure(f); resolved = true;
+                }
                 else if (f.GetSeverity() == FailureSeverity.Error && f.GetFailingElementIds().Count > 0)
                 {
                     // no fix offered: drop the elements Revit cannot make rather than lose the whole step
-                    try { a.DeleteElements(f.GetFailingElementIds().ToList()); resolved = true; } catch { }
+                    try { a.DeleteElements(f.GetFailingElementIds().ToList()); resolved = true; Note(f, "they were left out"); } catch { }
                 }
             }
             return resolved ? FailureProcessingResult.ProceedWithCommit : FailureProcessingResult.Continue;
+        }
+
+        void Note(FailureMessageAccessor f, string outcome)
+        {
+            if (_log == null) return;
+            try
+            {
+                int n = f.GetFailingElementIds().Count;
+                _log.Add($"REVIT REFUSED: {(_what.Length > 0 ? _what + ": " : "")}{n} element{(n == 1 ? "" : "s")} - {f.GetDescriptionText()} ({outcome}).");
+            }
+            catch { /* the note is a help, never a reason to stop */ }
         }
     }
 }

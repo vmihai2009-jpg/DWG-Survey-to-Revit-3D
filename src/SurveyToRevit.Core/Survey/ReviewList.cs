@@ -6,6 +6,10 @@ namespace SurveyToRevit.Core.Survey;
 /// <summary>One place to look at in Revit: the level (by name), where (model mm), what, and whether it has been looked at.</summary>
 public sealed class ReviewItem
 {
+    /// <summary>The item's number in its list (1, 2, 3...), so it can be named: "item 14". 0 in lists saved before ids.</summary>
+    public int Id { get; set; }
+    /// <summary>What was found or done when it was looked at (optional).</summary>
+    public string Note { get; set; } = "";
     public string Level { get; set; } = "";
     public string Kind { get; set; } = "";
     public string What { get; set; } = "";
@@ -32,8 +36,9 @@ public sealed class ReviewList
     {
         Project = project,
         Built = DateTime.Now,
-        Items = checks.OrderBy(c => c.Priority).ThenBy(c => c.LevelCode).Select(c => new ReviewItem
+        Items = checks.OrderBy(c => c.Priority).ThenBy(c => c.LevelCode).Select((c, i) => new ReviewItem
         {
+            Id = i + 1,
             Level = levels.FirstOrDefault(l => l.Code == c.LevelCode)?.Name ?? c.LevelCode,
             Kind = c.Kind.ToString(),
             What = CheckItem.Describe(c.Kind),
@@ -55,7 +60,32 @@ public sealed class ReviewList
 
     public static ReviewList? Load(string path)
     {
-        try { return File.Exists(path) ? JsonSerializer.Deserialize<ReviewList>(File.ReadAllText(path)) : null; }
+        try
+        {
+            var list = File.Exists(path) ? JsonSerializer.Deserialize<ReviewList>(File.ReadAllText(path)) : null;
+            list?.NumberItems();
+            return list;
+        }
         catch { return null; }
+    }
+
+    /// <summary>Gives every item without a number the next free one (lists saved before ids, items added by a floor rebuilt on its own).</summary>
+    public void NumberItems()
+    {
+        int next = Items.Count == 0 ? 1 : Items.Max(i => i.Id) + 1;
+        foreach (var i in Items.Where(i => i.Id <= 0)) i.Id = next++;
+    }
+
+    /// <summary>
+    /// After rebuilding some floors on their own: their items are replaced by the new ones; the other floors'
+    /// items, with their ticks and notes, are kept.
+    /// </summary>
+    public void ReplaceLevels(ReviewList fresh, IEnumerable<string> levelNames)
+    {
+        var names = levelNames.ToHashSet();
+        Items.RemoveAll(i => names.Contains(i.Level));
+        foreach (var i in fresh.Items.Where(i => names.Contains(i.Level))) { i.Id = 0; Items.Add(i); }
+        NumberItems();
+        Built = fresh.Built;
     }
 }

@@ -77,13 +77,13 @@ public class ScoreCommand : IExternalCommand
     static double Ft(double mm) => UnitConversion.MmToFeet(mm);
     static double Mm(double ft) => UnitConversion.FeetToMm(ft);
 
-    static bool Ours(Element e) =>
+    internal static bool Ours(Element e) =>
         e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(ModelBuilder.Tag + "|") == true;
 
-    sealed record Set(List<ScoreWall> Walls, List<ScoreOpening> Windows, List<ScoreOpening> Doors);
+    internal sealed record Set(List<ScoreWall> Walls, List<ScoreOpening> Windows, List<ScoreOpening> Doors);
 
     /// <summary>The existing walls, windows and doors of a model, in this project's coordinates, by our level name.</summary>
-    static Set Collect(Document d, Transform t, Func<Element, bool> keep, Func<Level, string?> levelName, List<string> notes, string what)
+    internal static Set Collect(Document d, Transform t, Func<Element, bool> keep, Func<Level, string?> levelName, List<string> notes, string what)
     {
         var set = new Set(new(), new(), new());
         // the Existing phase when the model has one (a survey model may also hold proposals); otherwise everything
