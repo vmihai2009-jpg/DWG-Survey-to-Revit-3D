@@ -77,7 +77,7 @@ public static class McpTools
             "Tick review items as looked at (or untick), with a note of what was found or done. Only the review list file changes.",
             Schema("\"ids\":{\"type\":\"array\",\"items\":{\"type\":\"integer\"}},\"done\":{\"type\":\"boolean\",\"description\":\"default true\"},\"note\":{\"type\":\"string\"}", "ids"), ""],
         ["survey_score",
-            "With a hand-made reference model of the same building linked in: generated walls, windows and doors counted as right, off, missed or invented, whole building and per level. Nothing is changed. Use it before and after fixes to see whether they helped.",
+            "With a hand-made reference model of the same building linked in: generated walls, windows and doors counted as right, off, missed or invented, whole building and per level. Nothing is changed. Use it before and after fixes to see whether they helped. This compares with another model; to measure the model against the survey DWGs themselves (1:1), use the BG MCP hub's survey_fidelity, which includes this score when a reference model is linked.",
             Schema("\"link\":{\"type\":\"string\",\"description\":\"Name of the linked reference model, when several are linked\"}"), "long"],
         ["survey_wall",
             "Add a wall the reading missed (Wall from Lines without the picking): between two face lines, or along a centre line at a thickness. Model mm. Built as a Concept Wall up to the next level, Existing phase; kept when the floor is rebuilt. One undo step.",
@@ -86,6 +86,12 @@ public static class McpTools
                    "\"face_b\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"description\":\"[x1, y1, x2, y2] of the other face\"}," +
                    "\"centre\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"description\":\"Or: [x1, y1, x2, y2] of the centre line...\"}," +
                    "\"thickness_mm\":{\"type\":\"number\",\"description\":\"...and the thickness\"}", "level"), "write"],
+        ["survey_reading",
+            "The engine's whole reading of the survey, for other tools to measure a model against (the BG MCP hub's survey_fidelity and survey_autofix use it): per floor, in model mm, the wall face lines and arcs as drawn, window and door lines, the walls read (thickness, confidence), windows and doors with sill and head, every height note (sill, head, door head, ceiling), spot heights, room names, ceilings, stairs and the slab outline; also sections and roofs. Layer roles and label formats are the build's own (built-in rules plus layers.txt). Writes it to a JSON file (schema survey-reading/1) and returns the path with counts per floor; the geometry is never in the answer. Without folder or paths, the survey used last.",
+            Schema(Files + ",\"levels\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Only these floors (names or codes)\"},\"fresh\":{\"type\":\"boolean\",\"description\":\"Read the files again even if nothing changed\"}"), "background,long"],
+        ["survey_layer_roles",
+            "The role each named CAD layer has under the layer rules (built-in plus the layers.txt next to the survey): Wall, Window, Door, LevelText, HeightText... For tools that read drawings themselves (elevations), so they use the same layer mapping as the build. Without folder or paths, the survey used last.",
+            Schema(Files + ",\"layers\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Layer names\"}", "layers"), "background"],
         ["survey_report",
             "The text of the newest saved report: analysis, build, overlay, score or error. For detail the summaries leave out.",
             Schema("\"kind\":{\"type\":\"string\",\"enum\":[\"analysis\",\"build\",\"overlay\",\"score\",\"error\"]}," +
@@ -98,8 +104,11 @@ public static class McpTools
     public static string[][] Prompts() =>
     [
         ["survey_to_model",
-            "Turn survey DWGs into a checked Revit model: analyse, build, then work through the review list.",
+            "Turn survey DWGs into a checked Revit model: analyse, build, then work through the review list. With the BG MCP hub, use its survey_to_one_to_one instead: the same steps, then measured to 1:1.",
             """
+            If the tools survey_fidelity and survey_autofix are also listed (the BG MCP hub), load the prompt
+            survey_to_one_to_one and follow it instead: it includes every step below and then takes the model to 1:1.
+
             You are helping build a Revit concept model from 2D survey DWGs with Survey to Revit. The engine does the
             modelling; you choose, check and fix. Keep answers short. Never place elements one at a time when the
             engine can build them.
@@ -146,6 +155,8 @@ public static class McpTools
             "survey_wall" => SurveyPipeline.Wall(Doc(app), Str(a, "level") ?? throw new ArgumentException("\"level\" is needed."),
                 Numbers(a, "face_a"), Numbers(a, "face_b"), Numbers(a, "centre"), Num(a, "thickness_mm")),
             "survey_report" => Report(a),
+            "survey_reading" => Reading(a),
+            "survey_layer_roles" => LayerRoles(a),
             _ => throw new ArgumentException($"Survey to Revit has no tool called {name}."),
         };
         return result.ToJsonString();
@@ -170,11 +181,13 @@ public static class McpTools
         a.ValueKind == JsonValueKind.Object && a.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Array
             ? v.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).Where(s => s.Length > 0).ToList() : new();
 
-    /// <summary>The drawings named by "folder" and/or "paths".</summary>
-    static List<string> FilesOf(JsonElement a)
+    /// <summary>The drawings named by "folder" and/or "paths" (or, with <paramref name="orLast"/>, the survey folder used last).</summary>
+    static List<string> FilesOf(JsonElement a, bool orLast = false)
     {
         var list = Strings(a, "paths");
-        if (Str(a, "folder") is string folder)
+        var folder = Str(a, "folder");
+        if (folder == null && list.Count == 0 && orLast && UserSettings.Load().LastSurveyFolder is { Length: > 0 } last && Directory.Exists(last)) folder = last;
+        if (folder != null)
         {
             if (!Directory.Exists(folder)) throw new ArgumentException($"There is no folder {folder}.");
             list.AddRange(Directory.GetFiles(folder, "*.dwg").OrderBy(f => f, StringComparer.OrdinalIgnoreCase));
@@ -182,7 +195,20 @@ public static class McpTools
         list = list.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (list.Count == 0) throw new ArgumentException("Say where the survey is: \"folder\" (a folder of DWGs) or \"paths\" (the DWG files).");
         if (list.FirstOrDefault(f => !File.Exists(f)) is string missing) throw new ArgumentException($"There is no file {missing}.");
+        Remember(list);
         return list;
+    }
+
+    /// <summary>The survey's folder, kept as the one used last (as the ribbon's Build from Survey keeps it), so a later call can leave it out.</summary>
+    static void Remember(List<string> files)
+    {
+        try
+        {
+            var settings = UserSettings.Load();
+            var folder = Path.GetDirectoryName(files[0]);
+            if (folder != null && settings.LastSurveyFolder != folder) { settings.LastSurveyFolder = folder; settings.Save(); }
+        }
+        catch { /* only a convenience */ }
     }
 
     static List<SurveyLevel> Floors(SurveyModel model, IEnumerable<string> names) => names.Select(n =>
@@ -465,6 +491,55 @@ public static class McpTools
             ["changed"] = hit.Count,
             ["notFound"] = new JsonArray(ids.Except(hit.Select(i => i.Id)).Select(i => (JsonNode)i).ToArray()),
             ["open"] = list.Items.Count(i => !i.Done), ["total"] = list.Items.Count,
+        };
+    }
+
+    static JsonObject Reading(JsonElement a)
+    {
+        var (dwgs, _) = SurveyPipeline.Split(FilesOf(a, orLast: true));
+        if (dwgs.Count == 0) throw new ArgumentException("No survey DWGs among those files.");
+        var model = SurveyPipeline.Analyze(dwgs, Flag(a, "fresh") == true);
+        var only = Strings(a, "levels");
+        if (only.Count > 0) Floors(model, only); // an unknown floor is an error, with the list
+        var reading = SurveyReading.ToJson(model, only, dwgs);
+        reading["engine"] = typeof(McpTools).Assembly.GetName().Version?.ToString(3);
+        reading["folder"] = Path.GetDirectoryName(dwgs[0]);
+        var path = Path.Combine(SurveyPipeline.Reports, "survey-reading.json");
+        File.WriteAllText(path, reading.ToJsonString());
+        static int Count(JsonNode? n) => n is JsonArray x ? x.Count : 0;
+        return new JsonObject
+        {
+            ["path"] = path,
+            ["schema"] = SurveyReading.Schema,
+            ["folder"] = reading["folder"]?.DeepClone(),
+            ["layerFile"] = model.Rules.OverrideFile,
+            ["levels"] = new JsonArray(reading["levels"]!.AsArray().OfType<JsonObject>().Select(l => (JsonNode)new JsonObject
+            {
+                ["code"] = l["code"]?.DeepClone(), ["name"] = l["name"]?.DeepClone(), ["elevationMm"] = l["elevationMm"]?.DeepClone(),
+                ["wallFaces"] = Count(l["wallFaces"]), ["wallFaceArcs"] = Count(l["wallFaceArcs"]), ["walls"] = Count(l["walls"]),
+                ["windows"] = Count(l["windows"]), ["doors"] = Count(l["doors"]), ["heightNotes"] = Count(l["heights"]),
+                ["spotHeights"] = Count(l["spotHeights"]), ["rooms"] = Count(l["rooms"]), ["stairs"] = Count(l["stairs"]),
+            }).ToArray()),
+            ["sections"] = Count(reading["sections"]),
+            ["roofs"] = Count(reading["roofs"]),
+            ["skipped"] = Count(reading["skipped"]),
+        };
+    }
+
+    static JsonObject LayerRoles(JsonElement a)
+    {
+        var layers = Strings(a, "layers");
+        if (layers.Count == 0) throw new ArgumentException("\"layers\" is needed: the layer names to look up.");
+        List<string> files;
+        try { files = FilesOf(a, orLast: true); }
+        catch (ArgumentException) when (Str(a, "folder") == null && Strings(a, "paths").Count == 0) { files = new(); } // no survey known: the built-in rules
+        var problems = new List<string>();
+        var rules = SurveyLayers.RulesFor(files, problems);
+        return new JsonObject
+        {
+            ["layerFile"] = rules.OverrideFile,
+            ["roles"] = SurveyReading.Roles(rules, layers),
+            ["problems"] = problems.Count > 0 ? new JsonArray(problems.Select(p => (JsonNode)p).ToArray()) : null,
         };
     }
 
