@@ -65,6 +65,11 @@ public sealed class LayerRules
 
     /// <summary>The office's own layer names, tried before the built-in rules (see <see cref="WithOverrides"/>).</summary>
     public IReadOnlyList<(Regex Pattern, LayerRole Role)> Overrides { get; init; } = Array.Empty<(Regex, LayerRole)>();
+    /// <summary>
+    /// The office's own height-note abbreviations ("WH" = OpeningHeight), from "label WH = OpeningHeight" lines in
+    /// layers.txt; read by <see cref="SurveyHeights"/> before the built-in ones. Keys are lower case.
+    /// </summary>
+    public IReadOnlyDictionary<string, HeightKind> LabelWords { get; init; } = new Dictionary<string, HeightKind>(StringComparer.OrdinalIgnoreCase);
     /// <summary>Where the overrides came from, for the report.</summary>
     public string? OverrideFile { get; init; }
 
@@ -74,11 +79,14 @@ public sealed class LayerRules
     /// <summary>
     /// These rules plus a layer file: one line per layer, "layer name = role" (e.g. "A-GLAZ-CURT = CurtainWall",
     /// "MY_STAIRS* = Stair"; * matches anything; lines starting with # are notes). Roles are the names
-    /// in <see cref="LayerRole"/>. Unreadable lines are reported back, never guessed.
+    /// in <see cref="LayerRole"/>. Lines "label WORD = kind" name the office's own height-note abbreviations
+    /// ("label WH = OpeningHeight", "label SILL LVL = Sill"); kinds are the names in <see cref="HeightKind"/>.
+    /// Unreadable lines are reported back, never guessed.
     /// </summary>
     public LayerRules WithOverrides(string path, List<string> problems)
     {
         var list = new List<(Regex, LayerRole)>();
+        var words = new Dictionary<string, HeightKind>(LabelWords, StringComparer.OrdinalIgnoreCase);
         int n = 0;
         foreach (var raw in File.ReadAllLines(path))
         {
@@ -86,6 +94,14 @@ public sealed class LayerRules
             var line = raw.Trim();
             if (line.Length == 0 || line.StartsWith('#')) continue;
             int eq = line.LastIndexOf('=');
+            if (IsLabelLine(line))
+            {
+                var word = Regex.Replace(line[5..eq].Trim().ToLowerInvariant(), @"\s+", " ");
+                if (!Regex.IsMatch(word, @"^[a-z][a-z/ .]{0,15}$"))
+                    problems.Add($"{System.IO.Path.GetFileName(path)} line {n}: \"{word}\" is not usable as a height-note abbreviation (letters, up to 16)");
+                else words[word] = Enum.Parse<HeightKind>(line[(eq + 1)..].Trim(), true);
+                continue;
+            }
             if (eq <= 0 || !Enum.TryParse<LayerRole>(line[(eq + 1)..].Trim(), true, out var role))
             { problems.Add($"{System.IO.Path.GetFileName(path)} line {n} not understood: \"{line}\" (expected \"layer name = role\")"); continue; }
             var name = line[..eq].Trim();
@@ -97,9 +113,14 @@ public sealed class LayerRules
             HeightText = HeightText, CurtainWall = CurtainWall, Stair = Stair, Ramp = Ramp, Lift = Lift, Column = Column, Rooflight = Rooflight,
             Roof = Roof, Chimney = Chimney, Balcony = Balcony, Railing = Railing, Fitting = Fitting, Ceiling = Ceiling, Area = Area,
             Overhead = Overhead, Annotation = Annotation, NotWall = NotWall,
-            Overrides = Overrides.Concat(list).ToList(), OverrideFile = path,
+            Overrides = Overrides.Concat(list).ToList(), OverrideFile = path, LabelWords = words,
         };
     }
+
+    /// <summary>A layers.txt line naming a height-note abbreviation ("label WH = OpeningHeight"), not a layer.</summary>
+    /// A layer that happens to be called "LABEL TEXT = Annotation" stays a layer rule: the kind must be a height kind.
+    public static bool IsLabelLine(string line) =>
+        Regex.Match(line, @"^label\s+\S.*=\s*(\w+)\s*$", RegexOptions.IgnoreCase) is { Success: true } m && Enum.TryParse<HeightKind>(m.Groups[1].Value, true, out _);
 
     public LayerRole Classify(string layer)
     {
