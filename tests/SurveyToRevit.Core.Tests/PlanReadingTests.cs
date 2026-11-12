@@ -59,6 +59,42 @@ public class PlanReadingTests
     }
 
     [Fact]
+    public void Single_line_wall_has_its_face_on_the_line_not_its_centre()
+    {
+        var line = S(1000, 6000, 9000, 6000);
+        // no other evidence: the body goes to the left of the line (+y here), the face stays on y = 6000
+        var plain = Assert.Single(WallDetector.FromSingleLines(new[] { line }, new List<WallCandidate>(), Box, Tolerances.Default));
+        Assert.Equal(6050, plain.Centerline.A.Y, 0);
+        Assert.Equal(6050, plain.Centerline.B.Y, 0);
+        Assert.Equal(-1, plain.DrawnFaceSide);
+
+        // a room above the line (y > 6000): the body goes below it
+        var roomAbove = Assert.Single(WallDetector.FromSingleLines(new[] { line }, new List<WallCandidate>(), Box, Tolerances.Default,
+            isRoom: p => p.Y > 6000));
+        Assert.Equal(5950, roomAbove.Centerline.Mid.Y, 0);
+        Assert.Equal(1, roomAbove.DrawnFaceSide);
+
+        // wall material below the line wins
+        var material = Assert.Single(WallDetector.FromSingleLines(new[] { line }, new List<WallCandidate>(), Box, Tolerances.Default,
+            isMaterial: p => p.Y < 6000 && p.Y > 5800));
+        Assert.Equal(5950, material.Centerline.Mid.Y, 0);
+
+        // a room name 1.5 m above: the body goes below
+        var marker = Assert.Single(WallDetector.FromSingleLines(new[] { line }, new List<WallCandidate>(), Box, Tolerances.Default,
+            spaceMarkers: new[] { new Vec2(4000, 7500) }));
+        Assert.Equal(5950, marker.Centerline.Mid.Y, 0);
+    }
+
+    [Fact]
+    public void Single_line_near_the_building_edge_keeps_its_body_inside()
+    {
+        // a line 80 mm inside the outline's bottom edge: the body goes up, into the building
+        var line = S(9000, 80, 1000, 80); // drawn right to left, so its left is -y
+        var w = Assert.Single(WallDetector.FromSingleLines(new[] { line }, new List<WallCandidate>(), Box, Tolerances.Default));
+        Assert.Equal(130, w.Centerline.Mid.Y, 0);
+    }
+
+    [Fact]
     public void Default_ceiling_is_2700_or_600_below_the_floor_above()
     {
         Assert.Equal(2700, SurveyAnalyzer.DefaultCeilingHeight(4000));

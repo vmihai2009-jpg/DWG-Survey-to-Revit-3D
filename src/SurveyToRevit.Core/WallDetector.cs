@@ -12,6 +12,9 @@ public sealed record WallCandidate(Segment2 Centerline, double MeasuredThickness
     public bool PastPartialFloor { get; init; }
     /// <summary>A glazed wall or screen (drawn on a curtain wall / glazed partition layer): built as a curtain wall.</summary>
     public bool Curtain { get; init; }
+    /// <summary>A wall read from one drawn line: which side of <see cref="Centerline"/> that line (the surveyed face) is,
+    /// +1 left of its direction, -1 right; 0 when both faces were drawn.</summary>
+    public int DrawnFaceSide { get; init; }
     public double Length => Arc?.Length ?? Centerline.Length;
     public string TypeName => WallDetector.TypeNameFor(TypeThickness);
 }
@@ -175,11 +178,16 @@ public static class WallDetector
     /// <summary>
     /// Walls drawn with one line only (common on ground floors and in older surveys):
     /// lines inside the building, long enough, and not a face of a wall already found,
-    /// become thin walls centred on the line, marked low confidence.
+    /// become thin walls, marked low confidence. One drawn line is one face of the wall: the
+    /// wall's face sits on the line and its body on the side that is not a room (see <see cref="SingleLineSide"/>),
+    /// never centred on the line (which put both faces half a wall off the survey).
     /// </summary>
     /// <param name="facesOnly">Layers whose lines are wall faces only when paired (e.g. "BUILDINGS", which also holds roof outlines and rooflights).</param>
+    /// <param name="isMaterial">Optional: is this point wall material? The body goes where the plan has material.</param>
+    /// <param name="isRoom">Optional: is this point inside a room? The body goes away from the room.</param>
+    /// <param name="spaceMarkers">Optional: room names and spot heights; the body goes away from the nearest.</param>
     public static List<WallCandidate> FromSingleLines(IEnumerable<Segment2> unpaired, List<WallCandidate> walls, Polygon2? outline, Tolerances tol,
-        Func<string, bool>? facesOnly = null)
+        Func<string, bool>? facesOnly = null, Func<Vec2, bool>? isMaterial = null, Func<Vec2, bool>? isRoom = null, IReadOnlyList<Vec2>? spaceMarkers = null)
     {
         var result = new List<WallCandidate>(walls);
         var t = tol.SingleLineWallThickness;
@@ -195,9 +203,57 @@ public static class WallDetector
                 double overlap = Math.Min(c.Length, Math.Max(a, b)) - Math.Max(0, Math.Min(a, b));
                 return overlap > 0.3 * s.Length;
             });
-            if (!isFace) result.Add(new WallCandidate(s with { Source = "single line" }, t, t, Confidence.Low, s.Source, ""));
+            if (isFace) continue;
+            var side = SingleLineSide(s, t, outline, isMaterial, isRoom, spaceMarkers);
+            var shift = s.Direction.Perp() * (side * t / 2);
+            var centre = new Segment2(s.A + shift, s.B + shift, s.Layer, "single line");
+            result.Add(new WallCandidate(centre, t, t, Confidence.Low, s.Source, "") { DrawnFaceSide = -side });
         }
         return result;
+    }
+
+    /// <summary>
+    /// Which side of a single drawn face line the wall's body is on: +1 to the left of the line's direction
+    /// (<see cref="Vec2.Perp"/>), -1 to the right. In order: the side where the plan has wall material and not the other;
+    /// the side that is not a room (an inaccessible party wall, a void); the side away from the nearest room name or spot
+    /// height within 3 m; inside the building outline; else the left.
+    /// </summary>
+    public static int SingleLineSide(Segment2 s, double thickness, Polygon2? outline = null, Func<Vec2, bool>? isMaterial = null,
+        Func<Vec2, bool>? isRoom = null, IReadOnlyList<Vec2>? spaceMarkers = null)
+    {
+        var n = s.Direction.Perp();
+        var u = s.Direction;
+        // samples along the line, away from the ends where cross walls join
+        var along = new List<double>();
+        double usable = s.Length - 200;
+        int count = usable <= 0 ? 1 : (int)Math.Floor(usable / 250) + 1;
+        for (int i = 0; i < count; i++) along.Add(count == 1 ? s.Length / 2 : 100 + usable * i / (count - 1));
+        double Share(Func<Vec2, bool> test, int side, double off) => along.Count(a => test(s.A + u * a + n * (side * off))) / (double)along.Count;
+
+        if (isMaterial != null)
+        {
+            // the middle of a body and a little past it: the line's own cells are left out
+            double l = Share(isMaterial, 1, thickness * 0.75), r = Share(isMaterial, -1, thickness * 0.75);
+            if (Math.Abs(l - r) >= 0.3) return l > r ? 1 : -1;
+        }
+        if (isRoom != null)
+        {
+            double off = thickness + 100;
+            double l = Share(isRoom, 1, off), r = Share(isRoom, -1, off);
+            if (Math.Abs(l - r) >= 0.3) return l < r ? 1 : -1;
+        }
+        if (spaceMarkers is { Count: > 0 })
+        {
+            var near = spaceMarkers.Where(m => { double a = SegmentCleaner.Along(s, m); return a >= -500 && a <= s.Length + 500; })
+                .Select(m => (m, d: Math.Abs(SegmentCleaner.Offset(s, m)))).Where(x => x.d > 1 && x.d <= 3000).OrderBy(x => x.d).ToList();
+            if (near.Count > 0) return SegmentCleaner.Offset(s, near[0].m) > 0 ? -1 : 1;
+        }
+        if (outline != null)
+        {
+            bool l = FacadeWalls.Contains(outline, s.Mid + n * (thickness + 100)), r = FacadeWalls.Contains(outline, s.Mid - n * (thickness + 100));
+            if (l != r) return l ? 1 : -1;
+        }
+        return 1;
     }
 
     /// <summary>Nearest standard size; beyond the list, the nearest 100 mm.</summary>
