@@ -80,5 +80,6 @@ dotnet test                 # geometry tests, no Revit needed
 - `src/Shared` – settings file shared by both.
 - `tests/SurveyToRevit.Core.Tests` – synthetic-plan tests.
 - `tools/SurveyLab` – `dotnet run --project tools/SurveyLab -- <folder of DWGs> --out <dir>` runs the engine without Revit and writes a report, SVG wall previews, the wall-material map per floor and a loose-ends check of the linework.
+- `.github/workflows/ci.yml` – on every pull request and every push to the default branch, builds the whole solution and runs the tests on a Windows machine without Revit. Results are on the repository's Actions tab.
 
 Third-party components: see [THIRD_PARTY.md](THIRD_PARTY.md).
