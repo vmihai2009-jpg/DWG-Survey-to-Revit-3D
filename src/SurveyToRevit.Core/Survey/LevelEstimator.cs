@@ -13,9 +13,10 @@ public sealed record LevelEstimate(double FloorLevelMm, int Supporting, int Tota
 /// </summary>
 public static class LevelEstimator
 {
-    static readonly Regex Number = new(@"^(?:FFL|FL|SSL)?\s*([+-]?\d{1,4}\.\d{2,3})\s*m?$", RegexOptions.IgnoreCase);
+    // "27.05", "+27.050", "FFL 27.05", "FFL: +27.05", "LVL 27.05", "27.05m", "27.05 AOD", "27.05mAOD", "27.050 FFL"
+    static readonly Regex Number = new(@"^(?:(?:FFL|FL|SSL|SFL|AFL|LVL|LEVEL|EL|RL|AOD)\.?\s*[:=]?\s*)?([+-]?\d{1,4}\.\d{2,3})\s*m?\s*(?:A\.?O\.?D\.?|FFL|FL|SSL)?$", RegexOptions.IgnoreCase);
 
-    /// <summary>Parses a spot-height text into millimetres. Survey levels are given in metres.</summary>
+    /// <summary>Parses a spot-height text into millimetres. Survey levels are given in metres, with or without a word for what they are (FFL, SSL, AOD, LVL) before or after.</summary>
     public static double? ParseMm(string text)
     {
         var m = Number.Match(text.Trim());
