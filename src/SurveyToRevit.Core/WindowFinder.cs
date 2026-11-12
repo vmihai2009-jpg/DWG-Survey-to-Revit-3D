@@ -60,7 +60,8 @@ public static class WindowFinder
     public static List<WindowCandidate> Find(IReadOnlyList<Segment2> windowLines, IReadOnlyList<WallCandidate> walls,
         IReadOnlyList<(Vec2 Position, string Value)> texts, double storeyMm,
         double joinMm = 150, double textReach = 2000, double minWidth = 300, double maxWidth = 6000, Polygon2? outline = null, double? ceilingMm = null,
-        List<WallCandidate>? added = null, Func<Vec2, bool>? isMaterial = null, IReadOnlyList<double>? wallSizes = null)
+        List<WallCandidate>? added = null, Func<Vec2, bool>? isMaterial = null, IReadOnlyList<double>? wallSizes = null,
+        IReadOnlyDictionary<string, HeightKind>? labelWords = null)
     {
         var lines = windowLines.Where(l => l.Length >= 20).ToList();
         // touching lines → one window (union-find)
@@ -70,7 +71,7 @@ public static class WindowFinder
             for (int j = i + 1; j < lines.Count; j++)
                 if (Near(lines[i], lines[j], joinMm)) parent[Root(i)] = Root(j);
 
-        var notes = SurveyHeights.Read(texts);
+        var notes = SurveyHeights.Read(texts, labelWords);
 
         var all = walls.ToList();
         var found = new List<(int Host, Vec2 Center, double Width, double? Sill, double? Head, Vec2? Out)>();

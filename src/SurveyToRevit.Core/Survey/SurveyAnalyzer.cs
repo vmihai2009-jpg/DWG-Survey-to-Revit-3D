@@ -184,7 +184,7 @@ public static class SurveyAnalyzer
             if (RoofsAndDetails.IsRoofPlan(d, rules)) { roofPlans.Add(d); continue; }
             if (d.Name.LevelCode == null && SectionReader.IsSectionSheet(d)) { sectionSheets.Add(d); continue; }
             if (d.Name.LevelCode == null) { skipped.Add(new(d.Name.FileName, "not a single-floor plan (elevation, section or multi-level sheet)")); continue; }
-            if (d.WallLines.Count < 30) { skipped.Add(new(d.Name.FileName, $"only {d.WallLines.Count} lines on wall layers: not a floor plan")); continue; }
+            if (d.WallLines.Count < 30) { skipped.Add(new(d.Name.FileName, LayerCheck.FewWalls(d, rules))); continue; }
             if (!d.SpotHeightsMm(rules).Any() && DrawingName.DescribeLevel(d.Name.LevelCode).Order == double.MaxValue)
             { skipped.Add(new(d.Name.FileName, "level not recognised and no spot heights")); continue; }
             plans.Add(d);
@@ -215,6 +215,8 @@ public static class SurveyAnalyzer
         foreach (var p in chosen)
         {
             var (order, name) = DrawingName.DescribeLevel(p.Name.LevelCode!);
+            // layers and height notes this surveyor writes that the rules don't read
+            notes.AddRange(LayerCheck.Plan(p, rules));
             var est = LevelEstimator.Estimate(p.SpotHeightsMm(rules));
             if (est == null) notes.Add($"{name}: no spot heights found; level height must be set by hand.");
             else if (est.Supporting < 0.4 * est.Total)
@@ -298,7 +300,7 @@ public static class SurveyAnalyzer
             var next = levels.Skip(i + 1).FirstOrDefault(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm > levels[i].ElevationMm);
             levels[i].WallHeightMm = next != null ? next.ElevationMm - levels[i].ElevationMm : DefaultTopWallHeightMm;
             var (wl, tx) = windowInput[levels[i]];
-            var heights = SurveyHeights.Read(tx);
+            var heights = SurveyHeights.Read(tx, rules.LabelWords);
             // surveyed ceiling heights ("u/s 2.52") win over the default
             var surveyedCeiling = SurveyHeights.CeilingHeight(heights, levels[i].WallHeightMm);
             levels[i].CeilingNotes = heights.Where(h => h.Kind == HeightKind.Ceiling && h.Mm >= 1800 && h.Mm <= levels[i].WallHeightMm - 50)
@@ -323,7 +325,7 @@ public static class SurveyAnalyzer
             var mezzAbove = MezzanineOver(i);
             double windowStorey = mezzAbove != null && !double.IsNaN(levels[i + 2].ElevationMm) ? levels[i + 2].ElevationMm - levels[i].ElevationMm : levels[i].WallHeightMm;
             levels[i].Windows = WindowFinder.Find(wl, levels[i].Walls.Walls, tx, windowStorey, outline: levels[i].Outline, ceilingMm: mezzAbove != null ? null : levels[i].CeilingHeightMm,
-                added: windowWalls, isMaterial: levels[i].IsMaterial, wallSizes: tol.WallTypeSizes);
+                added: windowWalls, isMaterial: levels[i].IsMaterial, wallSizes: tol.WallTypeSizes, labelWords: rules.LabelWords);
             if (mezzAbove != null)
                 levels[i].Windows = levels[i].Windows.Select(w => FacadeWalls.Contains(mezzAbove, w.Center) || EdgeDistance(mezzAbove, w.Center) < 300
                     ? w with { HeadMm = Math.Min(w.HeadMm, w.HeightsFromSurvey ? levels[i].WallHeightMm - 150 : Math.Min(levels[i].WallHeightMm - 150, Math.Max(w.SillMm + 300, levels[i].CeilingHeightMm))) } : w)
@@ -512,7 +514,7 @@ public static class SurveyAnalyzer
     {
         if (string.IsNullOrWhiteSpace(t.Value)) return false;
         if (rules.Classify(t.Layer) is LayerRole.Wall or LayerRole.Window or LayerRole.Door) return false;
-        return !SurveyHeights.IsOpeningNote(t.Value);
+        return !SurveyHeights.IsOpeningNote(t.Value, rules.LabelWords);
     }
 
     /// <summary>A pocket closed off by a door leaf and its swing (drawn lines around open floor), not wall material.</summary>

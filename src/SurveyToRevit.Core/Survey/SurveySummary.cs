@@ -172,6 +172,8 @@ public static class SurveyLayers
         }
         if (problems.Count > 0) return problems;
         var path = Path.Combine(folder, LayerRules.OverrideFileName);
+        // the office's height-note abbreviations ("label WH = OpeningHeight") are not layer rules: kept as they are
+        if (File.Exists(path)) lines.AddRange(File.ReadAllLines(path).Where(l => LayerRules.IsLabelLine(l.Trim())).Select(l => l.Trim()));
         if (File.Exists(path)) File.Copy(path, path + ".bak", true);
         File.WriteAllLines(path, lines);
         return problems;
