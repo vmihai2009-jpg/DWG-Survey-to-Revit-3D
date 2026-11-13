@@ -91,6 +91,7 @@ internal static class SurveyPipeline
             var paths = blog.Save(Reports, "", BuildLog.SurveyFolder(model));
             node["buildLog"] = LogJson(blog, paths, 10);
             node["facadeTops"] = TopsJson(model, FacadeTops.Save(model.FacadeTops, Reports, "", BuildLog.SurveyFolder(model)));
+            if (model.SectionIndex.Count > 0) node["sections"] = SectionsJson(model, SectionProfiles.Save(model.SectionIndex, Reports, "", BuildLog.SurveyFolder(model)));
         }
         catch (Exception ex) { node["buildLog"] = new JsonObject { ["error"] = ex.Message }; }
         return node;
@@ -179,6 +180,7 @@ internal static class SurveyPipeline
                 var paths = blog.Save(Reports, doc.Title, BuildLog.SurveyFolder(model));
                 result["buildLog"] = LogJson(blog, paths, 10);
                 result["facadeTops"] = TopsJson(model, FacadeTops.Save(model.FacadeTops, Reports, doc.Title, BuildLog.SurveyFolder(model)));
+                if (model.SectionIndex.Count > 0) result["sections"] = SectionsJson(model, SectionProfiles.Save(model.SectionIndex, Reports, doc.Title, BuildLog.SurveyFolder(model)));
                 if (options.OnlyLevels == null) review.AddLog(blog);
             }
             catch (Exception ex) { result["buildLog"] = new JsonObject { ["error"] = ex.Message }; }
@@ -209,6 +211,19 @@ internal static class SurveyPipeline
         ["contradicted"] = model.Decisions.Count(o => o.State == "contradicted"),
         ["waiting"] = model.Decisions.Count(o => o.State == "waiting"),
         ["each"] = new JsonArray(model.Decisions.Take(60).Select(o => (JsonNode)new JsonObject { ["kind"] = o.Kind, ["what"] = o.What, ["state"] = o.State, ["detail"] = o.Detail }).ToArray()),
+    };
+
+    /// <summary>The sections in short (item H): fit, placement, each end's class and offset, where section-index.json went.</summary>
+    public static JsonObject SectionsJson(SurveyModel model, IReadOnlyList<string> paths) => new()
+    {
+        ["each"] = new JsonArray(model.SectionIndex.Select(x => (JsonNode)new JsonObject
+        {
+            ["name"] = x.Name, ["file"] = x.File, ["note"] = x.Note,
+            ["fit"] = x.Fit is { } f ? new JsonObject { ["a"] = f.A, ["b"] = f.B, ["residualMm"] = f.ResidualMm, ["used"] = f.Used.Count, ["rejected"] = f.Rejected.Count } : null,
+            ["sure"] = x.Registration?.Sure, ["mirrored"] = x.Registration?.Mirrored,
+            ["ends"] = new JsonArray(x.Ends.Select(e => (JsonNode)new JsonObject { ["end"] = e.End, ["class"] = e.Class, ["why"] = e.Why, ["offsetMm"] = e.OffsetMm, ["bands"] = e.Bands.Count }).ToArray()),
+        }).ToArray()),
+        ["paths"] = new JsonArray(paths.Select(p => (JsonNode)p).ToArray()),
     };
 
     /// <summary>The facade tops in short (item C): counts by class, the stretches, where roof-edges.json went.</summary>

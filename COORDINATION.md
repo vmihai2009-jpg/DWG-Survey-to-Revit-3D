@@ -364,6 +364,15 @@ Entry format (copy this):
 
 ## Projects side (Mihai's personal account)
 
+### 2026-11-13 (later): Survey to Revit 0.30.0, item H of MCP-AUDIT-AND-TOOLS.md: sections publish their fit and profile, section-index.json
+- Per section: **height fit** z = a·y + b through the most level marks within 50 mm (the rest named as rejected, with how far off); **placement along the cut**: the walls the section cuts (500 mm above each floor) matched to the plan walls the cut crosses, both ways round, within 60 mm ("sure" when at least 4 match, 40% of the plan faces, and the other way round does clearly worse); the **offset** of the section's wall face from the plan's at each end (positive = drawn outside the plan); the **outer profile** at each end in 10 mm steps, measured from the section's own face (the offset is taken out), thinned to points that change by 5 mm; **bands** (≥ 50 mm proud over ≤ 1 m); the **top class** from the profile (Mansard / SetBackStorey / Pitched, with slope, eaves and kerb).
+- The section drawing is found among its sheet's lines as the island (gaps ≥ 2 m) that holds its level marks: title blocks and key plans fall away. Arcs are read in 5° pieces for the profile only. The key-plan fit reads the same lines as before.
+- Profiles of **sure** sections feed item C as High evidence (a Mansard from a section leaves the skin lines out, dormer fronts kept). Unsure ones are published but not used, and logged as `section placement`. Rejected marks and offsets over 100 mm are build-log entries too.
+- Written to `section-index.json` next to roof-edges.json; `survey_analyze` and `survey_build` answer with `sections`.
+- Not yet: balustrade/parapet parts, and one fit per part of a sheet (one fit per section here).
+- **Ask:** run `survey_analyze fresh: true` on Swallow Place and send `sections` (is F29's -440 mm offset found, with which sign?) and `facadeTops` (do the street-front stretches come out Mansard from the section now, without a decision?).
+- Files: `src/SurveyToRevit.Core/Survey/SectionProfiles.cs` (new, also `SharedFiles`), `Survey/SectionReader.cs`, `Survey/SurveyAnalyzer.cs`, `Survey/BuildLogEntries.cs`, `Revit/Mcp/SurveyPipeline.cs`, `Revit/BuildFromSurveyCommand.cs`, `tests/.../SectionProfileTests.cs`. Version 0.30.0.
+
 ### 2026-11-13 (later): Survey to Revit 0.29.0, item D of MCP-AUDIT-AND-TOOLS.md: walls under roofs stop under them
 - After the roofs are built, each generated wall a generated roof cuts is placed against that roof's outline in plan (`RoofWalls.Place`, Core, tested): **Inner** (under the roof, ends may meet the outer wall) gets its top attached to the roof (`AddAttachment`, so moving the roof moves it); **Edge** (within 150 mm plus half the wall of the outline: outer wall or upstand) is left as drawn; **Crossing** (half in, half out) is left and counted. Low walls (`|Parapet`) are never touched.
 - The log says how many of each; Edge and Crossing walls that still cut a roof are listed with ids by the 0.28.0 built-model checks (`roof-through-wall`).
