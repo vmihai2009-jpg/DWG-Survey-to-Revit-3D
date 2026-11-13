@@ -364,6 +364,13 @@ Entry format (copy this):
 
 ## Projects side (Mihai's personal account)
 
+### 2026-11-13 (later): Survey to Revit 0.28.0, item Q of MCP-AUDIT-AND-TOOLS.md: checks of the built model
+- After every build (button or `survey_build`), read-only checks of what was made, each with element ids and the fix: `roof-through-wall` (a generated roof cuts a generated wall: attach top or lower it), `slab-through-roof`, `floating` (a generic model or column whose box, grown by 50 mm, reaches no wall, floor or roof), `duplicate-wall` (two walls on one line within 20 mm and 2°, overlapping at least half the shorter), `wall-off-level` (base or top offset over 50 mm; parapets skipped), `wrong-phase` (generated elements and Revit's own railings not in the survey phase; the user's other work is left alone).
+- Findings go into `build-log.json` as `built: <kind>` entries (Medium) and so onto the review list; `survey_build` also answers with `builtChecks` (count, byKind, worst 15 with ids and fix, any check that couldn't run).
+- The duplicate rule is in Core (`BuiltChecks.DuplicateWalls`, tested); the rest are Revit filters. A check that throws is skipped and listed, never a reason to lose the build.
+- **Ask:** on the next Swallow Place build, send `builtChecks` (byKind and the worst 15). Roof-through-wall counts tell us how far item D is needed.
+- Files: `src/SurveyToRevit.Core/Survey/BuiltChecks.cs` (new), `src/SurveyToRevit.Revit/BuiltModelChecks.cs` (new), `Revit/ModelBuilder.cs` (SurveyPhase), `Revit/Mcp/SurveyPipeline.cs`, `Revit/BuildFromSurveyCommand.cs`, `tests/.../BuiltCheckTests.cs`. Version 0.28.0.
+
 ### 2026-11-13 (later): Survey to Revit 0.27.0, item C of MCP-AUDIT-AND-TOOLS.md: what the top of each facade is, roof-edges.json
 - Each edge of the storey below the top (a facade stretch, 2 m or more) is classed `FlatParapet`, `SetBackStorey`, `Mansard`, `Pitched` or `Unknown`, with its evidence, confidence, the class it rejected and what would settle it. Evidence, strongest first: a `facadeTop` decision **with a `line`** (x1, y1, x2, y2 along the facade: the engine doesn't know the hub's facade ids), a section profile across the stretch (High), a flat roof along a flush facade (Medium, FlatParapet), the plan alone (Low: set-back thick or windowed walls = SetBackStorey; thin windowless set-back lines = Unknown with "a section would settle it").
 - Only a Mansard from a decision or a section removes walls: the top storey's thin windowless lines along it are the plan's cut through the roof skin and are left out; walls with window lines there are kept as dormer fronts. From the plan alone nothing is removed, so a survey with no section and no decision builds exactly as before.

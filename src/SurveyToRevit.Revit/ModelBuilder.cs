@@ -93,6 +93,7 @@ public sealed class ModelBuilder
     double Z(double mmAod) => Ft(mmAod - _datumMm);
 
     readonly Phase? _phase;
+    internal Phase? SurveyPhase => _phase;
 
     /// <summary>For tools that work on a model already built (the surroundings): no survey drawings needed.</summary>
     public ModelBuilder(Document doc) : this(doc, null!) { }
