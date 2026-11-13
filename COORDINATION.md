@@ -364,6 +364,13 @@ Entry format (copy this):
 
 ## Projects side (Mihai's personal account)
 
+### 2026-11-13 (later): Survey to Revit 0.33.0, item U of MCP-AUDIT-AND-TOOLS.md: rebuilds that keep the work done since
+- Before a floor's generated elements are replaced, its earlier walls are matched to the walls about to be built (`RebuildMatch`, Core, tested): same line within 20 mm either way round and thickness within 5 mm. **Matched walls are kept** (not deleted and made again), and so are our windows and doors on them that match ones about to be placed (same wall, within 100 mm, width within 50 mm): a type changed by the hub, a sweep on the wall, a family placed against it all survive.
+- Everything else of ours on the floor is replaced as before. Elements **not ours** sitting on walls that do change (hosted families, wall sweeps) go with their wall: the build log names them (ids), and the `survey_build` **preview** shows per floor `keeps` (walls, windows and doors kept, `wouldLose` with ids) before anything is done.
+- Option `keep_matching` (default true); false replaces everything as before.
+- **Ask:** next time a Swallow Place floor is rebuilt after a layers.txt or decisions change, send the preview's `keeps` and say whether the facade work done since survived.
+- Files: `src/SurveyToRevit.Core/Survey/RebuildMatch.cs` (new), `Revit/ModelBuilder.cs` (`Earlier`, `KeptWork`, `DeleteGenerated` except), `Revit/Mcp/McpTools.cs` (preview `keeps`, option), `tests/.../RebuildMatchTests.cs`. Version 0.33.0.
+
 ### 2026-11-13 (later): Survey to Revit 0.32.0, item F of MCP-AUDIT-AND-TOOLS.md: windows from the elevations
 - On each facade an elevation matched (0.31.0), the drawing's window outlines (window-layer lines grouped where under ~100 mm apart; 300 mm wide and 400 mm tall at least) are mapped onto the facade and into heights with the drawing's fit, and given to the floor whose level is at or under the sill (300 mm slack).
 - **Plan windows there take the drawn sill and head** (the plan's S/H notes are internal heights), and the drawn width where the plan's differs by more than 50 mm. `HeightsFrom` on the window says which elevation.

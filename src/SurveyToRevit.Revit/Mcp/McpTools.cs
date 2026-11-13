@@ -99,7 +99,7 @@ public static class McpTools
     ];
 
     static readonly string[] OptionNames =
-        ["link_plans", "walls", "floors", "ceilings", "windows", "doors", "rooms", "stairs", "details", "roofs", "sections", "unclear_as_generic_models"];
+        ["link_plans", "walls", "floors", "ceilings", "windows", "doors", "rooms", "stairs", "details", "roofs", "sections", "unclear_as_generic_models", "keep_matching"];
 
     public static string[][] Prompts() =>
     [
@@ -355,6 +355,7 @@ public static class McpTools
         options.Sections = Flag(given, "sections") ?? options.Sections;
         options.UnclearAsGenericModels = Flag(given, "unclear_as_generic_models") ?? options.UnclearAsGenericModels;
         options.SlabThicknessMm = Num(given, "slab_thickness_mm") ?? options.SlabThicknessMm;
+        options.KeepMatching = Flag(given, "keep_matching") ?? options.KeepMatching;
 
         var floors = model.Levels.Where(l => l.Include && (options.OnlyLevels == null || options.OnlyLevels.Contains(l.Code))).ToList();
         if (Flag(a, "confirm") != true)
@@ -370,6 +371,7 @@ public static class McpTools
                     ["floor"] = l.Name, ["elevationM"] = Math.Round(l.ElevationMm / 1000, 3), ["wallHeightMm"] = Math.Round(l.WallHeightMm), ["ceilingMm"] = Math.Round(l.CeilingHeightMm),
                     ["walls"] = options.Walls ? l.Walls.Walls.Count : 0, ["windows"] = options.Windows ? l.Windows.Count : 0,
                     ["doors"] = options.Doors ? l.Doors.Count : 0, ["rooms"] = options.Rooms ? l.RoomNames.Count : 0,
+                    ["keeps"] = Keeps(doc, l, options),
                 }).ToArray()),
                 ["options"] = OptionsJson(options),
                 ["replacesGeneratedElements"] = existing,
@@ -384,11 +386,28 @@ public static class McpTools
         return result;
     }
 
+    /// <summary>On a rebuild (item U): what of the earlier run would be kept, and what others placed that would go.</summary>
+    static JsonNode? Keeps(Document doc, SurveyLevel l, BuildOptions options)
+    {
+        if (!options.KeepMatching || !options.Walls) return null;
+        try
+        {
+            var k = ModelBuilder.Earlier(doc, l);
+            if (k.Ids.Count == 0 && k.Lost.Count == 0) return null;
+            return new JsonObject
+            {
+                ["walls"] = k.Walls.Count, ["windowsAndDoors"] = k.Openings.Count,
+                ["wouldLose"] = k.Lost.Count, ["wouldLoseIds"] = new JsonArray(k.Lost.Take(30).Select(id => (JsonNode)id).ToArray()),
+            };
+        }
+        catch (Exception ex) { return new JsonObject { ["error"] = ex.Message }; }
+    }
+
     static JsonObject OptionsJson(BuildOptions o) => new()
     {
         ["link_plans"] = o.LinkPlans, ["walls"] = o.Walls, ["floors"] = o.Floors, ["ceilings"] = o.Ceilings, ["windows"] = o.Windows,
         ["doors"] = o.Doors, ["rooms"] = o.Rooms, ["stairs"] = o.Stairs, ["details"] = o.Details, ["roofs"] = o.Roofs,
-        ["sections"] = o.Sections, ["unclear_as_generic_models"] = o.UnclearAsGenericModels, ["slab_thickness_mm"] = o.SlabThicknessMm,
+        ["sections"] = o.Sections, ["unclear_as_generic_models"] = o.UnclearAsGenericModels, ["slab_thickness_mm"] = o.SlabThicknessMm, ["keep_matching"] = o.KeepMatching,
     };
 
     static JsonObject Overlay(Document doc, JsonElement a)
