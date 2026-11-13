@@ -95,6 +95,8 @@ public sealed class SurveyModel
     public IReadOnlyList<SurveySection> Sections { get; init; } = Array.Empty<SurveySection>();
     /// <summary>What each section says (item H): height fit, registration, profiles; written to section-index.json.</summary>
     public IReadOnlyList<SectionIndexEntry> SectionIndex { get; init; } = Array.Empty<SectionIndexEntry>();
+    /// <summary>Elevation drawings (item E): facade, mapping, height fits; written to elevation-index.json.</summary>
+    public IReadOnlyList<ElevationDrawing> Elevations { get; init; } = Array.Empty<ElevationDrawing>();
     /// <summary>Places the self-checks found worth a look (see <see cref="ModelChecks"/>), most important first.</summary>
     public IReadOnlyList<CheckItem> Checks { get; init; } = Array.Empty<CheckItem>();
     /// <summary>What happened to each entry of survey-decisions.json (applied, stale, contradicted, waiting); empty without the file.</summary>
@@ -172,6 +174,7 @@ public static class SurveyAnalyzer
         var plans = new List<SurveyDrawing>();
         var roofPlans = new List<SurveyDrawing>();
         var sectionSheets = new List<SurveyDrawing>();
+        var elevationSheets = new List<SurveyDrawing>();
 
         var queue = new List<SurveyDrawing>();
         foreach (var path in paths.OrderBy(p => System.IO.Path.GetFileName(p)))
@@ -185,6 +188,7 @@ public static class SurveyAnalyzer
                 notes.AddRange(split.Notes);
                 queue.AddRange(split.Plans);
                 if (SectionReader.IsSectionSheet(split.Rest)) sectionSheets.Add(split.Rest);
+                if (ElevationIndex.IsElevationSheet(split.Rest)) elevationSheets.Add(split.Rest);
                 continue;
             }
             queue.Add(read);
@@ -193,6 +197,7 @@ public static class SurveyAnalyzer
         {
 
             if (RoofsAndDetails.IsRoofPlan(d, rules)) { roofPlans.Add(d); continue; }
+            if (d.Name.LevelCode == null && ElevationIndex.IsElevationSheet(d)) elevationSheets.Add(d); // read for elevation-index.json, never built from
             if (d.Name.LevelCode == null && SectionReader.IsSectionSheet(d)) { sectionSheets.Add(d); continue; }
             if (d.Name.LevelCode == null) { skipped.Add(new(d.Name.FileName, "not a single-floor plan (elevation, section or multi-level sheet)")); continue; }
             if (d.WallLines.Count < 30) { skipped.Add(new(d.Name.FileName, LayerCheck.FewWalls(d, rules))); continue; }
@@ -602,6 +607,21 @@ public static class SurveyAnalyzer
             if (roofs.Count < before) notes.Add($"{before - roofs.Count} roof areas over the buildings next door left out.");
         }
         if (roofPlans.Count == 0 && roofs.Count == 0) notes.Add("No roof plan or roof layer: no roofs built.");
+        // item E: elevation drawings split from their sheets, matched to the facade they show, fitted for height
+        var elevations = new List<ElevationDrawing>();
+        if (elevationSheets.Count > 0)
+        {
+            var found = new List<(ElevationDrawing, List<(double, double, double)>)>();
+            foreach (var sheet in elevationSheets)
+            {
+                try { found.AddRange(ElevationIndex.Split(sheet, rules, SectionReader.SheetLines(sheet, out _))); }
+                catch (Exception ex) { notes.Add($"{sheet.Name.FileName}: elevation sheet could not be read ({ex.Message})."); }
+            }
+            elevations = ElevationIndex.Build(found, levels);
+            notes.Add($"Elevations: {elevations.Count} drawings on {elevationSheets.Count} sheets, {elevations.Count(e => e.Facade != null)} matched to a facade.");
+            foreach (var e in elevations) notes.Add((e.Facade == null ? "CHECK " : "") + e.Note + ".");
+        }
+
         if (topStorey != null && tops.Count > 0)
         {
             // again with the roofs read: a flat roof along a flush facade makes it a parapet top
@@ -615,7 +635,7 @@ public static class SurveyAnalyzer
         }
         // self-checks: places to look at, listed for the review list and the report
         var checks = ModelChecks.Run(levels, frame, rules, FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList()));
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops, SectionIndex = sectionIndex };
+        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops, SectionIndex = sectionIndex, Elevations = elevations };
     }
 
     /// <summary>Inside the box the walls span (their middle 98%, so one stray wall cannot stretch it), grown by a margin.</summary>

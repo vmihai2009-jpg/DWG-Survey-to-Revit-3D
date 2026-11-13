@@ -79,7 +79,7 @@ public static class SectionReader
     /// </summary>
     /// <summary>The sheet's lines (mm): lines, polylines and arcs (arcs in 5° pieces: only read, never built from).</summary>
     /// <param name="plain">lines and open polyline runs only, as the key-plan fit has always read them</param>
-    static List<Segment2> SheetLines(SurveyDrawing d, out List<Segment2> plain)
+    internal static List<Segment2> SheetLines(SurveyDrawing d, out List<Segment2> plain)
     {
         var doc = DwgReader.Read(d.Path, (_, _) => { });
         double u = d.MmPerUnit;
@@ -116,6 +116,19 @@ public static class SectionReader
     public static List<Segment2> Island(List<Segment2> lines, IReadOnlyList<Vec2> marks, double gapMm = 2000)
     {
         if (lines.Count == 0) return lines;
+        int Holds(List<Segment2> g)
+        {
+            double x0 = g.Min(s => Math.Min(s.A.X, s.B.X)) - 3000, x1 = g.Max(s => Math.Max(s.A.X, s.B.X)) + 3000;
+            double y0 = g.Min(s => Math.Min(s.A.Y, s.B.Y)) - 3000, y1 = g.Max(s => Math.Max(s.A.Y, s.B.Y)) + 3000;
+            return marks.Count(m => m.X >= x0 && m.X <= x1 && m.Y >= y0 && m.Y <= y1);
+        }
+        return Islands(lines, gapMm).OrderByDescending(Holds).ThenByDescending(g => g.Count).First();
+    }
+
+    /// <summary>Lines grouped into islands: lines within about <paramref name="gapMm"/> of each other share one.</summary>
+    public static List<List<Segment2>> Islands(List<Segment2> lines, double gapMm = 2000)
+    {
+        if (lines.Count == 0) return new();
         var cell = new Dictionary<(int, int), List<int>>();
         (int, int) C(Vec2 p) => ((int)Math.Floor(p.X / gapMm), (int)Math.Floor(p.Y / gapMm));
         for (int i = 0; i < lines.Count; i++)
@@ -128,14 +141,7 @@ public static class SectionReader
                 if (cell.TryGetValue((c.Item1 + dx, c.Item2 + dy), out var other))
                     foreach (var j in other) parent[Find(j)] = Find(ids[0]);
         foreach (var ids in cell.Values) foreach (var j in ids) parent[Find(j)] = Find(ids[0]);
-        var groups = Enumerable.Range(0, lines.Count).GroupBy(Find).Select(g => g.Select(i => lines[i]).ToList()).ToList();
-        int Holds(List<Segment2> g)
-        {
-            double x0 = g.Min(s => Math.Min(s.A.X, s.B.X)) - 3000, x1 = g.Max(s => Math.Max(s.A.X, s.B.X)) + 3000;
-            double y0 = g.Min(s => Math.Min(s.A.Y, s.B.Y)) - 3000, y1 = g.Max(s => Math.Max(s.A.Y, s.B.Y)) + 3000;
-            return marks.Count(m => m.X >= x0 && m.X <= x1 && m.Y >= y0 && m.Y <= y1);
-        }
-        return groups.OrderByDescending(Holds).ThenByDescending(g => g.Count).First();
+        return Enumerable.Range(0, lines.Count).GroupBy(Find).Select(g => g.Select(i => lines[i]).ToList()).ToList();
     }
 
     static Dictionary<string, Segment2> KeyPlanCuts(SurveyDrawing d, List<Segment2> lines, SurveyFrame frame, IReadOnlyList<Segment2> planWalls, HashSet<string> names, out string note)
