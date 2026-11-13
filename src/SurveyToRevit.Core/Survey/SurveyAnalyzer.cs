@@ -93,6 +93,8 @@ public sealed class SurveyModel
     public LayerRules Rules { get; init; } = LayerRules.Default;
     /// <summary>Survey sections read from section sheets (heights, and cut lines for section views).</summary>
     public IReadOnlyList<SurveySection> Sections { get; init; } = Array.Empty<SurveySection>();
+    /// <summary>What each section says (item H): height fit, registration, profiles; written to section-index.json.</summary>
+    public IReadOnlyList<SectionIndexEntry> SectionIndex { get; init; } = Array.Empty<SectionIndexEntry>();
     /// <summary>Places the self-checks found worth a look (see <see cref="ModelChecks"/>), most important first.</summary>
     public IReadOnlyList<CheckItem> Checks { get; init; } = Array.Empty<CheckItem>();
     /// <summary>What happened to each entry of survey-decisions.json (applied, stale, contradicted, waiting); empty without the file.</summary>
@@ -356,12 +358,25 @@ public static class SurveyAnalyzer
                 notes.Add($"CHECK decision {o.Kind} {o.What}: {(o.State == "stale" ? "matches nothing" : "contradicted")}: {o.Detail}.");
         }
 
+        // item H: each section's height fit, where it sits along its cut, and its outer profile at each end (feeds item C)
+        var sectionIndex = new List<SectionIndexEntry>();
+        var profiles = new List<StretchProfile>();
+        foreach (var sec in sections)
+        {
+            try { var (entry, found) = SectionProfiles.Build(sec, sec.Lines, sec.Marks, levels); sectionIndex.Add(entry); profiles.AddRange(found); }
+            catch (Exception ex) { notes.Add($"Section {sec.Name}: profile not read ({ex.Message})."); }
+        }
+        if (sectionIndex.Count > 0)
+            notes.Add($"Sections: {sectionIndex.Count(x => x.Registration?.Sure == true)} of {sectionIndex.Count} registered along their cuts; {profiles.Count} facade profiles read"
+                      + (sectionIndex.SelectMany(x => x.Ends).Where(x => x.OffsetMm is double o && Math.Abs(o) > 100).ToList() is { Count: > 0 } off
+                          ? $"; section face off the plan's by {string.Join(", ", off.Select(o => $"{o.OffsetMm:0} mm"))} (taken out of the profiles)" : "") + ".");
+
         // item C: what the top of each facade stretch is, from the evidence; a mansard's cut through its skin is not walls
         var (topStorey, _) = FacadeTops.TopStoreys(levels);
         var tops = new List<FacadeTopCall>();
         if (topStorey != null)
         {
-            tops = FacadeTops.Classify(levels, windowInput[topStorey].Lines, null, null, decisions);
+            tops = FacadeTops.Classify(levels, windowInput[topStorey].Lines, null, profiles, decisions);
             var keptWalls = FacadeTops.LeaveOutSkins(topStorey, tops, windowInput[topStorey].Lines);
             if (keptWalls.Count < topStorey.Walls.Walls.Count)
             {
@@ -590,7 +605,7 @@ public static class SurveyAnalyzer
         if (topStorey != null && tops.Count > 0)
         {
             // again with the roofs read: a flat roof along a flush facade makes it a parapet top
-            var final = FacadeTops.Classify(levels, windowInput[topStorey].Lines, roofs, null, decisions);
+            var final = FacadeTops.Classify(levels, windowInput[topStorey].Lines, roofs, profiles, decisions);
             foreach (var f in final)
                 if (tops.FirstOrDefault(t => t.Id == f.Id) is FacadeTopCall early && early.Class == "Mansard")
                 { f.Class = early.Class; f.Confidence = early.Confidence; f.Evidence = early.Evidence; f.SkinLinesLeftOut = early.SkinLinesLeftOut; f.DormerFrontsKept = early.DormerFrontsKept; f.Eaves = early.Eaves; f.Kerb = early.Kerb; f.SlopeDeg = early.SlopeDeg; }
@@ -600,7 +615,7 @@ public static class SurveyAnalyzer
         }
         // self-checks: places to look at, listed for the review list and the report
         var checks = ModelChecks.Run(levels, frame, rules, FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList()));
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops };
+        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops, SectionIndex = sectionIndex };
     }
 
     /// <summary>Inside the box the walls span (their middle 98%, so one stray wall cannot stretch it), grown by a margin.</summary>

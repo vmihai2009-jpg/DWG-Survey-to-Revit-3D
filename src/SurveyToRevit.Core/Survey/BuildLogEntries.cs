@@ -147,6 +147,27 @@ public sealed class BuildLog
                 Override = "facadeTop (with a line)", Severity = Math.Round(len, 1), SeverityUnit = "m of facade",
             });
         }
+        foreach (var x in model.SectionIndex)
+        {
+            if (x.Fit is { Rejected.Count: > 0 } f)
+                log.Add(new BuildLogEntry
+                {
+                    Kind = "section marks", Confidence = "Medium", Why = $"section {x.Name}: {f.Rejected.Count} level marks off the sheet's height fit by more than {SectionProfiles.FitTolMm:0} mm ({string.Join(", ", f.Rejected.Take(4).Select(r => $"{r[0]:0} by {r[1]:0}"))})",
+                    Evidence = x.File, Drawing = x.File, Settle = "check the marks on the sheet: a typo, or a part of the sheet drawn at another height", Severity = f.Rejected.Count, SeverityUnit = "marks",
+                });
+            if (x.Registration is { Sure: false } r)
+                log.Add(new BuildLogEntry
+                {
+                    Kind = "section placement", Confidence = "Low", Why = $"section {x.Name}: not sure where it sits along its cut ({r.Why}); its profiles were not used for the facade tops",
+                    Evidence = x.File, Drawing = x.File, Settle = "a facadeTop decision with a line for those facades, or a clearer key plan", Severity = 3, SeverityUnit = "section",
+                });
+            foreach (var e in x.Ends.Where(e => e.OffsetMm is double o && Math.Abs(o) > 100))
+                log.Add(new BuildLogEntry
+                {
+                    Kind = "section offset", Line = e.FacadeLine, Confidence = "High", Why = $"section {x.Name} end {e.End}: its wall face stands {e.OffsetMm:0} mm off the plan's",
+                    Evidence = x.File, Drawing = x.File, Settle = "the profile is measured from the section's own face; anything placed from the section alone needs this offset", Severity = 1, SeverityUnit = "end",
+                });
+        }
         foreach (var o in model.Decisions.Where(o => o.State is "stale" or "contradicted"))
             log.Add(new BuildLogEntry
             {

@@ -8,7 +8,13 @@ namespace SurveyToRevit.Core.Survey;
 /// A survey section: its name, where it cuts the building (model mm, from the key plan on the
 /// sheet; null when the cut could not be placed) and the heights written on it (above datum, mm).
 /// </summary>
-public sealed record SurveySection(string Name, Segment2? Cut, IReadOnlyList<double> HeightsMm, string File, string Note);
+public sealed record SurveySection(string Name, Segment2? Cut, IReadOnlyList<double> HeightsMm, string File, string Note)
+{
+    /// <summary>The section drawing's lines (sheet mm, annotation layers left out), for its profile (item H).</summary>
+    [System.Text.Json.Serialization.JsonIgnore] public IReadOnlyList<Segment2> Lines { get; init; } = Array.Empty<Segment2>();
+    /// <summary>Its level marks: sheet y (mm) and the height written (mm above datum).</summary>
+    [System.Text.Json.Serialization.JsonIgnore] public IReadOnlyList<(double Y, double Mm)> Marks { get; init; } = Array.Empty<(double, double)>();
+}
 
 /// <summary>
 /// Reads survey section sheets, the same way for any survey. A section sheet carries one or
@@ -47,14 +53,21 @@ public static class SectionReader
         // spot heights to the nearest title, left to right (sections sit side by side on a sheet)
         var spots = d.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.LevelText)
             .Select(t => (t.Position, Mm: LevelEstimator.ParseMm(t.Value))).Where(x => x.Mm != null).ToList();
-        var cuts = KeyPlanCuts(d, frame, planWalls, titles.Select(t => t.Name).ToHashSet(), out string keyNote);
+        var all = SheetLines(d, out var plain);
+        var cuts = KeyPlanCuts(d, plain, frame, planWalls, titles.Select(t => t.Name).ToHashSet(), out string keyNote);
+        string Nearest(double x) => titles.OrderBy(o => Math.Abs(o.P.X - x)).First().Name;
+        var drawn = all.Where(l => rules.Classify(l.Layer) is not (LayerRole.Annotation or LayerRole.LevelText or LayerRole.HeightText or LayerRole.RoomName)).ToList();
         foreach (var (name, p) in titles)
         {
-            var heights = spots.Where(s => titles.OrderBy(o => Math.Abs(o.P.X - s.Position.X)).First().Name == name)
-                .Select(s => s.Mm!.Value).OrderBy(x => x).ToList();
+            var mine = spots.Where(s => Nearest(s.Position.X) == name).ToList();
+            var heights = mine.Select(s => s.Mm!.Value).OrderBy(x => x).ToList();
             cuts.TryGetValue(name, out var cut);
             result.Add(new SurveySection(name, cut, heights, d.Name.FileName,
-                $"Section {name} ({d.Name.FileName}): {heights.Count} heights" + (cut != null ? ", cut line placed from the key plan" : ", cut line not placed" + (keyNote.Length > 0 ? $" ({keyNote})" : ""))));
+                $"Section {name} ({d.Name.FileName}): {heights.Count} heights" + (cut != null ? ", cut line placed from the key plan" : ", cut line not placed" + (keyNote.Length > 0 ? $" ({keyNote})" : "")))
+            {
+                Marks = mine.Select(s => (s.Position.Y, s.Mm!.Value)).ToList(),
+                Lines = Island(drawn.Where(l => Nearest((l.A.X + l.B.X) / 2) == name).ToList(), mine.Select(s => s.Position).ToList()),
+            });
         }
         return result;
     }
@@ -64,20 +77,71 @@ public static class SectionReader
     /// (lines around those letters) is fitted to the plans' walls by trying scales and positions and
     /// keeping the one that puts most key-plan points on a wall.
     /// </summary>
-    static Dictionary<string, Segment2> KeyPlanCuts(SurveyDrawing d, SurveyFrame frame, IReadOnlyList<Segment2> planWalls, HashSet<string> names, out string note)
+    /// <summary>The sheet's lines (mm): lines, polylines and arcs (arcs in 5° pieces: only read, never built from).</summary>
+    /// <param name="plain">lines and open polyline runs only, as the key-plan fit has always read them</param>
+    static List<Segment2> SheetLines(SurveyDrawing d, out List<Segment2> plain)
     {
-        note = "";
-        var cuts = new Dictionary<string, Segment2>();
         var doc = DwgReader.Read(d.Path, (_, _) => { });
         double u = d.MmPerUnit;
         var lines = new List<Segment2>();
+        plain = new List<Segment2>();
         foreach (var e in doc.Entities)
         {
-            if (e is Line l) lines.Add(new Segment2(new Vec2(l.StartPoint.X, l.StartPoint.Y) * u, new Vec2(l.EndPoint.X, l.EndPoint.Y) * u, e.Layer?.Name ?? ""));
+            var layer = e.Layer?.Name ?? "";
+            if (e is Line l) { var s = new Segment2(new Vec2(l.StartPoint.X, l.StartPoint.Y) * u, new Vec2(l.EndPoint.X, l.EndPoint.Y) * u, layer); lines.Add(s); plain.Add(s); }
             else if (e is LwPolyline pl)
-                for (int i = 0; i + 1 < pl.Vertices.Count; i++)
-                    lines.Add(new Segment2(new Vec2(pl.Vertices[i].Location.X, pl.Vertices[i].Location.Y) * u, new Vec2(pl.Vertices[i + 1].Location.X, pl.Vertices[i + 1].Location.Y) * u, e.Layer?.Name ?? ""));
+            {
+                int n = pl.Vertices.Count;
+                for (int i = 0; i + 1 < n + (pl.IsClosed ? 1 : 0); i++)
+                {
+                    var s = new Segment2(new Vec2(pl.Vertices[i].Location.X, pl.Vertices[i].Location.Y) * u, new Vec2(pl.Vertices[(i + 1) % n].Location.X, pl.Vertices[(i + 1) % n].Location.Y) * u, layer);
+                    lines.Add(s); if (i + 1 < n) plain.Add(s);
+                }
+            }
+            else if (e is Arc a)
+            {
+                double a0 = a.StartAngle, a1 = a.EndAngle; if (a1 < a0) a1 += 2 * Math.PI;
+                int n = Math.Max(1, (int)Math.Ceiling((a1 - a0) / (5 * Math.PI / 180)));
+                Vec2 P(double t) => new Vec2(a.Center.X + a.Radius * Math.Cos(t), a.Center.Y + a.Radius * Math.Sin(t)) * u;
+                for (int i = 0; i < n; i++) lines.Add(new Segment2(P(a0 + (a1 - a0) * i / n), P(a0 + (a1 - a0) * (i + 1) / n), layer));
+            }
         }
+        return lines;
+    }
+
+    /// <summary>
+    /// The drawing among a section's lines: lines grouped into islands with gaps of 2 m or more between them; the island
+    /// whose box (grown 3 m) holds most of the level marks wins, then the larger. Title blocks and key plans fall away.
+    /// </summary>
+    public static List<Segment2> Island(List<Segment2> lines, IReadOnlyList<Vec2> marks, double gapMm = 2000)
+    {
+        if (lines.Count == 0) return lines;
+        var cell = new Dictionary<(int, int), List<int>>();
+        (int, int) C(Vec2 p) => ((int)Math.Floor(p.X / gapMm), (int)Math.Floor(p.Y / gapMm));
+        for (int i = 0; i < lines.Count; i++)
+            foreach (var c in new[] { C(lines[i].A), C(lines[i].B), C(lines[i].Mid) }.Distinct())
+                (cell.TryGetValue(c, out var l) ? l : cell[c] = new List<int>()).Add(i);
+        var parent = Enumerable.Range(0, lines.Count).ToArray();
+        int Find(int x) { while (parent[x] != x) x = parent[x] = parent[parent[x]]; return x; }
+        foreach (var (c, ids) in cell)
+            for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++)
+                if (cell.TryGetValue((c.Item1 + dx, c.Item2 + dy), out var other))
+                    foreach (var j in other) parent[Find(j)] = Find(ids[0]);
+        foreach (var ids in cell.Values) foreach (var j in ids) parent[Find(j)] = Find(ids[0]);
+        var groups = Enumerable.Range(0, lines.Count).GroupBy(Find).Select(g => g.Select(i => lines[i]).ToList()).ToList();
+        int Holds(List<Segment2> g)
+        {
+            double x0 = g.Min(s => Math.Min(s.A.X, s.B.X)) - 3000, x1 = g.Max(s => Math.Max(s.A.X, s.B.X)) + 3000;
+            double y0 = g.Min(s => Math.Min(s.A.Y, s.B.Y)) - 3000, y1 = g.Max(s => Math.Max(s.A.Y, s.B.Y)) + 3000;
+            return marks.Count(m => m.X >= x0 && m.X <= x1 && m.Y >= y0 && m.Y <= y1);
+        }
+        return groups.OrderByDescending(Holds).ThenByDescending(g => g.Count).First();
+    }
+
+    static Dictionary<string, Segment2> KeyPlanCuts(SurveyDrawing d, List<Segment2> lines, SurveyFrame frame, IReadOnlyList<Segment2> planWalls, HashSet<string> names, out string note)
+    {
+        note = "";
+        var cuts = new Dictionary<string, Segment2>();
         // letters marking cut ends, and the line joining each pair
         var letters = d.Texts.Where(t => Regex.IsMatch(t.Value ?? "", @"^\s*[A-Z0-9]\s*$")).GroupBy(t => t.Value.Trim().ToUpperInvariant()).ToList();
         var sheetCuts = new List<(string Name, Segment2 Line)>();
