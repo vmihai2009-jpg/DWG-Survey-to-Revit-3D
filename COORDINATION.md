@@ -364,6 +364,12 @@ Entry format (copy this):
 
 ## Projects side (Mihai's personal account)
 
+### 2026-11-13 (later): Survey to Revit 0.25.0, item V of MCP-AUDIT-AND-TOOLS.md: build-log.json
+- Every analyse and build now writes `build-log.json`: one entry per call the engine wasn't sure of (walls from one line, bridges, facade joins, partly paired faces, floor levels few spot heights agree on, unclear areas), every self-check it failed, CHECK notes, skipped drawings, and what Revit refused or fell back on. Each entry: kind, level, where (x, y or the wall's line), drawing and layer, confidence and why, evidence, the alternative, what would settle it, the `survey-decisions.json` kind that would override it, severity (m of wall, m² of floor...) and score = severity x (1 - confidence). Sorted worst first.
+- Saved in the reports folder (`<reports>\<project>\build-log.json`) and in the survey folder's `_prep\build-log.json` (where the hub reads it). `survey_analyze` and `survey_build` answer with `buildLog` (counts by kind and the 10 worst); `survey_review` adds the last build's `buildLog`. The ribbon's Review List gets the 30 worst entries that aren't self-checks too, so a person without the MCP side sees them.
+- **Ask:** after the next `survey_build`, send `buildLog.byKind` and the first 10 `worst`.
+- Files: `src/SurveyToRevit.Core/Survey/BuildLogEntries.cs` (new), `Survey/ReviewList.cs`, `Revit/Mcp/SurveyPipeline.cs`, `Revit/Mcp/McpTools.cs`, `Revit/BuildFromSurveyCommand.cs`, `tests/.../BuildLogTests.cs`. Version 0.25.0.
+
 ### 2026-11-13 (later): roof_solver (1.36.0), item 18
 - `roof_solver` (report by default): reads the roof plan like roof_from_survey, then names every edge (ridge, hip, valley, eave, verge, step...), gives each face's pitch, and checks each eave against the top of the wall under it. `build: true` turns each roof face into a native Revit roof sloping from its eave, so a person can change a pitch or an outline in properties instead of remaking a solid.
 - **Ask:** run it without build; send `edgeCounts`, the `eaves` with the largest `eaveMinusWallTopMm`, and the faces with `nativeOffPlaneMm` over 20. Build only after Mihai has seen it.

@@ -49,6 +49,24 @@ public sealed class ReviewList
     };
 
     /// <summary>The list's file for a Revit project, in the reports folder's "review" folder.</summary>
+    /// <summary>The build log's worst calls that aren't self-checks (those are on the list already), so a person
+    /// without the MCP side sees where to act too (item V).</summary>
+    public void AddLog(BuildLog log, int max = 30)
+    {
+        int id = Items.Count == 0 ? 0 : Items.Max(i => i.Id);
+        foreach (var e in log.Items.Where(e => !e.Kind.StartsWith("check:", StringComparison.Ordinal) && e.Score > 0).Take(max))
+        {
+            var at = e.Line is { Length: 4 } l ? new[] { (l[0] + l[2]) / 2, (l[1] + l[3]) / 2 } : e.At;
+            Items.Add(new ReviewItem
+            {
+                Id = ++id, Level = e.Level, Kind = e.Kind, What = "Build log: " + e.Kind,
+                Message = $"{e.Confidence}: {e.Why}" + (string.IsNullOrEmpty(e.Settle) ? "" : $" To settle: {e.Settle}"),
+                X = at.Length > 0 ? Math.Round(at[0]) : 0, Y = at.Length > 1 ? Math.Round(at[1]) : 0,
+                Priority = e.Confidence == "Low" ? 2 : 3,
+            });
+        }
+    }
+
     public static string PathFor(string reportsFolder, string project) =>
         Path.Combine(reportsFolder, "review", Regex.Replace(Path.GetFileNameWithoutExtension(project), @"[^\w\- ]", "_") + ".json");
 

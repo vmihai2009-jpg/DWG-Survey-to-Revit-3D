@@ -83,6 +83,14 @@ internal static class SurveyPipeline
         var node = JsonNode.Parse(summary.ToJson())!.AsObject();
         node["reportPath"] = Save("analysis", "txt", SurveyReport.Build(model));
         node["summaryPath"] = Save("analysis", "json", summary.ToJson());
+        // item V: where to act, worst first (the MCP side starts from this file)
+        try
+        {
+            var blog = BuildLog.From(model);
+            var paths = blog.Save(Reports, "", BuildLog.SurveyFolder(model));
+            node["buildLog"] = LogJson(blog, paths, 10);
+        }
+        catch (Exception ex) { node["buildLog"] = new JsonObject { ["error"] = ex.Message }; }
         return node;
     }
 
@@ -157,6 +165,15 @@ internal static class SurveyPipeline
                 old.ReplaceLevels(fresh, floors.Select(l => l.Name)); // the other floors keep their ticks and notes
                 review = old;
             }
+            try
+            {
+                var blog = BuildLog.From(model, doc.Title);
+                blog.AddBuildLines(builder.Log);
+                var paths = blog.Save(Reports, doc.Title, BuildLog.SurveyFolder(model));
+                result["buildLog"] = LogJson(blog, paths, 10);
+                if (options.OnlyLevels == null) review.AddLog(blog);
+            }
+            catch (Exception ex) { result["buildLog"] = new JsonObject { ["error"] = ex.Message }; }
             try { review.Save(reviewPath); }
             catch { reviewPath = ReviewList.PathFor(UserSettings.DefaultReports, doc.Title); review.Save(reviewPath); }
             result["review"] = new JsonObject { ["open"] = review.Items.Count(i => !i.Done), ["total"] = review.Items.Count, ["path"] = reviewPath };
@@ -172,6 +189,27 @@ internal static class SurveyPipeline
         result["undo"] = "One undo step in Revit: 'Build from survey'.";
         Save(kind, "json", result.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true, TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() }));
         return result;
+    }
+
+    /// <summary>The build log's counts, where it was saved and its worst entries.</summary>
+    public static JsonObject LogJson(BuildLog log, IReadOnlyList<string> paths, int top) => new()
+    {
+        ["entries"] = log.Items.Count,
+        ["byKind"] = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(log.ByKind, new System.Text.Json.JsonSerializerOptions { TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() })),
+        ["paths"] = new JsonArray(paths.Select(p => (JsonNode)p).ToArray()),
+        ["worst"] = new JsonArray(JsonNode.Parse(log.ToJson())!["items"]!.AsArray().Take(top).Select(i => i!.DeepClone()).ToArray()),
+    };
+
+    /// <summary>The project's last saved build log (reports folder), or null.</summary>
+    public static JsonNode? LastLog(Document doc)
+    {
+        string safe = Regex.Replace(Path.GetFileNameWithoutExtension(doc.Title), @"[^\w\- ]", "_");
+        foreach (var root in new[] { UserSettings.Load().Reports, UserSettings.DefaultReports })
+        {
+            var p = Path.Combine(root, safe, "build-log.json");
+            if (File.Exists(p)) try { var n = JsonNode.Parse(File.ReadAllText(p))!; n["path"] = p; return n; } catch { }
+        }
+        return null;
     }
 
     static JsonArray Lines(IEnumerable<string> lines, int max)
