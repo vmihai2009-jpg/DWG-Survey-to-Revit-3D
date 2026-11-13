@@ -47,6 +47,8 @@ public sealed class ElevationDrawing
 public static class ElevationIndex
 {
     public const double MinScore = 0.7, ColumnTolMm = 150, ColumnMergeMm = 100, FacadeReachMm = 800;
+    /// <summary>A match sure enough to add what only the elevation shows (windows the plan lacks, the neighbours' fronts).</summary>
+    public const double SureScore = 0.85;
     static readonly Regex TitleWords = new(@"\b(ELEVATIONS?|ELEV\.|FA[CÇ]ADES?)\b", RegexOptions.IgnoreCase);
     static readonly Regex Spaced = new(@"^\s*(\S\s+){3,}\S\s*$");
 
@@ -122,7 +124,7 @@ public static class ElevationIndex
             if (title == null) continue;
             taken.Add(title);
             var e = new ElevationDrawing { File = d.Name.FileName, Title = title.Value.Trim(), Box = new[] { Math.Round(x0), Math.Round(y0), Math.Round(x1), Math.Round(y1) }, Lines = g };
-            e.Columns = Columns(g.Where(s => rules.Classify(s.Layer) == LayerRole.Window).Select(s => (Math.Min(s.A.X, s.B.X), Math.Max(s.A.X, s.B.X))));
+            e.Columns = RowColumns(g.Where(s => rules.Classify(s.Layer) == LayerRole.Window).ToList());
             var mine = marks.Where(m => m.Position.X >= x0 - 3000 && m.Position.X <= x1 + 3000 && m.Position.Y >= y0 - 3000 && m.Position.Y <= y1 + 3000)
                 .Select(m => (m.Position.X, m.Position.Y, m.Mm!.Value)).ToList();
             foreach (var dm in datums)
@@ -133,11 +135,36 @@ public static class ElevationIndex
         return res;
     }
 
-    /// <summary>Window columns: x extents of window lines merged where they overlap or nearly touch; centres of the merged runs.</summary>
-    public static List<double> Columns(IEnumerable<(double X0, double X1)> spans, double mergeMm = 50)
+    /// <summary>
+    /// Window columns row by row: window lines grouped into rows by their heights (overlapping y ranges), each row's columns
+    /// found on its own, then all rows' together (centres within 150 mm are one column). A shopfront or ribbon on one floor
+    /// no longer joins the columns of the floors above.
+    /// </summary>
+    public static List<double> RowColumns(List<Segment2> lines)
+    {
+        var rows = new List<(double Y0, double Y1, List<Segment2> L)>();
+        foreach (var s in lines.OrderBy(s => Math.Min(s.A.Y, s.B.Y)))
+        {
+            double y0 = Math.Min(s.A.Y, s.B.Y), y1 = Math.Max(s.A.Y, s.B.Y);
+            if (rows.Count > 0 && y0 <= rows[^1].Y1 + 20) { rows[^1].L.Add(s); rows[^1] = (rows[^1].Y0, Math.Max(rows[^1].Y1, y1), rows[^1].L); }
+            else rows.Add((y0, y1, new List<Segment2> { s }));
+        }
+        var all = rows.SelectMany(r => Columns(r.L.Select(s => (Math.Min(s.A.X, s.B.X), Math.Max(s.A.X, s.B.X))))).OrderBy(x => x).ToList();
+        var res = new List<(double Sum, int N)>();
+        foreach (var x in all)
+            if (res.Count > 0 && x - res[^1].Sum / res[^1].N <= 150) res[^1] = (res[^1].Sum + x, res[^1].N + 1);
+            else res.Add((x, 1));
+        return res.Select(r => r.Sum / r.N).ToList();
+    }
+
+    /// <summary>
+    /// Window columns: x extents of window lines merged where they overlap or nearly touch; centres of the merged runs. Lines
+    /// over 3 m long are left out: a ribbon's continuous sill or head, or a shopfront's, would join a whole row into one column.
+    /// </summary>
+    public static List<double> Columns(IEnumerable<(double X0, double X1)> spans, double mergeMm = 50, double maxSpanMm = 3000)
     {
         var res = new List<double>(); double a = double.NaN, b = double.NaN;
-        foreach (var (s0, s1) in spans.OrderBy(s => s.X0))
+        foreach (var (s0, s1) in spans.Where(s => s.X1 - s.X0 <= maxSpanMm).OrderBy(s => s.X0))
         {
             if (double.IsNaN(a)) { a = s0; b = s1; continue; }
             if (s0 <= b + mergeMm) b = Math.Max(b, s1);
@@ -181,6 +208,10 @@ public static class ElevationIndex
                             int hit = model.Count(tt => drawn.Any(xx => Math.Abs(shift + sg * scale * xx - tt) <= ColumnTolMm));
                             sc = Math.Max(sc, 0.95 * hit / model.Count);
                         }
+                        // a facade with more columns than drawn (floors whose windows don't stack add columns): the share of
+                        // the drawn columns that land on the facade's, when enough are drawn to be sure
+                        else if (model.Count > drawn.Count && drawn.Count >= 5)
+                            sc = Math.Max(sc, 0.95 * n / drawn.Count);
                         if (sc > best.Item1 + 1e-9) best = (sc, mirrored, Math.Round(scale, 3), Math.Round(shift));
                     }
             }
@@ -227,24 +258,91 @@ public static class ElevationIndex
         return lines.Select((s, i) => ($"F{i + 1}", s)).ToList();
     }
 
-    /// <summary>Everything: drawings from the sheets, each matched to at most one facade and each facade to at most one drawing, best first.</summary>
-    public static List<ElevationDrawing> Build(IReadOnlyList<(ElevationDrawing Drawing, List<(double X, double Y, double Mm)> Marks)> found, IReadOnlyList<SurveyLevel> levels)
+    /// <summary>
+    /// The facades as candidates for matching: each stretch on its own, and each run of stretches in one line (within 5° and
+    /// 1.5 m of the longest, gaps under 4 m) as one front over their whole span, named by its longest stretch. An elevation
+    /// draws the whole front; matched against a 2 m piece of a regular front its window columns line up at any bay.
+    /// </summary>
+    public static List<(string Id, Segment2 Line, string[] Members)> Fronts(List<(string Id, Segment2 Line)> facades)
     {
-        var facades = Facades(levels);
+        var res = facades.Select(f => (f.Id, f.Line, Members: new[] { f.Id })).ToList();
+        var done = new HashSet<string>();
+        foreach (var main in facades.OrderByDescending(f => f.Line.Length))
+        {
+            if (done.Contains(main.Id)) continue;
+            var dir = main.Line.Direction;
+            double T(Vec2 p) => (p - main.Line.A).Dot(dir);
+            var run = facades.Where(f => !done.Contains(f.Id) && SegmentCleaner.AngleDiffDeg(f.Line.AngleDeg, main.Line.AngleDeg) <= 8
+                                         && Math.Abs(SegmentCleaner.Offset(main.Line, f.Line.Mid)) <= 1500)
+                .OrderBy(f => Math.Min(T(f.Line.A), T(f.Line.B))).ToList();
+            // keep the stretches joined to the main one without a gap of 4 m or more
+            var spans = run.Select(f => (f.Id, T0: Math.Min(T(f.Line.A), T(f.Line.B)), T1: Math.Max(T(f.Line.A), T(f.Line.B)))).ToList();
+            int k = spans.FindIndex(s => s.Id == main.Id);
+            int lo = k, hi = k; double a = spans[k].T0, b = spans[k].T1;
+            while (lo > 0 && spans[lo - 1].T1 >= a - 4000) { lo--; a = Math.Min(a, spans[lo].T0); }
+            while (hi < spans.Count - 1 && spans[hi + 1].T0 <= b + 4000) { hi++; b = Math.Max(b, spans[hi].T1); }
+            var members = spans.Skip(lo).Take(hi - lo + 1).Select(s => s.Id).ToArray();
+            foreach (var m in members) done.Add(m);
+            if (members.Length < 2) continue;
+            res.Add((main.Id, new Segment2(main.Line.A + dir * a, main.Line.A + dir * b), members));
+        }
+        return res;
+    }
+
+    /// <summary>Everything: drawings from the sheets, each matched to at most one facade and each facade to at most one drawing, best first.</summary>
+    /// <summary>The compass bearing a title names (NORTH 0, EAST 90, SOUTH 180, WEST 270, and the four between), or null.</summary>
+    public static double? TitleBearing(string title)
+    {
+        var t = Clean(title).ToUpperInvariant();
+        bool n = t.Contains("NORTH"), s = t.Contains("SOUTH"), e = t.Contains("EAST"), w = t.Contains("WEST");
+        if (n && s || e && w) return null;
+        if (n) return e ? 45 : w ? 315 : 0;
+        if (s) return e ? 135 : w ? 225 : 180;
+        return e ? 90 : w ? 270 : null;
+    }
+
+    /// <summary>A facade's outward bearing from grid north: the side that is outside a floor's outline where the other side is inside (floors vote), or null.</summary>
+    public static double? OutwardBearing(Segment2 line, IReadOnlyList<SurveyLevel> levels, SurveyFrame frame)
+    {
+        var dir = line.Direction; var n = new Vec2(-dir.Y, dir.X);
+        int vote = 0;
+        foreach (var o in levels.SelectMany(l => (l.Outline != null ? new[] { l.Outline } : Array.Empty<Polygon2>()).Concat(l.MoreOutlines)))
+        {
+            bool a = FacadeWalls.Contains(o, line.Mid + n * 1000), b = FacadeWalls.Contains(o, line.Mid - n * 1000);
+            if (a != b) vote += a ? -1 : 1;
+        }
+        if (vote == 0) return null;
+        var outward = vote > 0 ? n : new Vec2(-n.X, -n.Y);
+        var g = frame.ToSurvey(outward) - frame.ToSurvey(new Vec2(0, 0));
+        return (Math.Atan2(g.X, g.Y) * 180 / Math.PI + 360) % 360;
+    }
+
+    public static List<ElevationDrawing> Build(IReadOnlyList<(ElevationDrawing Drawing, List<(double X, double Y, double Mm)> Marks)> found, IReadOnlyList<SurveyLevel> levels, SurveyFrame? frame = null)
+    {
+        var facades = Fronts(Facades(levels));
         var windows = levels.SelectMany(l => l.Windows).ToList();
-        var cols = facades.Select(f => (f.Id, f.Line, Cols: ModelColumns(f.Line, windows))).ToList();
-        var pairs = new List<(ElevationDrawing D, string Id, Segment2 Line, int ModelCols, (double Score, bool Mirrored, double Scale, double Shift) M)>();
+        var cols = facades.Select(f => (f.Id, f.Line, f.Members, Cols: ModelColumns(f.Line, windows),
+            Bearing: frame != null ? OutwardBearing(f.Line, levels, frame) : null)).ToList();
+        var pairs = new List<(ElevationDrawing D, string Id, Segment2 Line, string[] Members, int ModelCols, (double Score, bool Mirrored, double Scale, double Shift) M)>();
         foreach (var (d, marks) in found)
         {
             d.Parts = FitParts(marks, d.Box[0], d.Box[2]);
             d.DrawnColumns = d.Columns.Count;
-            foreach (var f in cols) pairs.Add((d, f.Id, f.Line, f.Cols.Count, Match(d.Columns, f.Cols)));
+            var named = TitleBearing(d.Title);
+            foreach (var f in cols)
+            {
+                // a title that names a compass side only takes a facade facing within 60° of it
+                if (named is double nb && f.Bearing is double fb && Math.Abs(Math.IEEERemainder(nb - fb, 360)) > 60) continue;
+                pairs.Add((d, f.Id, f.Line, f.Members, f.Cols.Count, Match(d.Columns, f.Cols)));
+            }
         }
         var usedD = new HashSet<ElevationDrawing>(); var usedF = new HashSet<string>();
-        foreach (var p in pairs.OrderByDescending(p => p.M.Score))
+        // most window columns lined up first (share × the facade's columns): a short piece of a regular front lines up
+        // anywhere at a high share, the whole front only where it is
+        foreach (var p in pairs.OrderByDescending(p => Math.Round(p.M.Score * Math.Min(p.ModelCols, p.D.Columns.Count), 2)).ThenByDescending(p => p.M.Score))
         {
-            if (p.M.Score < MinScore || usedD.Contains(p.D) || usedF.Contains(p.Id)) continue;
-            usedD.Add(p.D); usedF.Add(p.Id);
+            if (p.M.Score < MinScore || usedD.Contains(p.D) || p.Members.Any(usedF.Contains)) continue;
+            usedD.Add(p.D); foreach (var m in p.Members) usedF.Add(m);
             var l = p.Line;
             p.D.Facade = p.Id; p.D.FacadeLine = new[] { Math.Round(l.A.X), Math.Round(l.A.Y), Math.Round(l.B.X), Math.Round(l.B.Y) };
             p.D.Mirrored = p.M.Mirrored; p.D.Scale = p.M.Scale; p.D.ShiftMm = p.M.Shift; p.D.Score = Math.Round(p.M.Score, 2); p.D.ModelColumns = p.ModelCols;
@@ -253,7 +351,7 @@ public static class ElevationIndex
         {
             var bestTry = pairs.Where(p => p.D == d).OrderByDescending(p => p.M.Score).FirstOrDefault();
             if (d.Facade == null) d.Score = Math.Round(bestTry.M.Score, 2);
-            d.Note = d.Facade != null ? $"{d.Title}: facade {d.Facade}, {d.Score:P0} of window columns line up" + (d.Mirrored ? ", drawn the other way round" : "")
+            d.Note = d.Facade != null ? $"{d.Title}: facade {d.Facade} ({string.Join(",", d.FacadeLine!.Select(v => v.ToString("0")))}, {d.ModelColumns} columns), {d.Score:P0} of window columns line up" + (d.Mirrored ? ", drawn the other way round" : "")
                 : d.Columns.Count < 2 ? $"{d.Title}: fewer than 2 window columns drawn on a window layer: facade not found (a decision with the facade line settles it)"
                 : $"{d.Title}: best facade {bestTry.Id} lines up only {bestTry.M.Score:P0} (under {MinScore:P0}): left unmatched";
             if (d.Parts.Count == 0) d.Note += "; no height fit (fewer than 2 level marks agree)";

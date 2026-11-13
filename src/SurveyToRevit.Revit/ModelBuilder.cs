@@ -1044,7 +1044,7 @@ public sealed class ModelBuilder
         t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
         t.Start();
         DeleteGenerated(ContextCode);
-        if (_model.Context.Count == 0) { t.Commit(); return; }
+        if (_model.Context.Count == 0 && _model.ContextFronts.Count == 0) { t.Commit(); return; }
         // the same workset the site tool puts the surroundings on ("Context" unless set), made if missing
         WorksetId? ws = ContextWorkset();
         void Put(Element e, string what)
@@ -1064,6 +1064,9 @@ public sealed class ModelBuilder
             {
                 foreach (var c in loop)
                 {
+                    // the side an elevation already draws is built from the elevation (with its windows), below
+                    var e0 = c.GetEndPoint(0); var e1 = c.GetEndPoint(1);
+                    if (ElevationContext.Covered(new Segment2(new Vec2(Mm(e0.X), Mm(e0.Y)), new Vec2(Mm(e1.X), Mm(e1.Y))), _model.ContextFronts)) continue;
                     var w = Wall.Create(_doc, c, wallType.Id, ground.Id, top - ground.Elevation, 0, false, false);
                     Put(w, "Context wall: " + r.Note);
                 }
@@ -1074,6 +1077,48 @@ public sealed class ModelBuilder
             }
             catch (Exception ex) { Log.Add($"Context block not made ({ex.Message})."); }
         }
+        // the neighbours' fronts the elevations draw: a wall per skyline step, the drawn windows in it
+        int fronts = 0, windows = 0;
+        var family = _model.ContextFronts.Any(f => f.Windows.Count > 0) ? HostedFamily(BuiltInCategory.OST_Windows, "Window") : null;
+        var symbols = new Dictionary<(double, double), FamilySymbol>();
+        foreach (var f in _model.ContextFronts)
+        {
+            try
+            {
+                double bottom = Z(f.BaseZ), height = Z(f.TopZ) - bottom;
+                if (height < Ft(1000) || f.Line.Length < 300) continue;
+                var line = Line.CreateBound(new XYZ(Ft(f.Line.A.X), Ft(f.Line.A.Y), ground.Elevation), new XYZ(Ft(f.Line.B.X), Ft(f.Line.B.Y), ground.Elevation));
+                var wall = Wall.Create(_doc, line, wallType.Id, ground.Id, height, bottom - ground.Elevation, false, false);
+                Put(wall, "Context front: " + f.Note);
+                fronts++;
+                _doc.Regenerate();
+                foreach (var cw in f.Windows)
+                {
+                    try
+                    {
+                        var at = new XYZ(Ft(cw.Centre.X), Ft(cw.Centre.Y), ground.Elevation);
+                        if (family != null)
+                        {
+                            double ww = Math.Round(cw.WidthMm / 50) * 50, hh = Math.Round((cw.HeadZ - cw.SillZ) / 50) * 50;
+                            if (!symbols.TryGetValue((ww, hh), out var symbol)) symbols[(ww, hh)] = symbol = HostedType(family, "Window", ww, hh);
+                            var inst = _doc.Create.NewFamilyInstance(at, symbol, wall, ground, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+                            inst.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM)?.Set(Z(cw.SillZ) - ground.Elevation);
+                            Put(inst, "Context window");
+                        }
+                        else
+                        {
+                            var u = (line.Direction * Ft(cw.WidthMm / 2));
+                            var o = _doc.Create.NewOpening(wall, at - u + XYZ.BasisZ * (Z(cw.SillZ) - ground.Elevation), at + u + XYZ.BasisZ * (Z(cw.HeadZ) - ground.Elevation));
+                            Put(o, "Context window opening");
+                        }
+                        windows++;
+                    }
+                    catch { /* a window that does not fit its wall is left out */ }
+                }
+            }
+            catch (Exception ex) { Log.Add($"Context front not made ({ex.Message})."); }
+        }
+        if (fronts > 0) Log.Add($"Context: {fronts} front walls of the buildings next door from the elevations (their skylines), {windows} windows in them.");
         t.Commit();
         Log.Add($"Context: {made} blocks for the buildings next door (roof-plan areas over them, up to their surveyed roof heights)" +
                 (ws != null ? $", on workset '{ContextWorksetName}'." : "; the model is not workshared, so they are on the active workset (tagged CONTEXT)."));

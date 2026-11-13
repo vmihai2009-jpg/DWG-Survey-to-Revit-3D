@@ -91,6 +91,8 @@ public sealed class SurveyModel
     public IReadOnlyList<RoofCandidate> Roofs { get; init; } = Array.Empty<RoofCandidate>();
     /// <summary>The buildings next door: the roof-plan areas over them (outline and roof height), built as context.</summary>
     public IReadOnlyList<RoofCandidate> Context { get; init; } = Array.Empty<RoofCandidate>();
+    /// <summary>The neighbours' fronts as the elevations draw them (skyline steps and windows), built as context.</summary>
+    public IReadOnlyList<ContextFront> ContextFronts { get; init; } = Array.Empty<ContextFront>();
     /// <summary>The layer rules used (built-in, plus any layers.txt).</summary>
     public LayerRules Rules { get; init; } = LayerRules.Default;
     /// <summary>Survey sections read from section sheets (heights, and cut lines for section views).</summary>
@@ -693,6 +695,7 @@ public static class SurveyAnalyzer
         if (roofPlans.Count == 0 && roofs.Count == 0) notes.Add("No roof plan or roof layer: no roofs built.");
         // item E: elevation drawings split from their sheets, matched to the facade they show, fitted for height
         var elevations = new List<ElevationDrawing>();
+        var fronts = new List<ContextFront>();
         if (elevationSheets.Count > 0)
         {
             var found = new List<(ElevationDrawing, List<(double, double, double)>)>();
@@ -701,12 +704,19 @@ public static class SurveyAnalyzer
                 try { found.AddRange(ElevationIndex.Split(sheet, rules, SectionReader.SheetLines(sheet, out _))); }
                 catch (Exception ex) { notes.Add($"{sheet.Name.FileName}: elevation sheet could not be read ({ex.Message})."); }
             }
-            elevations = ElevationIndex.Build(found, levels);
+            elevations = ElevationIndex.Build(found, levels, frame);
             notes.Add($"Elevations: {elevations.Count} drawings on {elevationSheets.Count} sheets, {elevations.Count(e => e.Facade != null)} matched to a facade.");
             foreach (var e in elevations) notes.Add((e.Facade == null ? "CHECK " : "") + e.Note + ".");
             // item F: the matched drawings' windows set the sills and heads, and add the windows the plan missed
             try { notes.AddRange(ElevationWindows.Apply(elevations, levels, rules).Notes); }
             catch (Exception ex) { notes.Add($"Windows from the elevations not read ({ex.Message})."); }
+            try
+            {
+                fronts = ElevationContext.Read(elevations, levels, rules);
+                if (fronts.Count > 0)
+                    notes.Add($"Buildings next door on the elevations: {fronts.Count} front steps, {fronts.Sum(f => f.Windows.Count)} windows, built as context (" + string.Join("; ", fronts.Select(f => f.Note)) + ").");
+            }
+            catch (Exception ex) { notes.Add($"Neighbours on the elevations not read ({ex.Message})."); }
         }
 
         if (topStorey != null && tops.Count > 0)
@@ -722,7 +732,7 @@ public static class SurveyAnalyzer
         }
         // self-checks: places to look at, listed for the review list and the report
         var checks = ModelChecks.Run(levels, frame, rules, FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList()));
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Context = context, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops, SectionIndex = sectionIndex, Elevations = elevations };
+        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Context = context, ContextFronts = fronts, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops, SectionIndex = sectionIndex, Elevations = elevations };
     }
 
     /// <summary>Inside the box the walls span (their middle 98%, so one stray wall cannot stretch it), grown by a margin.</summary>

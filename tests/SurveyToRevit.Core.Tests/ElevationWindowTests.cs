@@ -22,7 +22,7 @@ public class ElevationWindowTests
         { Windows = new[] { planWindow }, WallHeightMm = 3500 };
         var d = new ElevationDrawing
         {
-            File = "E.dwg", Title = "FRONT ELEVATION", Facade = "F1", FacadeLine = new double[] { 0, 0, 20000, 0 }, Scale = 1, ShiftMm = 0,
+            File = "E.dwg", Title = "FRONT ELEVATION", Facade = "F1", FacadeLine = new double[] { 0, 0, 20000, 0 }, Scale = 1, ShiftMm = 0, Score = 0.95,
             Parts = { new ElevationPart(0, 20000, 1, 30000, 0, Array.Empty<double[]>(), Array.Empty<double[]>()) },
             Lines = Rect(1400, 800, 2600, 2500).Concat(Rect(8000, 1000, 9000, 2600)).ToList(),
         };

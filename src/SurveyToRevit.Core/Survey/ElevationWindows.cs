@@ -50,7 +50,7 @@ public static class ElevationWindows
 
     public static ElevationWindowResult Apply(IReadOnlyList<ElevationDrawing> elevations, IReadOnlyList<SurveyLevel> levels, LayerRules rules)
     {
-        var notes = new List<string>(); int drawn = 0, heights = 0, widths = 0, added = 0, noWall = 0;
+        var notes = new List<string>(); int drawn = 0, heights = 0, widths = 0, added = 0, noWall = 0, unsure = 0;
         foreach (var d in elevations.Where(e => e.Facade != null && e.FacadeLine != null))
         {
             var fl = d.FacadeLine!;
@@ -82,7 +82,9 @@ public static class ElevationWindows
                         heights++; changed = true;
                         continue;
                     }
-                    // drawn only: a wall of this floor along the facade, under the window's whole width and as tall as its head
+                    // drawn only: a wall of this floor along the facade, under the window's whole width and as tall as its head;
+                    // only from a sure match (a drawing matched a bay off would add a whole row of windows in the wrong place)
+                    if (d.Score < ElevationIndex.SureScore) { unsure++; continue; }
                     var walls = level.Walls.Walls;
                     int host = Enumerable.Range(0, walls.Count).Where(i => walls[i].Arc == null && walls[i].HeightMm == null
                             && Math.Abs(SegmentCleaner.Offset(facade, walls[i].Centerline.A)) <= ElevationIndex.FacadeReachMm
@@ -105,7 +107,8 @@ public static class ElevationWindows
         }
         if (drawn > 0)
             notes.Add($"Windows from the elevations: {drawn} drawn on matched facades; {heights} plan windows take the drawn sill and head ({widths} the drawn width too); {added} drawn only, added (tagged ElevationOnly)"
-                      + (noWall > 0 ? $"; {noWall} drawn only with no wall of their floor along the facade to take them" : "") + ".");
+                      + (noWall > 0 ? $"; {noWall} drawn only with no wall of their floor along the facade to take them" : "")
+                      + (unsure > 0 ? $"; {unsure} drawn only on a drawing matched under {ElevationIndex.SureScore:P0}, not added (check the match)" : "") + ".");
         return new ElevationWindowResult(drawn, heights, widths, added, noWall, notes);
     }
 }
