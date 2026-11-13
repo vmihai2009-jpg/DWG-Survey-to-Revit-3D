@@ -137,6 +137,13 @@ public sealed class BuildLog
                 Evidence = "the reading's report", Severity = 3, SeverityUnit = "note",
             });
         }
+        foreach (var o in model.Decisions.Where(o => o.State is "stale" or "contradicted"))
+            log.Add(new BuildLogEntry
+            {
+                Kind = "decision " + o.State, Confidence = "Medium", Why = $"{o.Kind} {o.What}: {o.Detail}", Evidence = SurveyDecisions.FileName,
+                Settle = o.State == "stale" ? "update or remove the entry (the drawing or the floor it names changed)" : "look at the drawing: the decision or the reading is wrong",
+                Override = o.Kind, Severity = 5, SeverityUnit = "decision",
+            });
         foreach (var s in model.Skipped)
             log.Add(new BuildLogEntry { Kind = "skipped-drawing", Drawing = s.FileName, Confidence = "Medium", Why = s.Reason, Settle = "is anything in it needed? (an elevation or section is read separately)", Severity = 1, SeverityUnit = "drawing" });
         log.Sort();

@@ -95,6 +95,10 @@ public sealed class SurveyModel
     public IReadOnlyList<SurveySection> Sections { get; init; } = Array.Empty<SurveySection>();
     /// <summary>Places the self-checks found worth a look (see <see cref="ModelChecks"/>), most important first.</summary>
     public IReadOnlyList<CheckItem> Checks { get; init; } = Array.Empty<CheckItem>();
+    /// <summary>What happened to each entry of survey-decisions.json (applied, stale, contradicted, waiting); empty without the file.</summary>
+    public IReadOnlyList<DecisionOutcome> Decisions { get; init; } = Array.Empty<DecisionOutcome>();
+    /// <summary>The decisions file read, or null.</summary>
+    public SurveyDecisions? DecisionsFile { get; init; }
 }
 
 /// <summary>
@@ -158,6 +162,9 @@ public static class SurveyAnalyzer
             rules = rules.WithOverrides(layerFile, notes);
             notes.Add($"Layer names from {layerFile} ({rules.Overrides.Count} rules) are used before the built-in ones.");
         }
+        // calls made outside the engine (the MCP side, a person) that rebuilds keep: survey-decisions.json beside layers.txt
+        var decisions = SurveyDecisions.Find(paths.Select(p => System.IO.Path.GetDirectoryName(p) ?? ""), notes);
+        var outcomes = new List<DecisionOutcome>();
         var plans = new List<SurveyDrawing>();
         var roofPlans = new List<SurveyDrawing>();
         var sectionSheets = new List<SurveyDrawing>();
@@ -311,6 +318,24 @@ public static class SurveyAnalyzer
             levels[i].ElevationMm = better is { Count: > 0 } b ? b.LevelMm : below.ElevationMm + DefaultTopWallHeightMm;
             notes.Add($"{levels[i].Name}: most spot heights ({was / 1000:0.00} m) are under {MinStoreyMm / 1000:0.0} m above {below.Name}; level set to {levels[i].ElevationMm / 1000:0.00} m" +
                       (better is { Count: > 0 } ? " (its next most common spot height). Check it." : " (an assumed storey). Check it."));
+        }
+
+        if (decisions != null)
+        {
+            outcomes.AddRange(DecisionRules.ApplyLevels(decisions, levels));
+            foreach (var l in levels)
+            {
+                var (walls, outs) = DecisionRules.ApplyWalls(decisions, l, l.Walls.Walls, windowInput[l].Lines);
+                if (outs.Count > 0) l.Walls = l.Walls with { Walls = walls, ThicknessGroups = walls.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
+                outcomes.AddRange(outs);
+            }
+            foreach (var x in decisions.NotWalls.Concat(decisions.Walls).Where(x => !levels.Any(l => string.Equals(l.Code, x.Level, StringComparison.OrdinalIgnoreCase) || string.Equals(l.Name, x.Level, StringComparison.OrdinalIgnoreCase))))
+                outcomes.Add(new DecisionOutcome(decisions.NotWalls.Contains(x) ? "notWalls" : "walls", x.Level, "stale", "no floor of that code or name"));
+            outcomes.AddRange(DecisionRules.Waiting(decisions));
+            notes.Add($"Decisions from {decisions.Path}: {outcomes.Count(o => o.State == "applied")} applied, {outcomes.Count(o => o.State == "stale")} match nothing, " +
+                      $"{outcomes.Count(o => o.State == "contradicted")} contradicted by the drawing, {outcomes.Count(o => o.State == "waiting")} read for steps this version doesn't have yet.");
+            foreach (var o in outcomes.Where(o => o.State is "stale" or "contradicted"))
+                notes.Add($"CHECK decision {o.Kind} {o.What}: {(o.State == "stale" ? "matches nothing" : "contradicted")}: {o.Detail}.");
         }
 
         // which outside walls line up with the façade on the floors below and above (the building's face)
@@ -522,7 +547,7 @@ public static class SurveyAnalyzer
         if (roofPlans.Count == 0 && roofs.Count == 0) notes.Add("No roof plan or roof layer: no roofs built.");
         // self-checks: places to look at, listed for the review list and the report
         var checks = ModelChecks.Run(levels, frame, rules, FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList()));
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections, Checks = checks };
+        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions };
     }
 
     /// <summary>Inside the box the walls span (their middle 98%, so one stray wall cannot stretch it), grown by a margin.</summary>

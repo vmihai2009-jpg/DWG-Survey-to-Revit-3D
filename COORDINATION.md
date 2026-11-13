@@ -364,6 +364,14 @@ Entry format (copy this):
 
 ## Projects side (Mihai's personal account)
 
+### 2026-11-13 (later): Survey to Revit 0.26.0, item T of MCP-AUDIT-AND-TOOLS.md: survey-decisions.json is read and obeyed
+- The engine reads `survey-decisions.json` from the survey folder (next to layers.txt; schema in MCP-AUDIT-AND-TOOLS.md section 0) on every analyse, and the analysis cache notices when it changes. Without the file nothing changes.
+- Acted on now: `levels` (the floor takes the decided AOD before wall heights are worked out), `notWalls` (a wall on the line, within 2° and 50 mm plus half its thickness, covering half the line, is removed; **kept and reported as contradicted when window lines lie on it**: a dormer front), `walls` (added at the given thickness, default 215, tagged `SurveyToRevit|<level>|Decision`; reported stale if a wall is already there).
+- Read and listed as `waiting` (never dropped) until their items land: `facadeTop` (C), `elevations` (E), `windows` (F), `keep` (U).
+- `survey_analyze` and `survey_build` answer with `decisions` (applied / stale / contradicted / waiting, each entry); stale and contradicted ones are CHECK notes and `build-log.json` entries.
+- **Ask:** if you have decisions from Swallow Place (the 13 mansard skin lines, levels), write them to `survey-decisions.json` in the survey folder and run `survey_analyze fresh: true`; send `decisions`.
+- Files: `src/SurveyToRevit.Core/Survey/SurveyDecisions.cs` (new), `Survey/SurveyAnalyzer.cs`, `Survey/BuildLogEntries.cs`, `WallDetector.cs`, `Revit/ModelBuilder.cs`, `Revit/Mcp/SurveyPipeline.cs`, `tests/.../DecisionTests.cs`. Version 0.26.0.
+
 ### 2026-11-13 (later): Survey to Revit 0.25.0, item V of MCP-AUDIT-AND-TOOLS.md: build-log.json
 - Every analyse and build now writes `build-log.json`: one entry per call the engine wasn't sure of (walls from one line, bridges, facade joins, partly paired faces, floor levels few spot heights agree on, unclear areas), every self-check it failed, CHECK notes, skipped drawings, and what Revit refused or fell back on. Each entry: kind, level, where (x, y or the wall's line), drawing and layer, confidence and why, evidence, the alternative, what would settle it, the `survey-decisions.json` kind that would override it, severity (m of wall, m² of floor...) and score = severity x (1 - confidence). Sorted worst first.
 - Saved in the reports folder (`<reports>\<project>\build-log.json`) and in the survey folder's `_prep\build-log.json` (where the hub reads it). `survey_analyze` and `survey_build` answer with `buildLog` (counts by kind and the 10 worst); `survey_review` adds the last build's `buildLog`. The ribbon's Review List gets the 30 worst entries that aren't self-checks too, so a person without the MCP side sees them.
