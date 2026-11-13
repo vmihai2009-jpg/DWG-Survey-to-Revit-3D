@@ -81,7 +81,8 @@ internal static class BuiltModelChecks
             foreach (var w in walls)
             {
                 var note = w.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
-                if (note.Contains("Parapet")) continue;
+                // parapets, and the buildings next door (context: their own heights, not this building's levels)
+                if (note.Contains("Parapet") || note.Contains("|CONTEXT|")) continue;
                 double baseOff = Mm(w.get_Parameter(BuiltInParameter.WALL_BASE_OFFSET)?.AsDouble() ?? 0);
                 bool topLevel = w.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.AsElementId() is ElementId t && t != ElementId.InvalidElementId;
                 double topOff = topLevel ? Mm(w.get_Parameter(BuiltInParameter.WALL_TOP_OFFSET)?.AsDouble() ?? 0) : 0;

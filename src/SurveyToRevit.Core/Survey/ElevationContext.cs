@@ -15,7 +15,7 @@ public sealed record ContextWindow(Vec2 Centre, double WidthMm, double SillZ, do
 /// </summary>
 public static class ElevationContext
 {
-    public const double StripMm = 250, StepMm = 400, MinStepMm = 2000, InsideMm = 1500, MinFrontMm = 3000, MinHeightMm = 2500;
+    public const double StripMm = 250, StepMm = 400, MinStepMm = 2000, InsideMm = 1500, MinFrontMm = 3000, MinHeightMm = 2500, CoverReachMm = 4000;
 
     static bool Skyline(LayerRole r) => r is not (LayerRole.Annotation or LayerRole.LevelText or LayerRole.HeightText
         or LayerRole.RoomName or LayerRole.Fitting or LayerRole.Area or LayerRole.Overhead);
@@ -69,7 +69,10 @@ public static class ElevationContext
                     strips.Add((t0, t1, here.Max(s => s.Z1), here.Min(s => s.Z0)));
                 }
                 if (strips.Count * StripMm < MinFrontMm) continue;
-                double baseZ = Math.Max(lowest, strips.Min(s => s.Base));
+                // a neighbour stands on the ground: down to this building's drawn foot when its own lowest line is higher
+                // (a shopfront or basement area drawn on a layer left out), never under the lowest floor
+                double foot = spans.Where(s => s.T1 > 0 && s.T0 < len).Select(s => s.Z0).DefaultIfEmpty(double.MaxValue).Min();
+                double baseZ = Math.Max(lowest, Math.Min(strips.Min(s => s.Base), foot));
                 // steps: strips of about one height together, short steps folded into the neighbour nearest in height
                 var steps = new List<(double T0, double T1, double Top)>();
                 foreach (var s in strips.OrderBy(s => s.T0))
@@ -101,7 +104,10 @@ public static class ElevationContext
         return res;
     }
 
-    /// <summary>A roof-plan block's wall that an elevation front already shows (parallel within 10°, within 1.5 m, half its length alongside): left out.</summary>
+    /// <summary>
+    /// A roof-plan block's wall that an elevation front already shows (parallel within 10°, within 4 m: the roof outline
+    /// often stands back from or overhangs the front; half its length alongside): left out.
+    /// </summary>
     public static bool Covered(Segment2 edge, IEnumerable<ContextFront> fronts)
     {
         double over = 0;
@@ -109,11 +115,32 @@ public static class ElevationContext
         {
             var d = f.Line.Direction; var e = edge.Direction;
             if (Math.Abs(d.X * e.X + d.Y * e.Y) < Math.Cos(10 * Math.PI / 180)) continue;
-            if (Math.Abs(SegmentCleaner.Offset(f.Line, edge.Mid)) > 1500) continue;
+            if (Math.Abs(SegmentCleaner.Offset(f.Line, edge.Mid)) > CoverReachMm) continue;
             double T(Vec2 p) => (p.X - f.Line.A.X) * d.X + (p.Y - f.Line.A.Y) * d.Y;
             double a = Math.Min(T(edge.A), T(edge.B)), b = Math.Max(T(edge.A), T(edge.B));
             over += Math.Max(0, Math.Min(b, f.Line.Length) - Math.Max(a, 0));
         }
         return over >= 0.5 * edge.Length;
+    }
+
+    /// <summary>
+    /// A block's walls the fronts replace: of its covered edges, only the one nearest each front's line (a shallow block's
+    /// back wall, also within reach, stays).
+    /// </summary>
+    public static HashSet<int> CoveredEdges(IReadOnlyList<Segment2> edges, IReadOnlyList<ContextFront> fronts)
+    {
+        var res = new HashSet<int>();
+        foreach (var f in fronts)
+        {
+            int best = -1; double bestOff = double.MaxValue;
+            for (int i = 0; i < edges.Count; i++)
+            {
+                if (!Covered(edges[i], new[] { f }) && !Covered(edges[i], fronts.Where(o => o.Facade == f.Facade))) continue;
+                double off = Math.Abs(SegmentCleaner.Offset(f.Line, edges[i].Mid));
+                if (off < bestOff) { bestOff = off; best = i; }
+            }
+            if (best >= 0) res.Add(best);
+        }
+        return res;
     }
 }

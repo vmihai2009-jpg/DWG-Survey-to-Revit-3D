@@ -62,4 +62,17 @@ public class ElevationFrontsTests
         Assert.False(ElevationContext.Covered(new Segment2(new Vec2(0, 0), new Vec2(0, 7000)), fronts));
         Assert.False(ElevationContext.Covered(new Segment2(new Vec2(0, 5000), new Vec2(8000, 5000)), fronts));
     }
+
+    [Fact]
+    public void A_shallow_block_keeps_its_back_wall()
+    {
+        var front = new[] { new ContextFront("F1", new Segment2(new Vec2(0, 0), new Vec2(8000, 0)), 0, 10000, new(), "") };
+        // a 3 m deep block whose roof outline overhangs the front by 0.5 m
+        var edges = new List<Segment2>
+        {
+            new(new Vec2(0, -500), new Vec2(8000, -500)), new(new Vec2(8000, -500), new Vec2(8000, 2500)),
+            new(new Vec2(8000, 2500), new Vec2(0, 2500)), new(new Vec2(0, 2500), new Vec2(0, -500)),
+        };
+        Assert.Equal(new[] { 0 }, ElevationContext.CoveredEdges(edges, front));
+    }
 }

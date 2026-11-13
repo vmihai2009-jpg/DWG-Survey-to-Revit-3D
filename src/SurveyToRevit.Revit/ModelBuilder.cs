@@ -1062,11 +1062,13 @@ public sealed class ModelBuilder
             if (Loop(r.Outline, ground.Elevation) is not CurveLoop loop) continue;
             try
             {
+                // the side an elevation already draws is built from the elevation (with its windows), below
+                var edges = loop.Select(c => new Segment2(new Vec2(Mm(c.GetEndPoint(0).X), Mm(c.GetEndPoint(0).Y)), new Vec2(Mm(c.GetEndPoint(1).X), Mm(c.GetEndPoint(1).Y)))).ToList();
+                var covered = ElevationContext.CoveredEdges(edges, _model.ContextFronts.ToList());
+                int ei = -1;
                 foreach (var c in loop)
                 {
-                    // the side an elevation already draws is built from the elevation (with its windows), below
-                    var e0 = c.GetEndPoint(0); var e1 = c.GetEndPoint(1);
-                    if (ElevationContext.Covered(new Segment2(new Vec2(Mm(e0.X), Mm(e0.Y)), new Vec2(Mm(e1.X), Mm(e1.Y))), _model.ContextFronts)) continue;
+                    if (covered.Contains(++ei)) continue;
                     var w = Wall.Create(_doc, c, wallType.Id, ground.Id, top - ground.Elevation, 0, false, false);
                     Put(w, "Context wall: " + r.Note);
                 }
