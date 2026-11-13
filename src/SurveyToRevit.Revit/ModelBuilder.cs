@@ -975,6 +975,7 @@ public sealed class ModelBuilder
         double thick = type?.GetCompoundStructure()?.GetWidth() ?? Ft(300);
         int native = 0, blocks = 0, asFloors = 0;
         string? firstError = null;
+        var built = new List<(Element Roof, RoofCandidate Plan)>();
         foreach (var r in _model.Roofs)
         {
             double top = Z(r.ElevationMm);
@@ -988,6 +989,7 @@ public sealed class ModelBuilder
                 var roof = _doc.Create.NewFootPrintRoof(curves, level, type, out ModelCurveArray footprint);
                 roof.get_Parameter(BuiltInParameter.ROOF_LEVEL_OFFSET_PARAM)?.Set(top - thick - level.Elevation);
                 Mark(roof, RoofCode, r.Note);
+                built.Add((roof, r));
                 native++;
             }
             catch (Exception ex)
@@ -1002,6 +1004,7 @@ public sealed class ModelBuilder
                     var slab = Floor.Create(_doc, new List<CurveLoop> { floorLoop }, FloorTypeFor(300).Id, below.Id);
                     slab.get_Parameter(BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM)?.Set(top - below.Elevation);
                     Mark(slab, RoofCode, r.Note);
+                    built.Add((slab, r));
                     asFloors++;
                     continue;
                 }
@@ -1022,6 +1025,55 @@ public sealed class ModelBuilder
         t.Commit();
         Log.Add($"Roofs: {native} flat concept roofs" + (asFloors > 0 ? $", {asFloors} as 300 mm floor slabs at the roof height (Revit refused the roof: {firstError})" : "") + (blocks > 0 ? $", {blocks} as generic model slabs" + (firstError != null ? $" (Revit refused the roof: {firstError})" : "") : "")
                 + (removed > 0 ? $" (replacing {removed} from an earlier run)." : ".") + " Heights are the middle of the spot heights on each roof; slopes are not modelled.");
+        StopWallsUnderRoofs(built);
+    }
+
+    /// <summary>
+    /// Item D: a generated wall that a generated roof cuts stops under it when it stands under the roof in plan
+    /// (an inner partition: its top is attached, so moving the roof moves it). Walls on the roof's edge are left as
+    /// they are (an outer wall or an upstand: the person decides) and walls half in, half out are counted; both are
+    /// listed by the built-model checks with their ids. Low walls (parapets, balustrades) are never touched.
+    /// </summary>
+    void StopWallsUnderRoofs(List<(Element Roof, RoofCandidate Plan)> roofs)
+    {
+        if (roofs.Count == 0) return;
+        var walls = new FilteredElementCollector(_doc).OfClass(typeof(Wall)).Cast<Wall>()
+            .Where(w => (w.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "") is var c
+                        && c.StartsWith(Tag + "|", StringComparison.Ordinal) && !c.EndsWith("|Parapet", StringComparison.Ordinal))
+            .Where(w => w.Location is LocationCurve).ToList();
+        if (walls.Count == 0) return;
+        using var t = new Transaction(_doc, "Survey walls stop under roofs");
+        var options = t.GetFailureHandlingOptions();
+        options.SetFailuresPreprocessor(new WarningSwallower());
+        t.SetFailureHandlingOptions(options);
+        t.Start();
+        int attached = 0, edge = 0, crossing = 0, refused = 0;
+        string? why = null;
+        foreach (var (roof, plan) in roofs)
+        {
+            var cuts = new ElementIntersectsElementFilter(roof);
+            foreach (var w in walls.Where(w => cuts.PassesFilter(w)))
+            {
+                var c = ((LocationCurve)w.Location).Curve;
+                var a = c.GetEndPoint(0); var b = c.GetEndPoint(1);
+                var line = new Segment2(new Vec2(Mm(a.X), Mm(a.Y)), new Vec2(Mm(b.X), Mm(b.Y)));
+                switch (RoofWalls.Place(line, Mm(w.Width), plan.Outline))
+                {
+                    case RoofWallPlace.Inner:
+                        try { w.AddAttachment(roof.Id, AttachmentLocation.Top); attached++; }
+                        catch (Exception ex) { refused++; why ??= ex.Message; }
+                        break;
+                    case RoofWallPlace.Edge: edge++; break;
+                    default: crossing++; break;
+                }
+            }
+        }
+        t.Commit();
+        if (attached + edge + crossing + refused > 0)
+            Log.Add($"Roofs: {attached} walls under a roof now stop under it (top attached)"
+                    + (edge > 0 ? $"; {edge} walls on a roof's edge left as drawn (outer wall or upstand: check)" : "")
+                    + (crossing > 0 ? $"; {crossing} walls cross a roof's edge (listed in the built-model checks)" : "")
+                    + (refused > 0 ? $"; Revit refused {refused} attachments ({why})" : "") + ".");
     }
 
     RoofType? RoofTypeFor(double thicknessMm)
