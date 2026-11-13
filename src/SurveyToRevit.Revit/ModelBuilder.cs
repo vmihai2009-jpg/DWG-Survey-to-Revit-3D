@@ -873,6 +873,11 @@ public sealed class ModelBuilder
     bool NativeStair(StairCandidate stair, Level level, Level above, string code, double riseMm)
     {
         int risers = Math.Max(3, stair.Risers);
+        // the runs are sketched with every drawn riser of every flight: when those make a believable stair over the storey
+        // (130-220 mm each), that is the count, so the risers, their height and the top agree; otherwise (the plan cuts
+        // the flight and shows only part of it) the reading's own count stands
+        int drawn = stair.Flights.Sum(f => f.Risers.Count);
+        if (drawn >= 3 && riseMm / drawn is double h && h >= 130 && h <= 220) risers = drawn;
         double riserMm = riseMm / risers;
         using var scope = new StairsEditScope(_doc, "Survey stair");
         var id = scope.Start(level.Id, above.Id);
@@ -1316,6 +1321,14 @@ public sealed class ModelBuilder
             .Where(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(prefix) == true)
             .Where(e => except == null || !except.Contains(e.Id.Value))
             .Select(e => e.Id).ToList();
+        // a wall opening has no Comments to carry the tag: the ones cut in our walls (kept walls included) go too, or every
+        // rebuild adds another identical opening to a kept wall
+        var ourWalls = new FilteredElementCollector(_doc).OfClass(typeof(Wall))
+            .Where(w => w.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(prefix) == true)
+            .Select(w => w.Id.Value).ToHashSet();
+        ids.AddRange(new FilteredElementCollector(_doc).OfClass(typeof(Opening)).Cast<Opening>()
+            .Where(op => op.Host != null && ourWalls.Contains(op.Host.Id.Value) && !ids.Contains(op.Id))
+            .Select(op => op.Id));
         if (ids.Count > 0) _doc.Delete(ids);
         return ids.Count;
     }
@@ -1488,6 +1501,8 @@ public sealed class ModelBuilder
 
     void Cut(Wall wall, XYZ center, double widthMm, double bottomMm, double topMm, string code, string what)
     {
+        // a sliver left by narrowing an opening to its clear width is no opening (50 mm "openings" were cut)
+        if (widthMm < 150 || topMm - bottomMm < 150) return;
         // along the wall at the opening (the tangent, on a curved wall)
         var curve = ((LocationCurve)wall.Location).Curve;
         var at = curve.Project(center);

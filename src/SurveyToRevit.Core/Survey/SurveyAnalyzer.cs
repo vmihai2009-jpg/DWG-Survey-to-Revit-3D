@@ -574,6 +574,32 @@ public static class SurveyAnalyzer
                 levels[i].Walls = levels[i].Walls with { Walls = ws };
                 notes.Add($"{levels[i].Name}: {inFront.Count} walls outside windows (balustrades, parapets) made low, up to the sill or {ParapetMm:0} mm, so the windows look out.");
             }
+            // a wall with its own spot heights on top (inside its thickness) standing well under the storey: a parapet,
+            // a terrace or boundary wall, a kerb: built to that height, not a storey high
+            if (!double.IsNaN(levels[i].ElevationMm))
+            {
+                var spots = levels[i].Plan.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.LevelText)
+                    .Select(t => (P: frame.ToModel(t.Position), Mm: LevelEstimator.ParseMm(t.Value))).Where(s => s.Mm != null)
+                    .Select(s => (s.P, Rel: s.Mm!.Value - levels[i].ElevationMm)).ToList();
+                var hosts = levels[i].Windows.Select(w => w.HostIndex).Concat(levels[i].Doors.Select(d => d.HostIndex)).ToHashSet();
+                var ws = levels[i].Walls.Walls.ToList();
+                int lowered = 0;
+                for (int k = 0; k < ws.Count; k++)
+                {
+                    var w = ws[k];
+                    if (w.Arc != null || w.Curtain || w.HeightMm != null || hosts.Contains(k) || w.Length < 500) continue;
+                    var c = w.Centerline; var n = c.Direction.Perp();
+                    var on = spots.Where(s => { double a = (s.P - c.A).Dot(c.Direction), o = Math.Abs((s.P - c.A).Dot(n)); return a >= 0 && a <= c.Length && o <= w.TypeThickness / 2 + 50; }).ToList();
+                    if (on.Count == 0 || on.Any(s => s.Rel < 200 || s.Rel > levels[i].WallHeightMm - 500)) continue;
+                    ws[k] = w with { HeightMm = Math.Round(on.Max(s => s.Rel) / 10) * 10 };
+                    lowered++;
+                }
+                if (lowered > 0)
+                {
+                    levels[i].Walls = levels[i].Walls with { Walls = ws };
+                    notes.Add($"{levels[i].Name}: {lowered} walls with spot heights on their top built to them (parapets, terrace and boundary walls), not a storey high.");
+                }
+            }
             if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
         }
 
@@ -632,12 +658,15 @@ public static class SurveyAnalyzer
             roofs = roofs.Where(r =>
             {
                 if (r.Outline.Vertices.Count < 3) return true;
+                // a strip under 0.6 m wide (a gutter, a lead flashing, a coping) is not a roof of its own
+                double bw = r.Outline.Vertices.Max(v => v.X) - r.Outline.Vertices.Min(v => v.X), bh = r.Outline.Vertices.Max(v => v.Y) - r.Outline.Vertices.Min(v => v.Y);
+                if (Math.Min(bw, bh) < 600 || r.Outline.Area < 0.6 * 0.6 * 1e6) return false;
                 var mid = new Vec2(r.Outline.Vertices.Average(v => v.X), r.Outline.Vertices.Average(v => v.Y));
                 var under = levels.Where(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm <= r.ElevationMm + 200 && l.Outline != null && FacadeWalls.Contains(l.Outline, mid))
                                   .OrderByDescending(l => l.ElevationMm).FirstOrDefault();
                 return under == null || r.ElevationMm - under.ElevationMm > 1200;
             }).ToList();
-            if (roofs.Count < before) notes.Add($"{before - roofs.Count} roof-plan areas just above a floor's slab read as that floor's terrace or balcony finish (not built as slabs of their own).");
+            if (roofs.Count < before) notes.Add($"{before - roofs.Count} roof-plan areas left out: strips under 0.6 m wide (gutters, flashings), or just above a floor's slab (that floor's terrace or balcony finish).");
         }
         // a roof plan drawn with the roofs next door: only the roofs over this building's walls (any floor's) are kept
         if (neighbourTotal > 0 && NeighbourWalls.Envelope(levels.SelectMany(l => l.Walls.Walls)) is { } whole)

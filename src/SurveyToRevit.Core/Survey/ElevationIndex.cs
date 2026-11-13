@@ -70,6 +70,7 @@ public static class ElevationIndex
         if (titles.Count == 0) return res;
         var drawn = lines.Where(l => rules.Classify(l.Layer) is not (LayerRole.Annotation or LayerRole.LevelText or LayerRole.HeightText or LayerRole.RoomName)).ToList();
         var islands = SectionReader.Islands(drawn).Where(g => g.Count >= 20).ToList();
+        var bandTitle = new Dictionary<List<Segment2>, SurveyText>(ReferenceEqualityComparer.Instance);
         // drawings stacked closer than the island gap read as one island: with two or more titles at different heights
         // under it, cut it into bands, each title's band from it up to the next title above (titles sit under their drawing)
         islands = islands.SelectMany(g =>
@@ -77,18 +78,22 @@ public static class ElevationIndex
             double gx0 = g.Min(s => Math.Min(s.A.X, s.B.X)), gx1 = g.Max(s => Math.Max(s.A.X, s.B.X));
             double gy0 = g.Min(s => Math.Min(s.A.Y, s.B.Y)), gy1 = g.Max(s => Math.Max(s.A.Y, s.B.Y));
             var rows = titles.Where(t => t.Position.X >= gx0 - 3000 && t.Position.X <= gx1 + 3000 && t.Position.Y >= gy0 - 6000 && t.Position.Y <= gy1)
-                             .Select(t => t.Position.Y).OrderBy(y => y).ToList();
-            var cuts = new List<double>();
-            foreach (var y in rows) if (cuts.Count == 0 || y - cuts[^1] > 5000) cuts.Add(y);
+                             .OrderBy(t => t.Position.Y).ToList();
+            var cuts = new List<SurveyText>();
+            foreach (var t in rows) if (cuts.Count == 0 || t.Position.Y - cuts[^1].Position.Y > 5000) cuts.Add(t);
             if (cuts.Count < 2) return new[] { g };
-            var bands = new List<List<Segment2>>();
+            var bands = new List<(List<Segment2> Band, SurveyText Title)>();
             for (int k = 0; k < cuts.Count; k++)
             {
-                double lo = cuts[k], hi = k + 1 < cuts.Count ? cuts[k + 1] : double.MaxValue;
+                double lo = cuts[k].Position.Y, hi = k + 1 < cuts.Count ? cuts[k + 1].Position.Y : double.MaxValue;
                 var band = g.Where(s => { double my = (s.A.Y + s.B.Y) / 2; return my >= lo && my < hi; }).ToList();
-                if (band.Count >= 20) bands.Add(band);
+                if (band.Count >= 20) bands.Add((band, cuts[k]));
             }
-            return bands.Count >= 2 ? bands.ToArray() : new[] { g };
+            if (bands.Count < 2) return new[] { g };
+            // each band's title is the one that made its lower cut (not the nearest: the title of the drawing above can sit
+            // closer to a band's top than its own title to its bottom)
+            foreach (var b in bands) bandTitle[b.Band] = b.Title;
+            return bands.Select(b => b.Band).ToArray();
         }).ToList();
         var marks = d.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.LevelText).Select(t => (t.Position, Mm: LevelEstimator.ParseMm(t.Value))).Where(x => x.Mm != null).ToList();
         // a datum mark ("20.00m A.O.D.") on any layer: its height is the flat line drawn next to it (just above or below the text);
@@ -97,7 +102,8 @@ public static class ElevationIndex
         foreach (var t in d.Texts)
         {
             if (DatumMm(t.Value) is not double z) continue;
-            var line = lines.Where(l => Math.Abs(l.A.Y - l.B.Y) < 1 && Math.Abs(l.A.X - l.B.X) > 1000
+            // the datum symbol's own flat edge (a triangle's base, often short) or the line it stands on: the nearest one
+            var line = lines.Where(l => Math.Abs(l.A.Y - l.B.Y) < 1 && Math.Abs(l.A.X - l.B.X) > 150
                                         && Math.Min(l.A.X, l.B.X) <= t.Position.X + 500 && Math.Max(l.A.X, l.B.X) >= t.Position.X - 3000
                                         && Math.Abs(l.A.Y - t.Position.Y) <= 800)
                             .OrderBy(l => Math.Abs(l.A.Y - t.Position.Y)).FirstOrDefault();
@@ -111,7 +117,8 @@ public static class ElevationIndex
             double Gap(Vec2 p) { double dx = p.X < x0 ? x0 - p.X : p.X > x1 ? p.X - x1 : 0, dy = p.Y < y0 ? y0 - p.Y : p.Y > y1 ? p.Y - y1 : 0; return Math.Sqrt(dx * dx + dy * dy); }
             // its title: the nearest one within a fifth of its size (titles sit under or over the drawing), not used by another
             double reach = Math.Max(3000, 0.2 * Math.Max(x1 - x0, y1 - y0));
-            var title = titles.Where(t => !taken.Contains(t) && Gap(t.Position) <= reach).OrderBy(t => Gap(t.Position)).FirstOrDefault();
+            var title = bandTitle.TryGetValue(g, out var own) && !taken.Contains(own) ? own
+                : titles.Where(t => !taken.Contains(t) && !bandTitle.ContainsValue(t) && Gap(t.Position) <= reach).OrderBy(t => Gap(t.Position)).FirstOrDefault();
             if (title == null) continue;
             taken.Add(title);
             var e = new ElevationDrawing { File = d.Name.FileName, Title = title.Value.Trim(), Box = new[] { Math.Round(x0), Math.Round(y0), Math.Round(x1), Math.Round(y1) }, Lines = g };
@@ -264,6 +271,13 @@ public static class ElevationIndex
 
     public static string ToJson(IReadOnlyList<ElevationDrawing> drawings) => JsonSerializer.Serialize(new { version = 1, elevations = drawings }, Json);
 
-    public static List<string> Save(IReadOnlyList<ElevationDrawing> drawings, string reportsRoot, string projectTitle, string? surveyFolder) =>
-        SharedFiles.Write("elevation-index.json", ToJson(drawings), reportsRoot, projectTitle, surveyFolder);
+    /// <summary>Written as s2r-elevation-index.json in the reports folder (the hub keeps its own elevation-index.json, in another
+    /// format, and could share that folder) and as elevation-index.json in the survey's _prep folder, where the hub reads it.</summary>
+    public static List<string> Save(IReadOnlyList<ElevationDrawing> drawings, string reportsRoot, string projectTitle, string? surveyFolder)
+    {
+        var json = ToJson(drawings);
+        var written = SharedFiles.Write("s2r-elevation-index.json", json, reportsRoot, projectTitle, null);
+        written.AddRange(SharedFiles.Write("elevation-index.json", json, "", projectTitle, surveyFolder));
+        return written;
+    }
 }
