@@ -70,6 +70,26 @@ public static class ElevationIndex
         if (titles.Count == 0) return res;
         var drawn = lines.Where(l => rules.Classify(l.Layer) is not (LayerRole.Annotation or LayerRole.LevelText or LayerRole.HeightText or LayerRole.RoomName)).ToList();
         var islands = SectionReader.Islands(drawn).Where(g => g.Count >= 20).ToList();
+        // drawings stacked closer than the island gap read as one island: with two or more titles at different heights
+        // under it, cut it into bands, each title's band from it up to the next title above (titles sit under their drawing)
+        islands = islands.SelectMany(g =>
+        {
+            double gx0 = g.Min(s => Math.Min(s.A.X, s.B.X)), gx1 = g.Max(s => Math.Max(s.A.X, s.B.X));
+            double gy0 = g.Min(s => Math.Min(s.A.Y, s.B.Y)), gy1 = g.Max(s => Math.Max(s.A.Y, s.B.Y));
+            var rows = titles.Where(t => t.Position.X >= gx0 - 3000 && t.Position.X <= gx1 + 3000 && t.Position.Y >= gy0 - 6000 && t.Position.Y <= gy1)
+                             .Select(t => t.Position.Y).OrderBy(y => y).ToList();
+            var cuts = new List<double>();
+            foreach (var y in rows) if (cuts.Count == 0 || y - cuts[^1] > 5000) cuts.Add(y);
+            if (cuts.Count < 2) return new[] { g };
+            var bands = new List<List<Segment2>>();
+            for (int k = 0; k < cuts.Count; k++)
+            {
+                double lo = cuts[k], hi = k + 1 < cuts.Count ? cuts[k + 1] : double.MaxValue;
+                var band = g.Where(s => { double my = (s.A.Y + s.B.Y) / 2; return my >= lo && my < hi; }).ToList();
+                if (band.Count >= 20) bands.Add(band);
+            }
+            return bands.Count >= 2 ? bands.ToArray() : new[] { g };
+        }).ToList();
         var marks = d.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.LevelText).Select(t => (t.Position, Mm: LevelEstimator.ParseMm(t.Value))).Where(x => x.Mm != null).ToList();
         // a datum mark ("20.00m A.O.D.") on any layer: its height is the flat line drawn next to it (just above or below the text);
         // it belongs to the drawing whose title it sits by (it is drawn beside the title, outside the drawing)
@@ -187,9 +207,17 @@ public static class ElevationIndex
     /// <summary>The facades: edges of the lowest floor outline 2 m or longer, F1.. in outline order.</summary>
     public static List<(string Id, Segment2 Line)> Facades(IReadOnlyList<SurveyLevel> levels)
     {
-        var ground = levels.Where(l => l.Outline != null && !double.IsNaN(l.ElevationMm)).OrderBy(l => l.ElevationMm).FirstOrDefault();
-        if (ground == null) return new();
-        return FacadeTops.Stretches(ground.Outline!).Select((s, i) => ($"F{i + 1}", s)).ToList();
+        var floors = levels.Where(l => l.Outline != null && !double.IsNaN(l.ElevationMm)).OrderBy(l => l.ElevationMm).ToList();
+        if (floors.Count == 0) return new();
+        // the ground floor's edges first (ids as before), then the upper floors' edges that no lower edge already gives
+        // (a rear wing set back above a ground floor that runs further out has its own facade and its own elevation)
+        var lines = FacadeTops.Stretches(floors[0].Outline!).ToList();
+        foreach (var f in floors.Skip(1))
+            foreach (var s in FacadeTops.Stretches(f.Outline!))
+                if (!lines.Any(o => SegmentCleaner.AngleDiffDeg(o.AngleDeg, s.AngleDeg) <= 3 && Math.Abs(SegmentCleaner.Offset(o, s.Mid)) <= 400
+                                    && Math.Abs((s.Mid - o.Mid).Dot(o.Direction)) <= (o.Length + s.Length) / 2 - 0.5 * Math.Min(o.Length, s.Length)))
+                    lines.Add(s);
+        return lines.Select((s, i) => ($"F{i + 1}", s)).ToList();
     }
 
     /// <summary>Everything: drawings from the sheets, each matched to at most one facade and each facade to at most one drawing, best first.</summary>

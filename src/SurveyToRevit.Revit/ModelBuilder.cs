@@ -906,6 +906,22 @@ public sealed class ModelBuilder
             t.Commit();
         }
         scope.Commit(new WarningSwallower());
+        // the railings Revit adds with the stair: tagged and in the survey's phase like the stair (else 'New Construction');
+        // the stair type allows the surveyed riser (else Revit warns on every stair)
+        if (_doc.GetElement(id) is Autodesk.Revit.DB.Architecture.Stairs made)
+        {
+            using var t2 = new Transaction(_doc, "Survey stair railings");
+            t2.SetFailureHandlingOptions(t2.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
+            t2.Start();
+            try { foreach (var rid in made.GetAssociatedRailings()) if (_doc.GetElement(rid) is Element rail) Mark(rail, code, "Stair railing"); } catch { }
+            try
+            {
+                if (_doc.GetElement(made.GetTypeId()) is Autodesk.Revit.DB.Architecture.StairsType st && st.MaxRiserHeight < Ft(riserMm + 5))
+                    st.MaxRiserHeight = Ft(Math.Ceiling((riserMm + 5) / 5) * 5);
+            }
+            catch { /* the type keeps its own limit */ }
+            t2.Commit();
+        }
         return _doc.GetElement(id) != null;
     }
 
