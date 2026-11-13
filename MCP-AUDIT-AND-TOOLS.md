@@ -16,17 +16,22 @@ version, add a line to PROJECT_STATUS.md and an entry in COORDINATION.md (projec
 
 > "mcp should analyse against drawings and pictures and take the responsibility to check against survey to revit"
 
-| | **Survey to Revit (this repo)** | **MCP side (BGMCP hub + Claude)** |
-|---|---|---|
-| Job | Read the DWGs and build, deterministically, the same every time | Analyse the build against the drawings **and** the site photos; check it; decide what's what |
-| Judgement | None. Where the evidence is unclear, it says so (a class `Unknown`, a CHECK line, Low confidence) and builds the safe default | All judgement calls: is this a mansard or a set-back attic, is this line a wall, which elevation is which facade when the matching is weak, which height to trust |
-| Photos | Never reads them | Uses them alongside the DWGs for every facade and roof decision |
-| Checks | Its own reading checks (as `ModelChecks` today) and counts in the report | **The checker of record**: `clash_check`, `facade_check`, `opening_clear_check`, `survey_fidelity`, `survey_section`, and so on, against the drawings and photos |
-| Output | The model, plus the JSON of what it read (section 4) | `survey-decisions.json`: what the MCP side decided, with the evidence, for Survey to Revit's next build |
-| Loop | Reads `survey-decisions.json` on every analyse/build and obeys it, as it obeys `layers.txt` | Writes decisions, asks for a rebuild of the floors concerned, checks again |
+**Survey to Revit is used on its own as often as with the MCP side.** Nothing below may make it do less when Claude
+isn't there. A person clicking *Build from Survey* must get the best model the engine can make: every item is
+implemented in full inside the plugin, with its own best call and its own checks. The MCP side is an extra layer
+on top, not a part the plugin relies on.
 
-So every item below makes Survey to Revit **publish evidence and accept decisions**, never guess. The hub can then
-decide in one place and the decision survives every rebuild.
+| | **Survey to Revit (this repo), always** | **MCP side (BGMCP hub + Claude), when present** |
+|---|---|---|
+| Job | Read every drawing it can (plans, sections, elevations, roof plan) and build the most complete model it can, deterministically | Analyse the build against the drawings **and** the site photos; check it; overrule where it knows better |
+| Judgement | Makes its own best call every time, by the rules in each item (for example classes the top of each facade and builds that). Never skips a thing so that someone else can do it later | Re-decides the calls the log marks uncertain, using photos and cross-checks the engine can't make |
+| Photos | Doesn't read them | Uses them alongside the DWGs for facade and roof decisions |
+| Checks | Full self-checks of the built model (item Q), in the report | Its own checks on top: `clash_check`, `facade_check`, `opening_clear_check`, `survey_fidelity`, `survey_section` |
+| Log | **A structured log of every call it made** (item V): what, where, the evidence, how sure, the alternative it rejected and what would settle it, so a person or Claude knows exactly where to act | Reads the log first and acts where it points, instead of re-reading DWGs |
+| Overrides | Reads `survey-decisions.json` if present and obeys it, as it obeys `layers.txt`; without the file, it builds exactly as it would anyway | Writes decisions there, so they survive rebuilds |
+
+So every item below makes Survey to Revit **do the work, show its working, and accept an override**. The decisions
+file is an override, not a dependency.
 
 **`survey-decisions.json`** (in the survey folder, next to `layers.txt`; written by the MCP side, read here; a
 person can edit it too). Every entry has `by` (tool or person), `evidence` (text: drawings, photo names) and `date`:
@@ -142,12 +147,14 @@ survey gives, and build each class its own way.
   4. the plan alone (set-back and thickness).
 
   Classify `Mansard` or `Pitched` only from 1-3. The plan alone may raise a CHECK, never remove a wall.
-- **Who decides.** Survey to Revit's class is a **proposal** with its evidence, written to `roof-edges.json`. The MCP
-  side checks it against the drawings and the photos and writes the answer to `survey-decisions.json`
-  (`facadeTop`, `notWalls`). A decision there always wins over the proposal. Without a decision, Survey to Revit
-  builds only what the evidence makes certain (`FlatParapet`, `SetBackStorey`, `Unknown` = walls as today). It
-  builds a `Mansard` or `Pitched` roof and leaves skin lines out of the walls only when a section or roof plan
-  shows the slope, or when the decisions file says so.
+- **Build its own call, every time.** Survey to Revit classifies and **builds** each stretch by the rules above:
+  the mansard roof and its skin lines left out where a section or roof plan shows the slope, walls where it shows
+  vertical. With the plan alone it builds walls, as today. Nothing is held back for someone else to finish.
+- **Show its working.** Each stretch's class goes to `roof-edges.json` and the log (item V) with the evidence, the
+  confidence (High from a section, Medium from a roof plan or elevation, Low from the plan alone), the class it
+  rejected and what would settle it ("no section crosses F78; a photo or a section would confirm SetBackStorey").
+- **Overridable.** An entry in `survey-decisions.json` (`facadeTop`, `notWalls`) wins over the engine's call on the
+  next build.
 - **Mansard only:** mark the plan's thin lines on the cut through the slope as `RoofSkin` in the analysis and leave
   them out of the walls. Keep any wall on that line that hosts a window: that is a dormer front (tag it `Dormer`).
   On Swallow Place these were 13 "Concept Wall 100mm/40mm", Low, no inserts.
@@ -281,10 +288,14 @@ For each floor, compare the plan's spot-height level, the elevations' level mark
 marks (item H). Where they differ by more than 30 mm, pick one by a declared order (plan, elevation, section;
 changeable) and log the choice in the report and `levels.json`. Never average silently.
 
-**Q. Basic self-checks of the built model (extend `ModelChecks`, Revit side).**
-The MCP side is the checker of record: it checks the build against the drawings and photos with `clash_check`,
-`facade_check`, `opening_clear_check` and `survey_fidelity`. Survey to Revit only catches its own obvious faults
-before handing over, so that the MCP side doesn't spend its checks on them. After the build, add to the report:
+**Q. Check the built model (extend `ModelChecks`, Revit side).**
+These are full checks, for every user, with or without Claude. They should catch what Mihai found by eye on Swallow
+Place: floors through the roof, roofs through walls, detail floating in front of nothing. After the build, add to
+the report and the log (item V):
+- each floor and slab's intersections with roofs: a slab edge pushing through a sloped roof, or a roof-plan slab
+  overlapping the roof band;
+- detail elements (piers, columns, details) whose back face reaches no wall, floor or roof within 50 mm (floating),
+  or whose front is behind the wall face (buried);
 - each roof's intersections with walls (item D);
 - windows whose glass is crossed by another element: a ray through the opening;
 - duplicate walls (same line within 20 mm, overlapping by ≥ 50%);
@@ -310,9 +321,26 @@ Add roles and default patterns for elevation/section linework:
 The same `layers.txt` lines override them. Check each role from geometry too (the hub's `layer_roles_check`: a
 window layer is mostly small closed rectangles, a profile layer is long open polylines).
 
+**V. A log that says where to act (new; replaces the free-text CHECK lines as the main output, which stay too).**
+Write `build-log.json` (and keep the readable report) on every analyse and build. One entry per call the engine
+made that wasn't certain, and per check it failed:
+- `kind`: wall-from-single-line, bridge, mansard-skin, facade-top, level, window-height-source, elevation-match,
+  roof-fallback, clash, floating, and so on;
+- `where`: level, element ids, model xy/z, drawing + layer + entity handles;
+- `confidence`: High / Medium / Low, and **why** in one line;
+- `evidence`: what it used; `alternative`: what it rejected and why;
+- `settle`: what would decide it ("a section through x = 12.4 m", "the elevation of F78", "a site photo of the
+  roofline"), and the decisions-file entry that would override it;
+- `severity`: how much of the model it affects (m of wall, m² of slab, number of windows).
+
+Sort by severity × (1 - confidence). The first lines are where a person or Claude should act first. The
+standalone user sees the same list in the review list (`ReviewListCommand`); Claude reads the JSON
+(`survey_review` returns it).
+
 **T. Read and obey `survey-decisions.json` (new, Core).**
-Photos stay entirely on the MCP side: Survey to Revit never reads them. What it needs is the MCP side's decisions,
-made from the drawings and the photos.
+Photos stay on the MCP side: Survey to Revit doesn't read them. The decisions file lets the MCP side's decisions,
+made from the drawings and the photos, survive a rebuild. Without the file, the build is exactly what the engine
+would do on its own.
 - Load `survey-decisions.json` (section 0) with `layers.txt`, and include it in the analysis cache key (SA:148).
 - Apply each kind at its step:
   - `elevations`: before item E2's matching;
@@ -352,6 +380,7 @@ with a `version` field.
 | `elevation-index.json` | E | per elevation drawing: sheet, x range, facade id, mirrored, per-part height fit (a, b, residual, marks used) |
 | `section-index.json` | H | per section: cut line, plan fit, level marks, wall-face offset, outer profile (u, z), classified parts |
 | `roof-edges.json` | C, H | per facade stretch: class (FlatParapet / SetBackStorey / Mansard / Pitched / Unknown), evidence, and for sloped classes eaves (out, z), kerb or ridge, slope, source |
+| `build-log.json` | V | every uncertain call and failed check: kind, where, confidence + why, evidence, alternative, what would settle it, severity; sorted worst first |
 | `windows.json` | F, G | per window: id, facade, sill/head/width with source (plan/elevation), pane pattern, type |
 
 Today the hub writes `facades.json`, `elevation-index.json` and `section-index.json` itself in the same schema
@@ -376,6 +405,9 @@ file once it exists.
   `survey_analyze`, and the hub's facade tools run without re-reading a DWG.
 - A rebuild of one floor after a `layers.txt` change keeps the hub's windows, sweeps and families on walls that
   didn't move.
+- **Standalone:** with no MCP add-in and no decisions file, *Build from Survey* gives the same model as above
+  (roofs, top-of-facade classes, elevation windows, checks), and the review list shows the log's worst-first
+  entries.
 - Every decision the MCP side wrote to `survey-decisions.json` (the Swallow Place set: F29/F53 mansard, rear
   set-back storey, the 13 skin lines not walls) survives a full rebuild, and the preview lists them as applied.
 
@@ -392,7 +424,7 @@ file once it exists.
 | 7 | H, P | sections and height reconciliation | medium |
 | 8 | I | stepped floors | medium (port from MCP-Rev) |
 | 9 | M, Q, R, U | editable detail, checks, provenance, safe rebuilds | medium each |
-| with 3 | T | the decisions file: the MCP side's channel back; needed as soon as C makes proposals | small |
+| with 3 | V, T | the structured log (where to act) and the decisions file (overrides that survive rebuilds) | small-medium |
 
 Reference implementations to port (same author, same rules) live in MCP-Rev: `SurveyRoofTools.cs` (mansard,
 outlines, arcs, clash_check, roof_detail), `WindowFamilyBuilder.cs`, `Survey/WindowPattern.cs`,
