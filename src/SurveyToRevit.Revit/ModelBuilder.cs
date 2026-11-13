@@ -154,6 +154,7 @@ public sealed class ModelBuilder
         BuildElements(levels, o);
         if (o.Stairs) BuildStairs(levels);
         if (o.Roofs && _model.Roofs.Count > 0) BuildRoofs(levels.Values.Select(v => v.level).ToList());
+        if (o.Roofs) BuildContext(levels.Values.Select(v => v.level).ToList());
         if (o.Sections && _model.Sections.Any(x => x.Cut != null)) BuildSections(levels.Values.Select(v => v.level).ToList());
         if (o.Site != null) BuildSite(o.Site, levels.Values.Select(v => v.level).ToList());
         group.Assimilate();
@@ -1030,6 +1031,54 @@ public sealed class ModelBuilder
     /// each with its top at its surveyed height, hosted on the highest level below it.
     /// A roof Revit refuses is built as a 300 mm generic model slab instead.
     /// </summary>
+    const string ContextCode = "CONTEXT";
+
+    /// <summary>
+    /// The buildings next door, as context: for each roof-plan area over them, plain walls round its outline from the ground
+    /// floor up to its surveyed roof height and a slab at the top; native and editable, tagged CONTEXT, on the workset
+    /// "Survey - Context" when the model is workshared (so it can be hidden or unloaded). Replaces an earlier run's context.
+    /// </summary>
+    void BuildContext(List<Level> levels)
+    {
+        using var t = new Transaction(_doc, "Survey context");
+        t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
+        t.Start();
+        DeleteGenerated(ContextCode);
+        if (_model.Context.Count == 0) { t.Commit(); return; }
+        // the same workset the site tool puts the surroundings on ("Context" unless set), made if missing
+        WorksetId? ws = ContextWorkset();
+        void Put(Element e, string what)
+        {
+            Mark(e, ContextCode, what);
+            if (ws != null) try { e.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM)?.Set(ws.IntegerValue); } catch { }
+        }
+        var ground = levels.OrderBy(l => Math.Abs(l.Elevation)).First();
+        var wallType = WallTypeFor(200);
+        int made = 0;
+        foreach (var r in _model.Context)
+        {
+            double top = Z(r.ElevationMm);
+            if (top - ground.Elevation < Ft(1000)) continue;
+            if (Loop(r.Outline, ground.Elevation) is not CurveLoop loop) continue;
+            try
+            {
+                foreach (var c in loop)
+                {
+                    var w = Wall.Create(_doc, c, wallType.Id, ground.Id, top - ground.Elevation, 0, false, false);
+                    Put(w, "Context wall: " + r.Note);
+                }
+                var slab = Floor.Create(_doc, new List<CurveLoop> { loop }, FloorTypeFor(200).Id, ground.Id);
+                slab.get_Parameter(BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM)?.Set(top - ground.Elevation);
+                Put(slab, "Context roof: " + r.Note);
+                made++;
+            }
+            catch (Exception ex) { Log.Add($"Context block not made ({ex.Message})."); }
+        }
+        t.Commit();
+        Log.Add($"Context: {made} blocks for the buildings next door (roof-plan areas over them, up to their surveyed roof heights)" +
+                (ws != null ? $", on workset '{ContextWorksetName}'." : "; the model is not workshared, so they are on the active workset (tagged CONTEXT)."));
+    }
+
     void BuildRoofs(List<Level> levels)
     {
         using var t = new Transaction(_doc, "Survey roofs");

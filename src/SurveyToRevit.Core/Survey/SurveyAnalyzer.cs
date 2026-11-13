@@ -89,6 +89,8 @@ public sealed class SurveyModel
     public required IReadOnlyList<string> Notes { get; init; }
     /// <summary>Flat concept roofs over the parts of each floor not covered by the floor above.</summary>
     public IReadOnlyList<RoofCandidate> Roofs { get; init; } = Array.Empty<RoofCandidate>();
+    /// <summary>The buildings next door: the roof-plan areas over them (outline and roof height), built as context.</summary>
+    public IReadOnlyList<RoofCandidate> Context { get; init; } = Array.Empty<RoofCandidate>();
     /// <summary>The layer rules used (built-in, plus any layers.txt).</summary>
     public LayerRules Rules { get; init; } = LayerRules.Default;
     /// <summary>Survey sections read from section sheets (heights, and cut lines for section views).</summary>
@@ -647,6 +649,7 @@ public static class SurveyAnalyzer
             levels[i].StairVoids = levels[i - 1].Stairs.Select(st => st.Footprint()).Where(p => p.Vertices.Count >= 3 && p.Area >= 0.5e6).ToList();
         // roofs only where the survey shows them: roof plans, and roof layers on the floor plans
         var roofs = new List<RoofCandidate>();
+        var context = new List<RoofCandidate>();
         int noHeight = 0;
         foreach (var rp in roofPlans)
         {
@@ -681,9 +684,11 @@ public static class SurveyAnalyzer
         if (neighbourTotal > 0 && NeighbourWalls.Envelope(levels.SelectMany(l => l.Walls.Walls)) is { } whole)
         {
             int before = roofs.Count;
-            roofs = roofs.Where(r => r.Outline.Vertices.Count < 3
-                || NeighbourWalls.Outside(whole, new Vec2(r.Outline.Vertices.Average(v => v.X), r.Outline.Vertices.Average(v => v.Y))) <= 500).ToList();
-            if (roofs.Count < before) notes.Add($"{before - roofs.Count} roof areas over the buildings next door left out.");
+            bool Ours(RoofCandidate r) => r.Outline.Vertices.Count < 3
+                || NeighbourWalls.Outside(whole, new Vec2(r.Outline.Vertices.Average(v => v.X), r.Outline.Vertices.Average(v => v.Y))) <= 500;
+            context = roofs.Where(r => !Ours(r)).ToList();
+            roofs = roofs.Where(Ours).ToList();
+            if (roofs.Count < before) notes.Add($"{before - roofs.Count} roof areas over the buildings next door: built as context (their own workset), not as this building's roofs.");
         }
         if (roofPlans.Count == 0 && roofs.Count == 0) notes.Add("No roof plan or roof layer: no roofs built.");
         // item E: elevation drawings split from their sheets, matched to the facade they show, fitted for height
@@ -717,7 +722,7 @@ public static class SurveyAnalyzer
         }
         // self-checks: places to look at, listed for the review list and the report
         var checks = ModelChecks.Run(levels, frame, rules, FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList()));
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops, SectionIndex = sectionIndex, Elevations = elevations };
+        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Context = context, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops, SectionIndex = sectionIndex, Elevations = elevations };
     }
 
     /// <summary>Inside the box the walls span (their middle 98%, so one stray wall cannot stretch it), grown by a margin.</summary>
