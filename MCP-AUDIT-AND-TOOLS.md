@@ -41,7 +41,7 @@ time), the cause in this repo, and the item in section 3 that removes it.
 |---|---|---|---|---|---|
 | 1 | Roofs | Every roof came out as a flat 300 mm **floor slab**, not a roof; PROJECT_STATUS: "NewFootPrintRoof fails on every survey so far, cause unknown" | hub `roof_from_survey`, `roof_solver`, `mansard_roof`; a day of roof work | `ModelBuilder.cs:987` passes `out ModelCurveArray footprint` uncreated: Revit 2025 throws "Value cannot be null". Found and fixed the same bug in the hub's `create_roof` today | A |
 | 2 | Phases | 118 stair railings (and anything Revit adds by itself) in "New Construction"; every phased view wrong until `phase_fix` | hub `PhaseKeeper` + `phase_fix` | `Mark()` (MB:1075) sets the phase only on elements it tags; railings made by `StairsEditScope` are never tagged | B |
-| 3 | Mansard storey | The Sixth Floor plan cut the mansard's sloping skin ~1 m above the floor; it was built as **13 full-height thin walls** ("Concept Wall 100mm/40mm", Low) on the street fronts; the real mansard roof clipped through all of them | `clash_check`, manual review, 13 deletions approved by Mihai | Nothing marks a storey as a roof/mansard storey (PROJECT_STATUS:13, no code); thin single-line walls at a set-back from the facade below become walls; walls run to the next level and are never trimmed by a roof (MB:468-473) | C, D |
+| 3 | Top storey | Three top conditions on one building (mansard on the street fronts, set-back attic at the rear, parapets); the plan cut the mansard's sloping skin ~1 m above the Sixth Floor and it was built as **13 full-height thin walls** ("Concept Wall 100mm/40mm", Low); the real mansard roof clipped through all of them | `clash_check`, photos to tell mansard from set-back, 13 deletions approved by Mihai | Nothing classifies the top of a facade (PROJECT_STATUS:13, no code); any line on the top storey becomes a wall; walls run to the next level and are never trimmed by a roof (MB:468-473) | C, D |
 | 4 | Elevations | Elevations skipped entirely. Window sills/heads came from plan S/H labels (internal, wrong for the facade), 52 windows didn't match their elevation; **101 windows drawn in the elevations had no model window** | hub `elevation_index`, `dwg_elevation`, `survey_autofix` (elevation heights), `window_look`, `elevation_fit_check`, `elevation_overlay`: most of two days | SA:186 skips any sheet without a level; only `survey_overlay` links them as 2D at the DWG origin | E, F |
 | 5 | One sheet, many drawings | The elevations DWG holds several elevations side by side (one, "Elevation 4", was left out); each part has its own height fit; level marks on one part paired with another part's lines | hub `elevation_fit_check` (fit per part along the sheet) | No sheet splitting for elevations/sections (SheetSplitter only does plans) | E, N |
 | 6 | Window types | One type per 50 mm size: 91 window types for one building; a person changing a design edits dozens | hub `window_family` (one parametric "BG Window"), `window_look`, `opening_clusters` | `MB:1208/1428` duplicates "Concept Window WxH" per size; `ConceptFamilies.Window` is width/height only | G |
@@ -80,31 +80,47 @@ time), the cause in this repo, and the item in section 3 that removes it.
   Railings from `StairsEditScope`, stair runs and landings, and openings must all get `_phase`.
 - Test: a build with stairs leaves 0 model elements in a later phase. Count by `CreatedPhaseId` in the build report.
 
-**C. Mansard and roof storeys (new, Core + Revit).**
-Detect them, don't build the plan's cut through the roof skin as walls, and publish the mansard's geometry.
-- **Detect (Core).** A storey is a roof storey along a stretch of its outline when:
-  1. its outer face line on that stretch is set back from the facade line of the floor below by 300-2,500 mm;
-  2. the lines there are single or thin (≤ 100 mm, often Low confidence);
-  3. if a section crosses that stretch, its profile above the floor below's wall top slopes (rises ≥ 1.5 m over a
-     run of ≥ 300 mm: item H gives it).
+**C. What the top of each facade is: classify from evidence, never assume (new, Core + Revit).**
+Most buildings have no mansard. Swallow Place has three top conditions on one building:
+- a mansard on the street fronts;
+- a flat set-back attic with real walls at the rear;
+- flat roofs behind parapets.
 
-  Without a section, (1) + (2) on the top one or two storeys is enough to flag it for review.
-- **Don't build those walls.** Mark them `MansardSkin` in the analysis and leave them out. Keep any wall on that
-  line that hosts a window: that is a dormer front (keep it and tag it `Dormer`).
-- **Publish the mansard** in `mansard.json` (section 4): per facade stretch, the eaves (the floor below's wall
-  top, set in by the section's eaves offset), the kerb height and line (from the section or the roof plan's flat
-  roof edge) and the slope.
-- **Build it (Revit)** as the hand-made reference model does it; Claude read it with the hub's `roof_detail`:
-  - one Basic Roof footprint per street run, every edge sloped at one angle, the curved corner as one arc edge,
-    cut off at the kerb;
-  - **only along the street facades.** A whole-building footprint with every edge sloped made no solid at any
-    angle on Swallow Place: the rear limbs broke Revit's hip solver, and the photos show no mansard there;
-  - the robust form that worked: a band, the street chain of edges closed by the same chain set in by the slope's
+So don't look for "a mansard". For each facade stretch, classify the top of the building from the evidence the
+survey gives, and build each class its own way.
+
+- **Classes:**
+
+  | Class | What the evidence shows | Build |
+  |---|---|---|
+  | `FlatParapet` | wall runs up past the roof plan's flat roof by a parapet | walls to the parapet top; flat roof from the roof plan |
+  | `SetBackStorey` | top storey's face set back from the facade below, **vertical** in the section (or no section and thick walls ≥ 200 mm, or windows in them) | **real walls, as today**; flat roof at the set-back's edge |
+  | `Mansard` | section profile above the wall top slopes steeply (≥ 45°, rise ≥ 1.5 m) | sloped roof band (below); the plan's cut through it is not walls |
+  | `Pitched` | section or roof plan shows a slope from the wall top (eaves at the wall head), with ridges, hips or verges in the roof plan | pitched footprint roof with slopes per edge (the hub's `roof_solver` reads the faces from the roof plan) |
+  | `Unknown` | no section crosses it, the roof plan says nothing there | **build as today** and flag it in the report for a person/photo |
+- **Evidence, strongest first:**
+  1. a section crossing the stretch (item H profile);
+  2. the roof plan (flat faces and their edges, slopes, ridges, hips: `roof_solver`'s edge classes);
+  3. the elevation's outline above the wall top (sloped line vs vertical: item E);
+  4. the plan alone (set-back and thickness).
+
+  Classify `Mansard` or `Pitched` only from 1-3. The plan alone may raise a CHECK, never remove a wall.
+- **Mansard only:** mark the plan's thin lines on the cut through the slope as `RoofSkin` in the analysis and leave
+  them out of the walls. Keep any wall on that line that hosts a window: that is a dormer front (tag it `Dormer`).
+  On Swallow Place these were 13 "Concept Wall 100mm/40mm", Low, no inserts.
+- **Publish** `roof-edges.json` (section 4): for each facade stretch, the class, the evidence used, and for sloped
+  classes the eaves (out from the facade line, z), the kerb or ridge, the slope, and the section or roof face used.
+- **Build a mansard (Revit)** as the hand-made reference model does it; Claude read it with the hub's `roof_detail`:
+  - one Basic Roof footprint, every edge sloped at one angle, a curve as one arc edge, cut off at the kerb;
+  - **only along the stretches classed `Mansard`.** A whole-building footprint with every edge sloped made no solid
+    at any angle on Swallow Place: the rear limbs broke Revit's hip solver;
+  - the robust form that worked: a band, the chain of mansard edges closed by the same chain set in by the slope's
     run (the kerb line), with the chain edges sloped and the kerb and the two ends flat;
   - the flat roof behind is the roof plan's top face.
-- **Defaults that worked:** slope from the section (66.1° here, eaves 23,749 to kerb 26,749 mm, run 1.36 m); the
-  hub's `mansard_roof` does exactly this today and can be the reference implementation
-  (MCP-Rev `SurveyRoofTools.cs`).
+- **Defaults that worked on Swallow Place:** slope from the section (66.1°, eaves 23,749 to kerb 26,749 mm, run
+  1.36 m). The hub's `mansard_roof` (MCP-Rev `SurveyRoofTools.cs`) is the reference implementation.
+- **Test with synthetic plans for all five classes.** A building with no section and no roof plan must build
+  exactly as today.
 
 **D. Walls under roofs stop under them (`MB:468-473`, `BuildRoofs` MB:965).**
 - Build roofs before the top storey's walls are finalised. Then, for each wall whose solid intersects a roof
@@ -156,8 +172,8 @@ Detect them, don't build the plan's cut through the roof skin as walls, and publ
   and the offset of the section's wall face from the model's facade line at the cut. On F29 that offset was
   -440 mm, and every profile taken without it was out by that much.
 - Read the outer profile at 10 mm steps of height (the outermost line at each height, made monotonic). Classify
-  its parts: wall face, bands/cornices (projection ≥ 50 mm, height ≤ 1 m), balustrade, mansard (slope above the
-  wall top) and kerb.
+  its parts: wall face, bands/cornices (projection ≥ 50 mm, height ≤ 1 m), balustrade, parapet, and above the wall
+  top: vertical set-back, steep slope (mansard), shallow slope (pitched) or flat (feeds item C).
 - Publish everything in `section-index.json` (section 4). The hub's `facade_profile` reads it to sweep cornices and
   build the mansard instead of re-deriving it.
 
@@ -279,20 +295,22 @@ with a `version` field.
 | `facades.json` | O | per facade: id, name, walls, line (with arcs), bearing, base/top per stretch, windows, elevation id |
 | `elevation-index.json` | E | per elevation drawing: sheet, x range, facade id, mirrored, per-part height fit (a, b, residual, marks used) |
 | `section-index.json` | H | per section: cut line, plan fit, level marks, wall-face offset, outer profile (u, z), classified parts |
-| `mansard.json` | C, H | per facade stretch: eaves (out, z), kerb (out, z), slope, section used |
+| `roof-edges.json` | C, H | per facade stretch: class (FlatParapet / SetBackStorey / Mansard / Pitched / Unknown), evidence, and for sloped classes eaves (out, z), kerb or ridge, slope, source |
 | `windows.json` | F, G | per window: id, facade, sill/head/width with source (plan/elevation), pane pattern, type |
 
-Today the hub writes `facades.json`, `elevation-index.json`, `section-index.json` and `mansard.json` itself in the
-same schema (MCP-Rev `Survey/*.cs`, `Survey*Tools.cs`). Match it, so that both sides can switch over without
-changes.
+Today the hub writes `facades.json`, `elevation-index.json` and `section-index.json` itself in the same schema
+(MCP-Rev `Survey/*.cs`, `Survey*Tools.cs`). Match it, so that both sides can switch over without changes. The hub's
+`mansard.json` (eaves, kerb, line per facade) is the `Mansard` case of `roof-edges.json`; the hub will read the new
+file once it exists.
 
 ---
 
 ## 5. Done when (measure on Swallow Place, then on a second survey)
 
-- `survey_build` makes **native roofs** (0 slab fallbacks), the mansard as a sloped roof on the street fronts and
-  **0 thin full-height walls** on the mansard storey. `clash_check` on the roofs reports only kerb-edge
-  touches.
+- `survey_build` makes **native roofs** (0 slab fallbacks), with each facade's top classed from evidence.
+  - On Swallow Place: the mansard as a sloped roof on the street fronts, 0 thin full-height walls under it, the
+    rear's set-back attic still walls. `clash_check` on the roofs reports only kerb-edge touches.
+  - On a survey with no mansard: the same walls as today, and no roof storey invented.
 - **0 elements in a later phase** after a build.
 - Windows: every elevation window has a model window with sill/head within 30 mm of the elevation, and **≤ 20
   window types** on Swallow Place (it had 91), all of one parametric family.
@@ -309,7 +327,7 @@ changes.
 |---|---|---|---|
 | 1 | A, B | one-line bug + one collector: removes two whole hub workarounds | small |
 | 2 | K, J | every roof/slab after depends on clean outlines with arcs | small-medium |
-| 3 | C, D | the mansard storey: biggest visible error on a London survey | medium |
+| 3 | C, D | the top of each facade classed from evidence (mansard, set-back, parapet, pitched): the biggest visible error on Swallow Place | medium |
 | 4 | O, N | the registry and manifest everything else hangs on | medium |
 | 5 | E, F, S | elevations: the largest time sink (two days of hub work) | large |
 | 6 | G | one window family + clustering | medium (port from MCP-Rev) |
