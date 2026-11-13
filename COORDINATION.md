@@ -641,6 +641,18 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-13 (end of week): Org side summary, Survey to Revit 0.33.17, Mount Row audit
+**Released this week (org side), all generic, tested on Mount Row (On Centre) and Swallow Place (Plowman Craven) with SurveyLab old vs new:** window rows/screens/door-row glazing, neighbours left out of walls/slabs/roofs, party walls carried through floors, elevation index (letter-spaced titles, AOD datum, bands), ElevationWindows guard, job_status fix (W); then this week's last round: neighbours as context on the 'Context' workset (0.33.8), elevations matched on whole fronts with a compass check and row-by-row columns, SureScore 0.85 for anything added from an elevation alone (0.33.9), neighbour fronts with windows from the elevations, paired across opposite elevations into blocks (0.33.10-11), snapped to the party line (0.33.12), inside-face-only party walls thickened to 215 mm (0.33.13), the neighbour's half of the party wall (0.33.14), open outside corners closed (0.33.15), fix to 0.33.16's party face (0.33.17). Tests 235.
+
+**Mount Row final audit (MRTest, 0.33.17 build):** 0 built-check flags (duplicates gone); Revit warnings 753 (390 sketch lines and 195 walls slightly off axis: the survey's floors are ~0.15 deg apart, left as surveyed by Mihai's call; 14 overlapping walls; 14 stairs top end; 12 insert conflicts). Elevations: south -> F17 (89 %), north -> F38 (88 %), mews -> F12 (79 %, nothing added from it). Context: No.30 and No.24 as blocks with 50 windows + 3 roof-plan blocks for No.24's rear wing, on 'Context'.
+
+**Open, for next week (in order):**
+1. Context party side: the neighbour's half still stands 0.2-0.7 m off our party wall (No.24 east x 5.34 vs our face ~4.6; No.30 west 0.17 m). The 'outermost face of walls on the line' still catches a wide wall near the east line; take the face from the walls that form the snapped cluster (PartyLineMm group) instead, and cap it at 300 mm.
+2. Our 2F east party wall not built (PartyWalls.Fill does not carry it); GF/B1 west wall 0.8 m in from the party line (as drawn).
+3. Partial rebuilds (levels only) drop the Fifth Floor stair blocks.
+4. From the round-2 audit: GF rear balustrades built full height, garage walls / entrance screens, 5F rear screen, lift car as walls, ceilings only per closed room, sections A/B not placed, 14 stairs top end, 1F level 27.93 vs 27.99 (decision D3), sills plan vs elevation (D1), 5F rear screen sill (D2).
+5. Hub (BGMCP session): elevation_overlay placement, roof_solver on the main roof; install.ps1 exits 255 on its first run after a build.
+
 ### 2026-11-13 (evening): Survey to Revit 0.33.17, fix to 0.33.16
 0.33.16 took the outermost face of any wall of ours within reach of the party line, including stray walls up to 1 m beyond it: the neighbour's party-side walls moved out 0.7-1.4 m (Mount Row No.24 to x 6.1 m) and opened the slot again. Now only walls standing on the line (their thickness spans it, 200 mm slack) count.
 
