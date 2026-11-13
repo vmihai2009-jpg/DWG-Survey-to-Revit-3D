@@ -166,7 +166,7 @@ public static class ElevationContext
         return over >= 0.5 * edge.Length;
     }
 
-    public const double PartyReachMm = 800, MinDepthMm = 4000, MaxDepthMm = 20000, PairMinMm = 3000, SnapMm = 1500;
+    public const double PartyReachMm = 800, MinDepthMm = 4000, MaxDepthMm = 20000, PairMinMm = 3000, SnapMm = 1500, PartyLineMm = 5000;
 
     /// <summary>
     /// The context to build, as one coherent set:
@@ -232,8 +232,15 @@ public static class ElevationContext
             double Snap(double t)
             {
                 var side = new Segment2(P(t, 0), P(t, depth));
-                var near = ours.Where(l => Alongside(side, new[] { l }, SnapMm) || Alongside(l, new[] { side }, SnapMm))
-                    .Select(l => (l.Mid - g.O).Dot(g.U)).Where(x => Math.Abs(x - t) <= SnapMm).OrderBy(x => Math.Abs(x - t)).ToList();
+                // this building's lines there, grouped by position (250 mm); a party line is where 5 m or more of them
+                // line up (floors repeat it), not a short stray wall nearer the neighbour
+                var at = ours.Where(l => Alongside(l, new[] { side }, SnapMm))
+                    .Select(l => (X: (l.Mid - g.O).Dot(g.U), L: l.Length)).Where(p => Math.Abs(p.X - t) <= SnapMm).OrderBy(p => p.X).ToList();
+                var lines = new List<(double Sum, double W, double L)>();
+                foreach (var p in at)
+                    if (lines.Count > 0 && p.X - lines[^1].Sum / lines[^1].W <= 250) lines[^1] = (lines[^1].Sum + p.X * p.L, lines[^1].W + p.L, lines[^1].L + p.L);
+                    else lines.Add((p.X * p.L, p.L, p.L));
+                var near = lines.Where(c => c.L >= PartyLineMm).Select(c => c.Sum / c.W).OrderBy(x => Math.Abs(x - t)).ToList();
                 return near.Count > 0 ? near[0] : t;
             }
             a = Snap(a); b = Snap(b);
@@ -249,6 +256,7 @@ public static class ElevationContext
             // a front that starts higher than the block (its lowest drawn line is up a storey) goes down to the block's foot
             foreach (var f in all) lowered[f] = baseZ;
             roofs.Add(new RoofCandidate(box, top, note));
+            notes.Add($"{note}: corners {string.Join(" ", box.Vertices.Select(v => $"{v.X:0},{v.Y:0}"))}, top {top / 1000:0.00} m.");
         }
         int dropped = 0;
         foreach (var r in blocks)
