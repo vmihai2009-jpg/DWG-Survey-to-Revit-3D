@@ -77,7 +77,7 @@ public static class WindowFinder
         var found = new List<(int Host, Vec2 Center, double Width, double? Sill, double? Head, Vec2? Out)>();
         // a row of windows whose frames stand a narrow pier apart touches within joinMm: split it where nothing is drawn
         // along the row (the piers), so each window is its own opening instead of one too wide to place
-        foreach (var cluster in Enumerable.Range(0, lines.Count).GroupBy(Root).Select(g => g.Select(i => lines[i]).ToList()).SelectMany(c => SplitAtGaps(c, pierGapMm)))
+        foreach (var cluster in Enumerable.Range(0, lines.Count).GroupBy(Root).Select(g => g.Select(i => lines[i]).ToList()).SelectMany(c => SplitAtGaps(c, pierGapMm)).SelectMany(c => SplitScreen(c, maxWidth)))
         {
             var main = cluster.OrderByDescending(l => l.Length).First();
             var pts = cluster.SelectMany(l => new[] { l.A, l.B }).ToList();
@@ -243,6 +243,24 @@ public static class WindowFinder
             groups[best].Add(l);
         }
         return groups.Where(g => g.Count > 0).ToList();
+    }
+
+    /// <summary>
+    /// A cluster too wide to be one window (a glazed screen: panes between slim mullions, with one sill or frame line
+    /// drawn the whole length): split where the panes break, reading only the lines shorter than half the widest
+    /// window, and leave the long lines out so each part is as wide as its pane. Any other cluster comes back as it is.
+    /// </summary>
+    public static List<List<Segment2>> SplitScreen(List<Segment2> cluster, double maxWidth, double minGap = 30)
+    {
+        var main = cluster.OrderByDescending(l => l.Length).First();
+        var dir = main.Direction;
+        (double lo, double hi) Span(Segment2 l) { double a = (l.A - main.A).Dot(dir), b = (l.B - main.A).Dot(dir); return (Math.Min(a, b), Math.Max(a, b)); }
+        var spans = cluster.Select(Span).ToList();
+        if (spans.Max(s => s.hi) - spans.Min(s => s.lo) <= maxWidth) return new() { cluster };
+        var shortLines = cluster.Where(l => l.Length < maxWidth / 2).ToList();
+        if (shortLines.Count < 2) return new() { cluster };
+        var parts = SplitAtGaps(shortLines, minGap);
+        return parts.Count < 2 ? new() { cluster } : parts;
     }
 
     static bool Near(Segment2 a, Segment2 b, double d) =>

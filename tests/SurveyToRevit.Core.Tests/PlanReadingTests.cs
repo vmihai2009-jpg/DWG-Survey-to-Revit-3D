@@ -187,6 +187,23 @@ public class PlanReadingTests
     }
 
     [Fact]
+    public void A_glazed_screen_with_one_long_sill_line_is_a_window_per_pane()
+    {
+        // eight panes 1315 wide, 120 mm mullions, one sill line the full 11.4 m: once one window, dropped as too wide
+        var walls = new List<WallCandidate> { W(-500, 300, 12500, 300, 400) };
+        var glass = new List<Segment2> { S(0, 160, 11435, 160, "WINDOWS") };
+        for (int k = 0; k < 8; k++)
+        {
+            double x0 = k * 1435, x1 = x0 + 1315;
+            glass.Add(S(x0, 200, x1, 200, "WINDOWS")); glass.Add(S(x0, 210, x1, 210, "WINDOWS"));
+            glass.Add(S(x0, 160, x0, 220, "WINDOWS")); glass.Add(S(x1, 160, x1, 220, "WINDOWS"));
+        }
+        var found = WindowFinder.Find(glass, walls, new List<(Vec2, string)>(), 3000);
+        Assert.Equal(8, found.Count);
+        Assert.All(found, w => Assert.InRange(w.WidthMm, 1300, 1330));
+    }
+
+    [Fact]
     public void Glass_broken_at_a_mullion_stays_one_window()
     {
         // two panes 40 mm apart under one frame line: one window
