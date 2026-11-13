@@ -470,7 +470,7 @@ public sealed class ModelBuilder
                         var wall = Wall.Create(_doc, line, type.Id, level.Id, height, 0, false, false);
                         // a low wall (balustrade, parapet) keeps its own height; the rest run up to the next level
                         if (top != null && w.HeightMm == null) wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.Set(top.Id);
-                        Mark(wall, sl.Code, w.HeightMm != null ? "Parapet" : w.Confidence.ToString());
+                        Mark(wall, sl.Code, w.FromDecision ? "Decision" : w.HeightMm != null ? "Parapet" : w.Confidence.ToString());
                         created[w] = wall;
                         made++;
                     }

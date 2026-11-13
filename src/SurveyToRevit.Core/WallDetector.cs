@@ -15,6 +15,8 @@ public sealed record WallCandidate(Segment2 Centerline, double MeasuredThickness
     /// <summary>A wall read from one drawn line: which side of <see cref="Centerline"/> that line (the surveyed face) is,
     /// +1 left of its direction, -1 right; 0 when both faces were drawn.</summary>
     public int DrawnFaceSide { get; init; }
+    /// <summary>Added from survey-decisions.json (tagged "Decision").</summary>
+    public bool FromDecision { get; init; }
     public double Length => Arc?.Length ?? Centerline.Length;
     public string TypeName => WallDetector.TypeNameFor(TypeThickness);
 }

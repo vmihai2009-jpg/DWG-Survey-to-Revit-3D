@@ -35,7 +35,7 @@ internal static class SurveyPipeline
     public static SurveyModel Analyze(IReadOnlyList<string> dwgs, bool fresh = false)
     {
         var key = string.Join("|", dwgs.OrderBy(d => d, StringComparer.OrdinalIgnoreCase).Select(d => d + "@" + File.GetLastWriteTimeUtc(d).Ticks)
-            .Concat(dwgs.Select(d => Path.Combine(Path.GetDirectoryName(d) ?? "", LayerRules.OverrideFileName)).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Concat(dwgs.SelectMany(d => new[] { Path.Combine(Path.GetDirectoryName(d) ?? "", LayerRules.OverrideFileName), Path.Combine(Path.GetDirectoryName(d) ?? "", SurveyDecisions.FileName) }).Distinct(StringComparer.OrdinalIgnoreCase)
                 .Select(f => f + "@" + (File.Exists(f) ? File.GetLastWriteTimeUtc(f).Ticks : 0))));
         lock (Gate)
         {
@@ -83,6 +83,7 @@ internal static class SurveyPipeline
         var node = JsonNode.Parse(summary.ToJson())!.AsObject();
         node["reportPath"] = Save("analysis", "txt", SurveyReport.Build(model));
         node["summaryPath"] = Save("analysis", "json", summary.ToJson());
+        if (DecisionsJson(model) is JsonObject dj) node["decisions"] = dj;
         // item V: where to act, worst first (the MCP side starts from this file)
         try
         {
@@ -179,6 +180,7 @@ internal static class SurveyPipeline
             result["review"] = new JsonObject { ["open"] = review.Items.Count(i => !i.Done), ["total"] = review.Items.Count, ["path"] = reviewPath };
         }
 
+        if (DecisionsJson(model) is JsonObject dj) result["decisions"] = dj;
         var log = builder.Log;
         result["warnings"] = Lines(log.Where(l => l.StartsWith("WARNING")), 30);
         result["revitRefused"] = Lines(log.Where(l => l.StartsWith("REVIT REFUSED")), 30);
@@ -190,6 +192,17 @@ internal static class SurveyPipeline
         Save(kind, "json", result.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true, TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() }));
         return result;
     }
+
+    /// <summary>What survey-decisions.json did on this reading (item T), or null without the file.</summary>
+    public static JsonObject? DecisionsJson(SurveyModel model) => model.DecisionsFile == null ? null : new JsonObject
+    {
+        ["file"] = model.DecisionsFile.Path,
+        ["applied"] = model.Decisions.Count(o => o.State == "applied"),
+        ["stale"] = model.Decisions.Count(o => o.State == "stale"),
+        ["contradicted"] = model.Decisions.Count(o => o.State == "contradicted"),
+        ["waiting"] = model.Decisions.Count(o => o.State == "waiting"),
+        ["each"] = new JsonArray(model.Decisions.Take(60).Select(o => (JsonNode)new JsonObject { ["kind"] = o.Kind, ["what"] = o.What, ["state"] = o.State, ["detail"] = o.Detail }).ToArray()),
+    };
 
     /// <summary>The build log's counts, where it was saved and its worst entries.</summary>
     public static JsonObject LogJson(BuildLog log, IReadOnlyList<string> paths, int top) => new()
