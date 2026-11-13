@@ -226,11 +226,15 @@ public static class SurveyAnalyzer
 
             // Into model coordinates, straightened onto the building's directions.
             var lines = p.WallLines.Select(frame.ToModel).ToList();
+            // curves drawn as chains of short lines: fitted to arcs before the lines are straightened onto the axes, so they
+            // are built as one curved wall (CurvedWalls drops the straight walls along them)
+            var chainArcs = ArcChains.Find(lines);
             var axes = AxisSnapper.FindAxes(lines.Where(l => l.Length >= tol.MinSegmentLength).ToList(), tol.AngleSnapDeg);
             lines = AxisSnapper.Snap(lines, axes, tol.AngleSnapDeg);
             var openings = AxisSnapper.Snap(p.OpeningLines.Select(frame.ToModel), axes, tol.AngleSnapDeg);
             var markers = p.Texts.Where(t => IsRoomMarker(t, rules)).Select(t => frame.ToModel(t.Position)).ToList();
             var arcs = p.WallArcs.Select(frame.ToModel).ToList();
+            arcs.AddRange(chainArcs.Where(c => !arcs.Any(x => x.Center.DistanceTo(c.Center) < 100 && Math.Abs(x.Radius - c.Radius) < 50)));
 
             var code = p.Name.LevelCode!;
             // The grid reading says where wall material is (robust to gaps in the linework);
