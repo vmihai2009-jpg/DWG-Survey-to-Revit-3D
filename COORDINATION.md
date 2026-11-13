@@ -641,6 +641,9 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-13 (evening): Survey to Revit 0.33.15, open outside corners closed
+Mihai: very visible slots at the corners. The facades stop short of the party walls (the corner pier from the party wall to the first window is drawn only as the outer line), up to ~1 m. New `PartyWalls.CloseCorners`: two walls on the floor's edge at 60 deg or more, whose free ends lie within 1.5 m of where their lines cross (or one free end while the other line runs through), are run on to the crossing. Mount Row: 7 corners on B1-3F; Swallow Place: 1 (7F). Tests 235.
+
 ### 2026-11-13 (evening): Survey to Revit 0.33.14, the neighbour's half of a party wall built
 Where a floor lacks this building's party wall (Mount Row 2F east), leaving out the context wall on the party line opened a hole into the building. Now a context wall along this building's walls is built offset 215 mm towards the neighbour (its half of the party wall, touching ours, never overlapping), so every floor is closed whatever ours does. Our missing 2F east party wall is still open (PartyWalls.Fill did not carry it).
 

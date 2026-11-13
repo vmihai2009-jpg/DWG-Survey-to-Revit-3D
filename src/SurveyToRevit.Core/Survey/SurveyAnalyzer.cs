@@ -445,6 +445,14 @@ public static class SurveyAnalyzer
                 notes.Add($"{lv.Name}: {g.Count()} thin windowless edge walls on a line the floor below/above repeats ({g.Sum(x => x.Old.Length) / 1000:0.0} m) read as party walls drawn by their inside face: thickened outward to 215 mm.");
             }
         }
+        // outside corners left open (a facade stopping short of the party wall it meets): run on to the corner
+        foreach (var lv in levels)
+        {
+            var all = PartyWalls.CloseCorners(lv.Walls.Walls, out int closed);
+            if (closed == 0) continue;
+            lv.Walls = lv.Walls with { Walls = all };
+            notes.Add($"{lv.Name}: {closed} outside corners left open by up to 1.5 m (a facade stopping short of the wall it meets) closed.");
+        }
         // which outside walls line up with the façade on the floors below and above (the building's face)
         var stacked = FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList());
         // floors with a mezzanine over part of them (see below): outside it they are double height

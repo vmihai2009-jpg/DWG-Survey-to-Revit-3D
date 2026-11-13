@@ -87,6 +87,53 @@ public static class PartyWalls
         return res;
     }
 
+    /// <summary>
+    /// Outside corners left open: a facade that stops short of the party wall it meets (the survey draws the facade to its
+    /// window reveal or pier, the party wall from its inside face). Two walls on the floor's edge, at 60° or more to each
+    /// other, whose free ends (no other wall within 150 mm of them) are both within reachMm of where their lines cross, or one
+    /// free end within reach while the other wall's line runs past the crossing, are run on to the crossing.
+    /// </summary>
+    public static List<WallCandidate> CloseCorners(IReadOnlyList<WallCandidate> walls, out int closed, double reachMm = 1500, double edgeMm = 700)
+    {
+        var list = walls.ToList(); closed = 0;
+        if (NeighbourWalls.Envelope(list) is not { } env) return list;
+        bool Edge(WallCandidate w) => w.Arc == null && !w.Curtain && w.HeightMm == null && EdgeDistance(env, w.Centerline.Mid) <= w.TypeThickness / 2 + edgeMm;
+        bool Free(int i, Vec2 end) => !list.Where((o, k) => k != i && o.Arc == null).Any(o => Dist(end, o.Centerline) <= o.TypeThickness / 2 + list[i].TypeThickness / 2 + 150);
+        for (int i = 0; i < list.Count; i++)
+            for (int k = i + 1; k < list.Count; k++)
+            {
+                var wi = list[i]; var wk = list[k];
+                if (!Edge(wi) || !Edge(wk) || SegmentCleaner.AngleDiffDeg(wi.Centerline.AngleDeg, wk.Centerline.AngleDeg) < 60) continue;
+                if (Cross(wi.Centerline, wk.Centerline) is not Vec2 p) continue;
+                // the end of each nearer the crossing; a wall whose line already runs through the crossing keeps its ends
+                Vec2 Near(Segment2 s) => s.A.DistanceTo(p) <= s.B.DistanceTo(p) ? s.A : s.B;
+                bool Through(Segment2 s) => Dist(p, s) <= 1;
+                Vec2 ei = Near(wi.Centerline), ek = Near(wk.Centerline);
+                bool gi = !Through(wi.Centerline) && ei.DistanceTo(p) <= reachMm && ei.DistanceTo(p) > wi.TypeThickness && Free(i, ei);
+                bool gk = !Through(wk.Centerline) && ek.DistanceTo(p) <= reachMm && ek.DistanceTo(p) > wk.TypeThickness && Free(k, ek);
+                if (!(gi && (gk || Through(wk.Centerline) || ek.DistanceTo(p) <= wk.TypeThickness)) && !(gk && (Through(wi.Centerline) || ei.DistanceTo(p) <= wi.TypeThickness))) continue;
+                if (gi) list[i] = wi with { Centerline = ei == wi.Centerline.A ? wi.Centerline with { A = p } : wi.Centerline with { B = p } };
+                if (gk) list[k] = wk with { Centerline = ek == wk.Centerline.A ? wk.Centerline with { A = p } : wk.Centerline with { B = p } };
+                closed++;
+            }
+        return list;
+    }
+
+    static Vec2? Cross(Segment2 a, Segment2 b)
+    {
+        var d1 = a.B - a.A; var d2 = b.B - b.A; double den = d1.Cross(d2);
+        if (Math.Abs(den) < 1e-9) return null;
+        double t = (b.A - a.A).Cross(d2) / den;
+        return a.A + d1 * t;
+    }
+
+    static double Dist(Vec2 p, Segment2 s)
+    {
+        var d = s.B - s.A; double l2 = d.Dot(d);
+        double t = l2 == 0 ? 0 : Math.Clamp((p - s.A).Dot(d) / l2, 0, 1);
+        return p.DistanceTo(s.A + d * t);
+    }
+
     /// <summary>Stretches of w's length (along its line) that no parallel wall of the floor covers, at least minGap long.</summary>
     static List<(double lo, double hi)> Uncovered(WallCandidate w, IReadOnlyList<WallCandidate> floor, double minGap)
     {
