@@ -4,6 +4,8 @@ _Last updated: 2026-10-23_
 
 ## Current milestone
 
+**0.29.0 (2026-11-13, item D of MCP-AUDIT-AND-TOOLS.md): walls under roofs stop under them**: inner walls a roof cuts get their tops attached to it; walls on the roof's edge and walls crossing it are left and counted (the built-model checks list them). Not yet run in Revit.
+
 **0.28.0 (2026-11-13, item Q of MCP-AUDIT-AND-TOOLS.md): checks of the built model** after every build: roofs through walls, slabs through roofs, floating detail, duplicate walls, walls off their levels, wrong phase; each with ids and the fix, in build-log.json, on the review list and in `survey_build`'s `builtChecks`. Not yet run in Revit.
 
 **0.27.0 (2026-11-13, item C of MCP-AUDIT-AND-TOOLS.md): the top of each facade classed from evidence** (FlatParapet / SetBackStorey / Mansard / Pitched / Unknown; decision with a line > section profile > flat roof > plan alone), roof-edges.json, a Mansard's skin lines left out only on strong evidence (dormer fronts kept). Not yet run in Revit.

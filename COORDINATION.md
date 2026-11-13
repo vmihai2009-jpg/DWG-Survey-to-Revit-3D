@@ -364,6 +364,12 @@ Entry format (copy this):
 
 ## Projects side (Mihai's personal account)
 
+### 2026-11-13 (later): Survey to Revit 0.29.0, item D of MCP-AUDIT-AND-TOOLS.md: walls under roofs stop under them
+- After the roofs are built, each generated wall a generated roof cuts is placed against that roof's outline in plan (`RoofWalls.Place`, Core, tested): **Inner** (under the roof, ends may meet the outer wall) gets its top attached to the roof (`AddAttachment`, so moving the roof moves it); **Edge** (within 150 mm plus half the wall of the outline: outer wall or upstand) is left as drawn; **Crossing** (half in, half out) is left and counted. Low walls (`|Parapet`) are never touched.
+- The log says how many of each; Edge and Crossing walls that still cut a roof are listed with ids by the 0.28.0 built-model checks (`roof-through-wall`).
+- **Ask:** on the next Swallow Place build, send the "Roofs: ... walls under a roof now stop under it" log line and `builtChecks.byKind["roof-through-wall"]` (before this, how many walls did the hub have to trim by hand?).
+- Files: `src/SurveyToRevit.Core/Survey/RoofWalls.cs` (new), `Revit/ModelBuilder.cs` (`StopWallsUnderRoofs`), `tests/.../RoofWallTests.cs`. Version 0.29.0.
+
 ### 2026-11-13 (later): Survey to Revit 0.28.0, item Q of MCP-AUDIT-AND-TOOLS.md: checks of the built model
 - After every build (button or `survey_build`), read-only checks of what was made, each with element ids and the fix: `roof-through-wall` (a generated roof cuts a generated wall: attach top or lower it), `slab-through-roof`, `floating` (a generic model or column whose box, grown by 50 mm, reaches no wall, floor or roof), `duplicate-wall` (two walls on one line within 20 mm and 2°, overlapping at least half the shorter), `wall-off-level` (base or top offset over 50 mm; parapets skipped), `wrong-phase` (generated elements and Revit's own railings not in the survey phase; the user's other work is left alone).
 - Findings go into `build-log.json` as `built: <kind>` entries (Medium) and so onto the review list; `survey_build` also answers with `builtChecks` (count, byKind, worst 15 with ids and fix, any check that couldn't run).
