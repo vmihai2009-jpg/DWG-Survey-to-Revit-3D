@@ -4,6 +4,8 @@ _Last updated: 2026-10-23_
 
 ## Current milestone
 
+**0.32.0 (2026-11-13, item F of MCP-AUDIT-AND-TOOLS.md): windows from the elevations**: sills and heads from the drawn outlines on matched facades, widths where the plan's differ, and windows the plan missed added (tagged ElevationOnly). Panes not read yet. Not yet run in Revit.
+
 **0.31.0 (2026-11-13, item E of MCP-AUDIT-AND-TOOLS.md): elevations split, matched to their facade by window columns, fitted for height part by part**, in elevation-index.json. The overlay view (step 4) stays with the hub's elevation_overlay for now. Not yet run in Revit.
 
 **0.30.0 (2026-11-13, item H of MCP-AUDIT-AND-TOOLS.md): sections publish their fit and profile**: height fit with rejected marks, placement along the cut (both ways round), the wall-face offset, the outer profile at each end, bands and the top class, in section-index.json; sure sections feed the facade tops. Not yet run in Revit.
