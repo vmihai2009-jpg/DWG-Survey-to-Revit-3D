@@ -85,7 +85,7 @@ public static class AxisSnapper
 
     /// <summary>Axes within tolDeg of the frame's own directions (0° / 90°, the model is already turned) set exactly onto them,
     /// so the walls come out square (Revit warns about every wall "slightly off axis").</summary>
-    public static List<double> Square(IReadOnlyList<double> axes, double tolDeg = 0.3) =>
+    public static List<double> Square(IReadOnlyList<double> axes, double tolDeg = 0.05) =>
         axes.Select(a =>
         {
             foreach (var t in new[] { 0.0, 90.0, 180.0 })

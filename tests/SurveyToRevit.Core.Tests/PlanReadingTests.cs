@@ -228,6 +228,19 @@ public class PlanReadingTests
     }
 
     [Fact]
+    public void A_party_wall_missing_on_a_middle_floor_is_carried_from_the_floors_around_it()
+    {
+        // a 10 x 8 m box; the east party wall (x 10000) is drawn on floors 0 and 2, missing on floor 1
+        List<WallCandidate> Box(bool east) { var l = new List<WallCandidate> { W(0, 0, 10000, 0, 300), W(0, 8000, 10000, 8000, 300), W(0, 0, 0, 8000, 300) }; if (east) l.Add(W(10000, 0, 10000, 8000, 300)); return l; }
+        var floors = new List<(IReadOnlyList<WallCandidate>, IReadOnlyList<Segment2>)>
+            { (Box(true), Array.Empty<Segment2>()), (Box(false), Array.Empty<Segment2>()), (Box(true), Array.Empty<Segment2>()) };
+        var added = PartyWalls.Fill(floors);
+        var a = Assert.Single(added);
+        Assert.Equal(1, a.Floor);
+        Assert.InRange(a.Wall.Centerline.Mid.X, 9990, 10010);
+    }
+
+    [Fact]
     public void Glass_broken_at_a_mullion_stays_one_window()
     {
         // two panes 40 mm apart under one frame line: one window

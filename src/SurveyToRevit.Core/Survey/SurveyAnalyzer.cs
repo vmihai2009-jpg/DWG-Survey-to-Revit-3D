@@ -390,6 +390,21 @@ public static class SurveyAnalyzer
             }
         }
 
+        // party / flank walls drawn on some floors only (inside face only, or a stretch left out): carried through
+        var party = new List<PartyWalls.Added>();
+        for (int pass = 0; pass < 3; pass++) // a floor filled in one pass can complete the floor next to it in the next
+        {
+            var found = PartyWalls.Fill(levels.Select(l => ((IReadOnlyList<WallCandidate>)l.Walls.Walls.Concat(party.Where(a => a.Floor == levels.IndexOf(l)).Select(a => a.Wall)).ToList(), l.Walls.UnpairedSegments)).ToList());
+            if (found.Count == 0) break;
+            party.AddRange(found);
+        }
+        foreach (var g in party.GroupBy(a => a.Floor))
+        {
+            var lv = levels[g.Key];
+            var all = lv.Walls.Walls.Concat(g.Select(a => a.Wall)).ToList();
+            lv.Walls = lv.Walls with { Walls = all, ThicknessGroups = all.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
+            notes.Add($"{lv.Name}: {g.Count()} stretches of party/flank wall ({g.Sum(a => a.Wall.Length) / 1000:0.0} m) carried from the floors below/above ({string.Join("; ", g.Select(a => a.Why).Distinct())}).");
+        }
         // which outside walls line up with the façade on the floors below and above (the building's face)
         var stacked = FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList());
         // floors with a mezzanine over part of them (see below): outside it they are double height
@@ -598,6 +613,20 @@ public static class SurveyAnalyzer
             noHeight += n;
         }
         if (noHeight > 0) notes.Add($"{noHeight} roof areas have no spot height inside them and were left out.");
+        // a roof-plan area just above a floor's own slab (under 1.2 m: tiles, decking, lead on a terrace or balcony) is that
+        // floor's finish, not a roof of its own: built as one it is a second slab stacked on the floor's
+        {
+            int before = roofs.Count;
+            roofs = roofs.Where(r =>
+            {
+                if (r.Outline.Vertices.Count < 3) return true;
+                var mid = new Vec2(r.Outline.Vertices.Average(v => v.X), r.Outline.Vertices.Average(v => v.Y));
+                var under = levels.Where(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm <= r.ElevationMm + 200 && l.Outline != null && FacadeWalls.Contains(l.Outline, mid))
+                                  .OrderByDescending(l => l.ElevationMm).FirstOrDefault();
+                return under == null || r.ElevationMm - under.ElevationMm > 1200;
+            }).ToList();
+            if (roofs.Count < before) notes.Add($"{before - roofs.Count} roof-plan areas just above a floor's slab read as that floor's terrace or balcony finish (not built as slabs of their own).");
+        }
         // a roof plan drawn with the roofs next door: only the roofs over this building's walls (any floor's) are kept
         if (neighbourTotal > 0 && NeighbourWalls.Envelope(levels.SelectMany(l => l.Walls.Walls)) is { } whole)
         {
