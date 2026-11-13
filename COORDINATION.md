@@ -641,6 +641,9 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-13 (evening): Survey to Revit 0.33.14, the neighbour's half of a party wall built
+Where a floor lacks this building's party wall (Mount Row 2F east), leaving out the context wall on the party line opened a hole into the building. Now a context wall along this building's walls is built offset 215 mm towards the neighbour (its half of the party wall, touching ours, never overlapping), so every floor is closed whatever ours does. Our missing 2F east party wall is still open (PartyWalls.Fill did not carry it).
+
 ### 2026-11-13 (evening): Survey to Revit 0.33.13, party walls drawn by their inside face thickened
 Mihai: walls missing at the party lines. On Mount Row the party walls are drawn by their inside face only and came out 100 mm thick (the other face assumed 100 mm away), leaving slots against the context. New `PartyWalls.Thicken`: a blank (no window/door linework) wall on the floor's edge, under 150 mm, that stands on the same line on the floor below or above too, is thickened outward to 215 mm keeping the drawn face (Low confidence, FaceB says so). Mount Row: 17 stretches on 6 floors. Swallow Place (Plowman Craven, both faces drawn): none, unchanged. Projects side: please keep the 'stacked on the floor below/above' condition; it stops thin rear/terrace walls being thickened.
 

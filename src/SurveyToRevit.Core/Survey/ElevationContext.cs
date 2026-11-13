@@ -166,7 +166,7 @@ public static class ElevationContext
         return over >= 0.5 * edge.Length;
     }
 
-    public const double PartyReachMm = 800, MinDepthMm = 4000, MaxDepthMm = 20000, PairMinMm = 3000, SnapMm = 1500, PartyLineMm = 5000;
+    public const double PartyReachMm = 800, MinDepthMm = 4000, MaxDepthMm = 20000, PairMinMm = 3000, SnapMm = 1500, PartyLineMm = 5000, PartyGapMm = 215;
 
     /// <summary>
     /// The context to build, as one coherent set:
@@ -186,10 +186,20 @@ public static class ElevationContext
             .Concat(levels.SelectMany(l => l.Walls.Walls.Where(w => w.Arc == null).Select(w => w.Centerline))).ToList();
         var outlines = levels.SelectMany(l => (l.Outline != null ? new[] { l.Outline } : Array.Empty<Polygon2>()).Concat(l.MoreOutlines)).ToList();
         int party = 0;
-        void Wall(Segment2 s, double baseZ, double topZ, string note)
+        // a wall along this building's own (the party line) is the neighbour's half of it: set just outside this building's
+        // wall face, towards the neighbour (inside: a point inside the neighbour's block), so no floor where this building
+        // lacks its wall is left open, and the two never overlap
+        void Wall(Segment2 s, double baseZ, double topZ, string note, Vec2? inside = null)
         {
             if (s.Length < 300) return;
-            if (Alongside(s, ours, PartyReachMm)) { party++; return; }
+            if (Alongside(s, ours, PartyReachMm))
+            {
+                party++;
+                if (inside is not Vec2 ins) return;
+                var n = s.Direction.Perp(); if ((ins - s.Mid).Dot(n) < 0) n = new Vec2(-n.X, -n.Y);
+                s = new Segment2(s.A + n * PartyGapMm, s.B + n * PartyGapMm);
+                note += " (its side of the party wall)";
+            }
             walls.Add(new ContextWall(s, baseZ, topZ, note));
         }
         var groups = fronts.Where(f => f.Group != "").GroupBy(f => f.Group).Select(g =>
@@ -252,7 +262,8 @@ public static class ElevationContext
             foreach (var (line, mine) in new[] { (edges[0], g.Fronts), (edges[2], pair >= 0 ? groups[pair].Fronts : new List<ContextFront>()) })
                 foreach (var gap in Gaps(line, mine.Select(f => f.Line)))
                     Wall(gap, baseZ, top, note);
-            Wall(edges[1], baseZ, top, note); Wall(edges[3], baseZ, top, note);
+            var mid = P((a + b) / 2, depth / 2);
+            Wall(edges[1], baseZ, top, note, mid); Wall(edges[3], baseZ, top, note, mid);
             // a front that starts higher than the block (its lowest drawn line is up a storey) goes down to the block's foot
             foreach (var f in all) lowered[f] = baseZ;
             roofs.Add(new RoofCandidate(box, top, note));
@@ -267,12 +278,12 @@ public static class ElevationContext
             {
                 var e = new Segment2(vs[i], vs[(i + 1) % vs.Count]);
                 if (Alongside(e, boxes.SelectMany(bx => bx.Edges), CoverReachMm)) continue;
-                Wall(e, double.NaN, r.ElevationMm, "Context wall: " + r.Note);
+                Wall(e, double.NaN, r.ElevationMm, "Context wall: " + r.Note, vs.Aggregate(new Vec2(0, 0), (s, v) => s + v) * (1.0 / vs.Count));
             }
             roofs.Add(r with { Note = "Context roof: " + r.Note });
         }
         notes.Add($"Context: {boxes.Count} blocks from the elevations' fronts, {roofs.Count - boxes.Count} roof-plan blocks"
-                  + (dropped > 0 ? $" ({dropped} inside a front block left out)" : "") + (party > 0 ? $"; {party} walls along this building's own outline not built (its party walls)" : "") + ".");
+                  + (dropped > 0 ? $" ({dropped} inside a front block left out)" : "") + (party > 0 ? $"; {party} walls along this building's party walls set just outside them (the neighbour's half)" : "") + ".");
         return new ContextPlan(fronts.Select(f => lowered.TryGetValue(f, out var z) && z < f.BaseZ ? f with { BaseZ = z } : f).ToList(), walls, roofs, notes);
     }
 
