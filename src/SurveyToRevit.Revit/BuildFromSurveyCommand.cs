@@ -91,6 +91,7 @@ public class BuildFromSurveyCommand : IExternalCommand
             blog.Save(UserSettings.Load().Reports, doc.Title, BuildLog.SurveyFolder(model));
             FacadeTops.Save(model.FacadeTops, UserSettings.Load().Reports, doc.Title, BuildLog.SurveyFolder(model));
             if (model.SectionIndex.Count > 0) SectionProfiles.Save(model.SectionIndex, UserSettings.Load().Reports, doc.Title, BuildLog.SurveyFolder(model));
+            if (model.Elevations.Count > 0) ElevationIndex.Save(model.Elevations, UserSettings.Load().Reports, doc.Title, BuildLog.SurveyFolder(model));
         }
         catch { blog = null; /* the log is a help, never a reason to stop */ }
         if (checks.Count > 0 || blog?.Items.Count > 0)

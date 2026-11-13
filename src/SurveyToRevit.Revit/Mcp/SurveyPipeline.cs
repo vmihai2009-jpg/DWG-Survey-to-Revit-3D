@@ -92,6 +92,7 @@ internal static class SurveyPipeline
             node["buildLog"] = LogJson(blog, paths, 10);
             node["facadeTops"] = TopsJson(model, FacadeTops.Save(model.FacadeTops, Reports, "", BuildLog.SurveyFolder(model)));
             if (model.SectionIndex.Count > 0) node["sections"] = SectionsJson(model, SectionProfiles.Save(model.SectionIndex, Reports, "", BuildLog.SurveyFolder(model)));
+            if (model.Elevations.Count > 0) node["elevations"] = ElevationsJson(model, ElevationIndex.Save(model.Elevations, Reports, "", BuildLog.SurveyFolder(model)));
         }
         catch (Exception ex) { node["buildLog"] = new JsonObject { ["error"] = ex.Message }; }
         return node;
@@ -181,6 +182,7 @@ internal static class SurveyPipeline
                 result["buildLog"] = LogJson(blog, paths, 10);
                 result["facadeTops"] = TopsJson(model, FacadeTops.Save(model.FacadeTops, Reports, doc.Title, BuildLog.SurveyFolder(model)));
                 if (model.SectionIndex.Count > 0) result["sections"] = SectionsJson(model, SectionProfiles.Save(model.SectionIndex, Reports, doc.Title, BuildLog.SurveyFolder(model)));
+            if (model.Elevations.Count > 0) result["elevations"] = ElevationsJson(model, ElevationIndex.Save(model.Elevations, Reports, doc.Title, BuildLog.SurveyFolder(model)));
                 if (options.OnlyLevels == null) review.AddLog(blog);
             }
             catch (Exception ex) { result["buildLog"] = new JsonObject { ["error"] = ex.Message }; }
@@ -211,6 +213,18 @@ internal static class SurveyPipeline
         ["contradicted"] = model.Decisions.Count(o => o.State == "contradicted"),
         ["waiting"] = model.Decisions.Count(o => o.State == "waiting"),
         ["each"] = new JsonArray(model.Decisions.Take(60).Select(o => (JsonNode)new JsonObject { ["kind"] = o.Kind, ["what"] = o.What, ["state"] = o.State, ["detail"] = o.Detail }).ToArray()),
+    };
+
+    /// <summary>The elevation drawings in short (item E): facade, way round, score, height fits, where elevation-index.json went.</summary>
+    public static JsonObject ElevationsJson(SurveyModel model, IReadOnlyList<string> paths) => new()
+    {
+        ["matched"] = model.Elevations.Count(e => e.Facade != null),
+        ["each"] = new JsonArray(model.Elevations.Select(e => (JsonNode)new JsonObject
+        {
+            ["title"] = e.Title, ["file"] = e.File, ["facade"] = e.Facade, ["mirrored"] = e.Mirrored, ["score"] = e.Score,
+            ["parts"] = e.Parts.Count, ["residualMm"] = e.Parts.Count > 0 ? e.Parts.Max(p => p.ResidualMm) : null, ["note"] = e.Note,
+        }).ToArray()),
+        ["paths"] = new JsonArray(paths.Select(p => (JsonNode)p).ToArray()),
     };
 
     /// <summary>The sections in short (item H): fit, placement, each end's class and offset, where section-index.json went.</summary>
