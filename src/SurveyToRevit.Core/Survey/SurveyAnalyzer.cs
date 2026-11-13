@@ -423,6 +423,28 @@ public static class SurveyAnalyzer
             lv.Walls = lv.Walls with { Walls = all, ThicknessGroups = all.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
             notes.Add($"{lv.Name}: {g.Count()} stretches of party/flank wall ({g.Sum(a => a.Wall.Length) / 1000:0.0} m) carried from the floors below/above ({string.Join("; ", g.Select(a => a.Why).Distinct())}).");
         }
+        // party walls drawn by their inside face only (built thin): thickened outward, the drawn face kept
+        {
+            var opened = levels.Select(l =>
+            {
+                var marks = windowInput[l].Lines.Concat(doorInput[l]).Where(s => s.Length >= 300).ToList();
+                return l.Walls.Walls.Where(w => w.Arc == null && marks.Any(s =>
+                {
+                    var c = w.Centerline; var n = c.Direction.Perp();
+                    double along = (s.Mid - c.A).Dot(c.Direction);
+                    return along > 0 && along < c.Length && Math.Abs((s.Mid - c.A).Dot(n)) <= w.TypeThickness / 2 + 400;
+                })).ToHashSet(ReferenceEqualityComparer.Instance as IEqualityComparer<WallCandidate>);
+            }).ToList();
+            var thick = PartyWalls.Thicken(levels.Select(l => (IReadOnlyList<WallCandidate>)l.Walls.Walls).ToList(), opened);
+            foreach (var g in thick.GroupBy(x => x.Floor))
+            {
+                var lv = levels[g.Key];
+                var swap = g.ToDictionary(x => x.Old, x => x.New, ReferenceEqualityComparer.Instance as IEqualityComparer<WallCandidate>);
+                var all = lv.Walls.Walls.Select(w => swap.TryGetValue(w, out var nw) ? nw : w).ToList();
+                lv.Walls = lv.Walls with { Walls = all, ThicknessGroups = all.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
+                notes.Add($"{lv.Name}: {g.Count()} thin windowless edge walls on a line the floor below/above repeats ({g.Sum(x => x.Old.Length) / 1000:0.0} m) read as party walls drawn by their inside face: thickened outward to 215 mm.");
+            }
+        }
         // which outside walls line up with the façade on the floors below and above (the building's face)
         var stacked = FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList());
         // floors with a mezzanine over part of them (see below): outside it they are double height

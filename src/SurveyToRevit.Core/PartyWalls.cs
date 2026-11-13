@@ -50,6 +50,43 @@ public static class PartyWalls
         return added;
     }
 
+    /// <summary>
+    /// Party walls drawn by their inside face only come out as thin walls (the other face assumed 100 mm away). A blank
+    /// (no window or door linework) wall on the floor's edge, thinner than maxThinMm, that stands on the same line on the
+    /// floor below or above too, is a party wall: thickened outward to partyMm, its surveyed inside face kept. Low confidence.
+    /// </summary>
+    public static List<(int Floor, WallCandidate Old, WallCandidate New)> Thicken(IReadOnlyList<IReadOnlyList<WallCandidate>> floors,
+        IReadOnlyList<HashSet<WallCandidate>>? withOpenings = null, double partyMm = 215, double maxThinMm = 150, double minLength = 2000, double edgeMm = 300)
+    {
+        var res = new List<(int, WallCandidate, WallCandidate)>();
+        for (int i = 0; i < floors.Count; i++)
+        {
+            if (NeighbourWalls.Envelope(floors[i]) is not { } env) continue;
+            var centre = env.Aggregate(new Vec2(0, 0), (a, v) => a + v) * (1.0 / env.Count);
+            foreach (var w in floors[i])
+            {
+                if (w.Arc != null || w.Curtain || w.HeightMm != null || w.TypeThickness > maxThinMm || w.Length < minLength) continue;
+                if (withOpenings != null && i < withOpenings.Count && withOpenings[i].Contains(w)) continue;
+                if (EdgeDistance(env, w.Centerline.Mid) > w.TypeThickness / 2 + edgeMm) continue;
+                bool Stacked(int j) => j >= 0 && j < floors.Count && floors[j].Any(o => o.Arc == null
+                    && SegmentCleaner.AngleDiffDeg(o.Centerline.AngleDeg, w.Centerline.AngleDeg) <= 3
+                    && Math.Abs((o.Centerline.Mid - w.Centerline.A).Dot(w.Centerline.Direction.Perp())) <= 300
+                    && FacadeStack.Share(w, new[] { o }) >= 0.3);
+                if (!Stacked(i - 1) && !Stacked(i + 1)) continue;
+                var c = w.Centerline; var n = c.Direction.Perp();
+                var outward = (c.Mid - centre).Dot(n) >= 0 ? n : new Vec2(-n.X, -n.Y);
+                var shift = outward * ((partyMm - w.TypeThickness) / 2);
+                var made = w with
+                {
+                    Centerline = c with { A = c.A + shift, B = c.B + shift }, TypeThickness = partyMm, Confidence = Confidence.Low,
+                    FaceB = "party wall: other face assumed " + partyMm + " mm from the drawn one",
+                };
+                res.Add((i, w, made));
+            }
+        }
+        return res;
+    }
+
     /// <summary>Stretches of w's length (along its line) that no parallel wall of the floor covers, at least minGap long.</summary>
     static List<(double lo, double hi)> Uncovered(WallCandidate w, IReadOnlyList<WallCandidate> floor, double minGap)
     {

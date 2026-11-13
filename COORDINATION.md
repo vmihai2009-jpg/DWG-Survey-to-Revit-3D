@@ -641,6 +641,9 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-13 (evening): Survey to Revit 0.33.13, party walls drawn by their inside face thickened
+Mihai: walls missing at the party lines. On Mount Row the party walls are drawn by their inside face only and came out 100 mm thick (the other face assumed 100 mm away), leaving slots against the context. New `PartyWalls.Thicken`: a blank (no window/door linework) wall on the floor's edge, under 150 mm, that stands on the same line on the floor below or above too, is thickened outward to 215 mm keeping the drawn face (Low confidence, FaceB says so). Mount Row: 17 stretches on 6 floors. Swallow Place (Plowman Craven, both faces drawn): none, unchanged. Projects side: please keep the 'stacked on the floor below/above' condition; it stops thin rear/terrace walls being thickened.
+
 ### 2026-11-13 (evening): Survey to Revit 0.33.12, context blocks snap to the party line, not a stray wall
 Mihai: still slots between the context and the building. The block side snapped to the nearest wall of ours within 1.5 m, which on Mount Row's east was a short stray wall 1.3 m off the party line. Now this building's lines along the side are grouped by position (250 mm) and only a group with 5 m or more of wall (floors repeating it: the party line) is snapped to. Mount Row: No.30 to x -12.0 m, No.24 to x 4.78 m; 6 context walls along the party line not built. Block corners are in the analysis notes. Open (ours, not context): party walls drawn by their inside face only are built 100 mm thick (1F-4F west) or 0.8 m in (GF/B1 west at x -11.17); a thickness rule for party walls is next.
 
