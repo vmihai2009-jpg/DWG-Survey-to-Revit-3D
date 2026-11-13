@@ -486,7 +486,21 @@ public sealed class ModelBuilder
                 {
                     var c = w.Centerline; // already in model (internal) coordinates
                     if (c.Length < 10) continue;
-                    if (keep != null && keep.Walls.TryGetValue(w, out var same)) { created[w] = same; made++; continue; }
+                    if (keep != null && keep.Walls.TryGetValue(w, out var same))
+                    {
+                        // kept (its id and what is hosted on it survive), but on this reading's line: a matching wall can sit
+                        // a few mm off (an earlier reading's angle), and keeping its old line would keep the old error
+                        if (w.Arc == null && same.Location is LocationCurve { Curve: Line old } lc)
+                        {
+                            var na = new XYZ(Ft(c.A.X), Ft(c.A.Y), old.GetEndPoint(0).Z);
+                            var nb = new XYZ(Ft(c.B.X), Ft(c.B.Y), old.GetEndPoint(0).Z);
+                            bool flip = old.GetEndPoint(0).DistanceTo(nb) < old.GetEndPoint(0).DistanceTo(na);
+                            if (flip) (na, nb) = (nb, na);
+                            if (Mm(old.GetEndPoint(0).DistanceTo(na)) > 1 || Mm(old.GetEndPoint(1).DistanceTo(nb)) > 1)
+                                try { lc.Curve = Line.CreateBound(na, nb); } catch { /* left where it was */ }
+                        }
+                        created[w] = same; made++; continue;
+                    }
                     try
                     {
                         Curve line = w.Arc is Arc2 a

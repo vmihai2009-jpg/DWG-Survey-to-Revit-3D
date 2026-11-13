@@ -641,6 +641,9 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-13 (later): Survey to Revit 0.33.2, kept walls take the new reading's line
+Rebuild on 0.33.1: still 188 walls 'slightly off axis' and overlaps 9 -> 15, all with ids from the earlier run: item U's KeepMatching keeps a wall that matches within tolerance AS IT WAS, so an old reading's error (here the 0.15 deg off-axis lines) survives every rebuild. Now a kept wall keeps its id and hosted elements but is moved onto the new centre line when an end differs by more than 1 mm (ModelBuilder.BuildElements). Projects side: please keep this when you touch item U.
+
 ### 2026-11-13 (later): Survey to Revit 0.33.1, walls square to the frame, plan links not repeated
 Mount Row audit (fidelity + get_warnings) after the 0.28.1 build: 272 walls + ~480 lines 'slightly off axis' (each floor snapped to its own axes, ~0.15 deg off the frame) and 42 CAD links (each rebuild linked every plan again: LinkPlans compared the link type name with the file name WITH .dwg, Revit names it without). Fixes: AxisSnapper.RefineRotation (frame angle from every plan's long lines, both directions, length-squared weights) + AxisSnapper.Square (floor axes within 0.3 deg of the frame set exactly onto it); LinkPlans matches with or without the extension and removes copies left by earlier builds. Also seen, not code: 49 sills on floors 2-4 are 265 mm below the elevation's frame bottom, while the plan notes (fs 0.89 / sh 1.89) give exactly the model's; drawings disagree, a person's call (survey_conflicts). survey_fidelity counts the neighbours' walls as 'missing' (76 of 119 here): the hub's check does not leave out next door.
 
