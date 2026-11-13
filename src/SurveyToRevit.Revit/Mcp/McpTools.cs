@@ -454,6 +454,12 @@ public static class McpTools
             ["items"] = new JsonArray(items.Take(limit).Select(i => (JsonNode)SurveyPipeline.ItemJson(i)).ToArray()),
             ["notShown"] = Math.Max(0, items.Count - limit),
             ["path"] = path,
+            ["buildLog"] = SurveyPipeline.LastLog(doc) is JsonNode bl ? new JsonObject
+            {
+                ["entries"] = bl["entries"]?.DeepClone(), ["byKind"] = bl["byKind"]?.DeepClone(), ["path"] = bl["path"]?.DeepClone(),
+                ["worst"] = new JsonArray((bl["items"] as JsonArray ?? new JsonArray()).Take(limit / 2).Select(i => i?.DeepClone()).ToArray()),
+                ["note"] = "Every uncertain call of the last build, worst first (severity x doubt): act from the top. The whole list is in the file.",
+            } : null,
         };
     }
 

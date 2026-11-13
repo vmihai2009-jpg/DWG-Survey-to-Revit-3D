@@ -81,9 +81,18 @@ public class BuildFromSurveyCommand : IExternalCommand
 
         string? reviewPath = null;
         ReviewList? review = null;
-        if (checks.Count > 0)
+        BuildLog? blog = null;
+        try
+        {
+            blog = BuildLog.From(model, doc.Title);
+            blog.AddBuildLines(builder.Log);
+            blog.Save(UserSettings.Load().Reports, doc.Title, BuildLog.SurveyFolder(model));
+        }
+        catch { blog = null; /* the log is a help, never a reason to stop */ }
+        if (checks.Count > 0 || blog?.Items.Count > 0)
         {
             review = ReviewList.From(doc.Title, checks, model.Levels);
+            if (blog != null) review.AddLog(blog);
             try { reviewPath = ReviewList.PathFor(UserSettings.Load().Reports, doc.Title); review.Save(reviewPath); }
             catch
             {
