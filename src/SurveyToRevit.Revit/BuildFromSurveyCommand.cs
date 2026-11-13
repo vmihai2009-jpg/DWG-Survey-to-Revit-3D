@@ -86,6 +86,8 @@ public class BuildFromSurveyCommand : IExternalCommand
         {
             blog = BuildLog.From(model, doc.Title);
             blog.AddBuildLines(builder.Log);
+            foreach (var e in BuiltChecks.AsLog(BuiltModelChecks.Run(doc, builder.SurveyPhase))) blog.Add(e);
+            blog.Sort();
             blog.Save(UserSettings.Load().Reports, doc.Title, BuildLog.SurveyFolder(model));
             FacadeTops.Save(model.FacadeTops, UserSettings.Load().Reports, doc.Title, BuildLog.SurveyFolder(model));
         }

@@ -171,6 +171,11 @@ internal static class SurveyPipeline
             {
                 var blog = BuildLog.From(model, doc.Title);
                 blog.AddBuildLines(builder.Log);
+                var problems = new List<string>();
+                var built = BuiltModelChecks.Run(doc, builder.SurveyPhase, problems);
+                foreach (var e in BuiltChecks.AsLog(built)) blog.Add(e);
+                blog.Sort();
+                result["builtChecks"] = BuiltJson(built, problems);
                 var paths = blog.Save(Reports, doc.Title, BuildLog.SurveyFolder(model));
                 result["buildLog"] = LogJson(blog, paths, 10);
                 result["facadeTops"] = TopsJson(model, FacadeTops.Save(model.FacadeTops, Reports, doc.Title, BuildLog.SurveyFolder(model)));
@@ -219,6 +224,19 @@ internal static class SurveyPipeline
     };
 
     /// <summary>The build log's counts, where it was saved and its worst entries.</summary>
+    static JsonObject BuiltJson(List<BuiltFinding> found, List<string> problems) => new()
+    {
+        ["count"] = found.Count,
+        ["byKind"] = new JsonObject(found.GroupBy(f => f.Kind).Select(g => KeyValuePair.Create(g.Key, (JsonNode?)g.Count()))),
+        ["worst"] = new JsonArray(found.OrderByDescending(f => f.Severity).Take(15).Select(f => (JsonNode)new JsonObject
+        {
+            ["kind"] = f.Kind, ["level"] = f.Level, ["ids"] = new JsonArray(f.Ids.Take(20).Select(i => (JsonNode)i).ToArray()),
+            ["message"] = f.Message, ["fix"] = f.Fix,
+        }).ToArray()),
+        ["skipped"] = new JsonArray(problems.Select(p => (JsonNode)p).ToArray()),
+        ["note"] = "read-only checks of what was built; each is also in build-log.json and on the review list",
+    };
+
     public static JsonObject LogJson(BuildLog log, IReadOnlyList<string> paths, int top) => new()
     {
         ["entries"] = log.Items.Count,
