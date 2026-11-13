@@ -299,13 +299,30 @@ public sealed class ModelBuilder
         // survey's turn, then moved onto the walls (CheckLinkPosition)
         bool turn = o != null && o.Interior && !o.InteriorSharedPlacement;
         // a sheet holding several floors is linked into each floor's plan (and lined up with that floor's walls)
-        bool InView(View view, string file) => new FilteredElementCollector(_doc, view.Id).OfClass(typeof(ImportInstance)).Cast<ImportInstance>()
-            .Any(i => _doc.GetElement(i.GetTypeId())?.Name.Equals(file, StringComparison.OrdinalIgnoreCase) == true);
+        // Revit names a linked DWG's type with or without the extension: match both, or every rebuild links the plan again
+        List<ImportInstance> InView(View view, string file) => new FilteredElementCollector(_doc, view.Id).OfClass(typeof(ImportInstance)).Cast<ImportInstance>()
+            .Where(i => _doc.GetElement(i.GetTypeId())?.Name is string n
+                        && (n.Equals(file, StringComparison.OrdinalIgnoreCase) || n.Equals(System.IO.Path.GetFileNameWithoutExtension(file), StringComparison.OrdinalIgnoreCase)))
+            .ToList();
         foreach (var (sl, (_, view)) in levels)
         {
             var file = System.IO.Path.GetFileName(sl.Plan.Path);
             if (view == null) continue;
-            if (InView(view, file)) { Log.Add($"Already linked: {file} in '{view.Name}'"); continue; }
+            var already = InView(view, file);
+            if (already.Count > 0)
+            {
+                // copies left by earlier builds: keep the first
+                if (already.Count > 1)
+                {
+                    using var tc = new Transaction(_doc, "Remove repeated survey plan links");
+                    tc.Start();
+                    foreach (var extra in already.Skip(1)) { extra.Pinned = false; _doc.Delete(extra.Id); }
+                    tc.Commit();
+                    Log.Add($"{already.Count - 1} repeated links of {file} in '{view.Name}' removed (left by earlier builds).");
+                }
+                Log.Add($"Already linked: {file} in '{view.Name}'");
+                continue;
+            }
             using var t = new Transaction(_doc, "Link survey plan");
             t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
             t.Start();

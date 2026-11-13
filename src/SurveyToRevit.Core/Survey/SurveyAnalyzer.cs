@@ -246,7 +246,7 @@ public static class SurveyAnalyzer
             // curves drawn as chains of short lines: fitted to arcs before the lines are straightened onto the axes, so they
             // are built as one curved wall (CurvedWalls drops the straight walls along them)
             var chainArcs = ArcChains.Find(lines);
-            var axes = AxisSnapper.FindAxes(lines.Where(l => l.Length >= tol.MinSegmentLength).ToList(), tol.AngleSnapDeg);
+            var axes = AxisSnapper.Square(AxisSnapper.FindAxes(lines.Where(l => l.Length >= tol.MinSegmentLength).ToList(), tol.AngleSnapDeg));
             lines = AxisSnapper.Snap(lines, axes, tol.AngleSnapDeg);
             var openings = AxisSnapper.Snap(p.OpeningLines.Select(frame.ToModel), axes, tol.AngleSnapDeg);
             var markers = p.Texts.Where(t => IsRoomMarker(t, rules)).Select(t => frame.ToModel(t.Position)).ToList();
@@ -690,6 +690,8 @@ public static class SurveyAnalyzer
         double minY = lines.Min(s => Math.Min(s.A.Y, s.B.Y)), maxY = lines.Max(s => Math.Max(s.A.Y, s.B.Y));
         var centre = new Vec2(Math.Round((minX + maxX) / 2 / 1000) * 1000, Math.Round((minY + maxY) / 2 / 1000) * 1000);
         var axes = AxisSnapper.FindAxes(lines.Where(l => l.Length >= tol.MinSegmentLength).ToList(), tol.AngleSnapDeg);
-        return new SurveyFrame(centre, Math.Round(AxisSnapper.MainRotationDeg(axes), 3));
+        // refined on every plan's long lines, both directions, so the walls come out square in the model
+        double rotation = AxisSnapper.RefineRotation(plans.SelectMany(p => p.WallLines), AxisSnapper.MainRotationDeg(axes));
+        return new SurveyFrame(centre, Math.Round(rotation, 3));
     }
 }

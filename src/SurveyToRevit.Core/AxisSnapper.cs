@@ -62,6 +62,37 @@ public static class AxisSnapper
         return a;
     }
 
+    /// <summary>
+    /// The rotation refined from many lines: every line within windowDeg of approxDeg or of its perpendicular (angles
+    /// folded into a 90° period), weighted by length squared so long façade and party wall lines decide, not the many
+    /// short crooked ones. Returns approxDeg when nothing is near it.
+    /// </summary>
+    public static double RefineRotation(IEnumerable<Segment2> segs, double approxDeg, double windowDeg = 0.5, double minLength = 1500)
+    {
+        double sum = 0, w = 0;
+        foreach (var s in segs)
+        {
+            if (s.Length < minLength) continue;
+            double d = (s.AngleDeg - approxDeg) % 90;
+            if (d > 45) d -= 90;
+            if (d < -45) d += 90;
+            if (Math.Abs(d) > windowDeg) continue;
+            double wt = s.Length * s.Length;
+            sum += d * wt; w += wt;
+        }
+        return w == 0 ? approxDeg : approxDeg + sum / w;
+    }
+
+    /// <summary>Axes within tolDeg of the frame's own directions (0° / 90°, the model is already turned) set exactly onto them,
+    /// so the walls come out square (Revit warns about every wall "slightly off axis").</summary>
+    public static List<double> Square(IReadOnlyList<double> axes, double tolDeg = 0.3) =>
+        axes.Select(a =>
+        {
+            foreach (var t in new[] { 0.0, 90.0, 180.0 })
+                if (Math.Abs(a - t) <= tolDeg) return t % 180;
+            return a;
+        }).ToList();
+
     static double WeightedMeanAngle(List<Segment2> segs, double near)
     {
         double sum = 0, w = 0;
