@@ -316,7 +316,7 @@ file once it exists.
   window types** on Swallow Place (it had 91), all of one parametric family.
 - The curved corner is **one** curved wall per storey and one arc in each slab and roof sketch.
 - **0 DirectShapes** in the build (except "unclear", off by default).
-- `facades.json`, `elevation-index.json`, `section-index.json`, `mansard.json` and `survey-manifest.json` exist after
+- `facades.json`, `elevation-index.json`, `section-index.json`, `roof-edges.json` and `survey-manifest.json` exist after
   `survey_analyze`, and the hub's facade tools run without re-reading a DWG.
 - A rebuild of one floor after a `layers.txt` change keeps the hub's windows, sweeps and families on walls that
   didn't move.
