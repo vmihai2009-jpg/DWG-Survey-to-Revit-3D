@@ -137,6 +137,16 @@ public sealed class BuildLog
                 Evidence = "the reading's report", Severity = 3, SeverityUnit = "note",
             });
         }
+        foreach (var t in model.FacadeTops.Where(t => t.Confidence != "High"))
+        {
+            double len = Math.Sqrt(Math.Pow(t.Line[2] - t.Line[0], 2) + Math.Pow(t.Line[3] - t.Line[1], 2)) / 1000;
+            log.Add(new BuildLogEntry
+            {
+                Kind = "facade-top", Level = t.Level, At = new[] { Math.Round((t.Line[0] + t.Line[2]) / 2), Math.Round((t.Line[1] + t.Line[3]) / 2) }, Line = t.Line,
+                Confidence = t.Confidence, Why = $"{t.Id}: {t.Class}", Evidence = t.Evidence, Alternative = t.Rejected, Settle = t.Settle,
+                Override = "facadeTop (with a line)", Severity = Math.Round(len, 1), SeverityUnit = "m of facade",
+            });
+        }
         foreach (var o in model.Decisions.Where(o => o.State is "stale" or "contradicted"))
             log.Add(new BuildLogEntry
             {

@@ -4,6 +4,8 @@ _Last updated: 2026-10-23_
 
 ## Current milestone
 
+**0.27.0 (2026-11-13, item C of MCP-AUDIT-AND-TOOLS.md): the top of each facade classed from evidence** (FlatParapet / SetBackStorey / Mansard / Pitched / Unknown; decision with a line > section profile > flat roof > plan alone), roof-edges.json, a Mansard's skin lines left out only on strong evidence (dormer fronts kept). Not yet run in Revit.
+
 **0.26.0 (2026-11-13, item T of MCP-AUDIT-AND-TOOLS.md): survey-decisions.json read and obeyed** (levels, notWalls with a window-holding wall kept as contradicted, walls tagged Decision; facadeTop/elevations/windows/keep read and listed as waiting); applied/stale/contradicted listed in the answer, notes and build log. Not yet run in Revit.
 
 **0.25.0 (2026-11-13, item V of MCP-AUDIT-AND-TOOLS.md): build-log.json**, every uncertain call and failed check of an analyse or build, worst first (severity x doubt), in the reports folder and the survey folder's _prep; survey_analyze/survey_build/survey_review return it; the Review List shows its 30 worst. Not yet run in Revit.

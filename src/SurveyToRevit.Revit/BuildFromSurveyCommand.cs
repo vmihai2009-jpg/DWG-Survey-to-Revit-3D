@@ -87,6 +87,7 @@ public class BuildFromSurveyCommand : IExternalCommand
             blog = BuildLog.From(model, doc.Title);
             blog.AddBuildLines(builder.Log);
             blog.Save(UserSettings.Load().Reports, doc.Title, BuildLog.SurveyFolder(model));
+            FacadeTops.Save(model.FacadeTops, UserSettings.Load().Reports, doc.Title, BuildLog.SurveyFolder(model));
         }
         catch { blog = null; /* the log is a help, never a reason to stop */ }
         if (checks.Count > 0 || blog?.Items.Count > 0)

@@ -90,6 +90,7 @@ internal static class SurveyPipeline
             var blog = BuildLog.From(model);
             var paths = blog.Save(Reports, "", BuildLog.SurveyFolder(model));
             node["buildLog"] = LogJson(blog, paths, 10);
+            node["facadeTops"] = TopsJson(model, FacadeTops.Save(model.FacadeTops, Reports, "", BuildLog.SurveyFolder(model)));
         }
         catch (Exception ex) { node["buildLog"] = new JsonObject { ["error"] = ex.Message }; }
         return node;
@@ -172,6 +173,7 @@ internal static class SurveyPipeline
                 blog.AddBuildLines(builder.Log);
                 var paths = blog.Save(Reports, doc.Title, BuildLog.SurveyFolder(model));
                 result["buildLog"] = LogJson(blog, paths, 10);
+                result["facadeTops"] = TopsJson(model, FacadeTops.Save(model.FacadeTops, Reports, doc.Title, BuildLog.SurveyFolder(model)));
                 if (options.OnlyLevels == null) review.AddLog(blog);
             }
             catch (Exception ex) { result["buildLog"] = new JsonObject { ["error"] = ex.Message }; }
@@ -202,6 +204,18 @@ internal static class SurveyPipeline
         ["contradicted"] = model.Decisions.Count(o => o.State == "contradicted"),
         ["waiting"] = model.Decisions.Count(o => o.State == "waiting"),
         ["each"] = new JsonArray(model.Decisions.Take(60).Select(o => (JsonNode)new JsonObject { ["kind"] = o.Kind, ["what"] = o.What, ["state"] = o.State, ["detail"] = o.Detail }).ToArray()),
+    };
+
+    /// <summary>The facade tops in short (item C): counts by class, the stretches, where roof-edges.json went.</summary>
+    public static JsonObject TopsJson(SurveyModel model, IReadOnlyList<string> paths) => new()
+    {
+        ["byClass"] = new JsonObject(model.FacadeTops.GroupBy(t => t.Class).Select(g => KeyValuePair.Create(g.Key, (JsonNode?)g.Count()))),
+        ["stretches"] = new JsonArray(model.FacadeTops.Select(t => (JsonNode)new JsonObject
+        {
+            ["id"] = t.Id, ["class"] = t.Class, ["confidence"] = t.Confidence, ["evidence"] = t.Evidence, ["settle"] = t.Settle,
+            ["line"] = new JsonArray(t.Line.Select(v => (JsonNode)v).ToArray()), ["skinLinesLeftOut"] = t.SkinLinesLeftOut.Count,
+        }).ToArray()),
+        ["paths"] = new JsonArray(paths.Select(p => (JsonNode)p).ToArray()),
     };
 
     /// <summary>The build log's counts, where it was saved and its worst entries.</summary>

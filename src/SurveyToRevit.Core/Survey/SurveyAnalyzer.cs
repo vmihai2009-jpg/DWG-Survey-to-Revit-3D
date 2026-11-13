@@ -97,6 +97,8 @@ public sealed class SurveyModel
     public IReadOnlyList<CheckItem> Checks { get; init; } = Array.Empty<CheckItem>();
     /// <summary>What happened to each entry of survey-decisions.json (applied, stale, contradicted, waiting); empty without the file.</summary>
     public IReadOnlyList<DecisionOutcome> Decisions { get; init; } = Array.Empty<DecisionOutcome>();
+    /// <summary>What the top of each facade stretch is (item C), for roof-edges.json.</summary>
+    public IReadOnlyList<FacadeTopCall> FacadeTops { get; init; } = Array.Empty<FacadeTopCall>();
     /// <summary>The decisions file read, or null.</summary>
     public SurveyDecisions? DecisionsFile { get; init; }
 }
@@ -338,6 +340,20 @@ public static class SurveyAnalyzer
                 notes.Add($"CHECK decision {o.Kind} {o.What}: {(o.State == "stale" ? "matches nothing" : "contradicted")}: {o.Detail}.");
         }
 
+        // item C: what the top of each facade stretch is, from the evidence; a mansard's cut through its skin is not walls
+        var (topStorey, _) = FacadeTops.TopStoreys(levels);
+        var tops = new List<FacadeTopCall>();
+        if (topStorey != null)
+        {
+            tops = FacadeTops.Classify(levels, windowInput[topStorey].Lines, null, null, decisions);
+            var keptWalls = FacadeTops.LeaveOutSkins(topStorey, tops, windowInput[topStorey].Lines);
+            if (keptWalls.Count < topStorey.Walls.Walls.Count)
+            {
+                notes.Add($"{topStorey.Name}: {topStorey.Walls.Walls.Count - keptWalls.Count} thin lines on the mansard stretches are the plan's cut through the roof's skin: left out of the walls ({tops.Sum(t => t.DormerFrontsKept.Count)} dormer fronts kept).");
+                topStorey.Walls = topStorey.Walls with { Walls = keptWalls, ThicknessGroups = keptWalls.Select(w => w.TypeThickness).Distinct().OrderBy(x => x).ToList() };
+            }
+        }
+
         // which outside walls line up with the façade on the floors below and above (the building's face)
         var stacked = FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList());
         // floors with a mezzanine over part of them (see below): outside it they are double height
@@ -545,9 +561,20 @@ public static class SurveyAnalyzer
             if (roofs.Count < before) notes.Add($"{before - roofs.Count} roof areas over the buildings next door left out.");
         }
         if (roofPlans.Count == 0 && roofs.Count == 0) notes.Add("No roof plan or roof layer: no roofs built.");
+        if (topStorey != null && tops.Count > 0)
+        {
+            // again with the roofs read: a flat roof along a flush facade makes it a parapet top
+            var final = FacadeTops.Classify(levels, windowInput[topStorey].Lines, roofs, null, decisions);
+            foreach (var f in final)
+                if (tops.FirstOrDefault(t => t.Id == f.Id) is FacadeTopCall early && early.Class == "Mansard")
+                { f.Class = early.Class; f.Confidence = early.Confidence; f.Evidence = early.Evidence; f.SkinLinesLeftOut = early.SkinLinesLeftOut; f.DormerFrontsKept = early.DormerFrontsKept; f.Eaves = early.Eaves; f.Kerb = early.Kerb; f.SlopeDeg = early.SlopeDeg; }
+            tops = final;
+            notes.Add("Facade tops (" + topStorey.Name + "): " + string.Join(", ", tops.GroupBy(t => t.Class).Select(g => $"{g.Count()} {g.Key}")) +
+                      $"; {tops.Count(t => t.Confidence == "Low")} from the plan alone (see roof-edges.json and the build log for what would settle them).");
+        }
         // self-checks: places to look at, listed for the review list and the report
         var checks = ModelChecks.Run(levels, frame, rules, FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList()));
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions };
+        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops };
     }
 
     /// <summary>Inside the box the walls span (their middle 98%, so one stray wall cannot stretch it), grown by a margin.</summary>
