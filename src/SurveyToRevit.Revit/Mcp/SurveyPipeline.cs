@@ -170,7 +170,7 @@ internal static class SurveyPipeline
         if (!options.OverlayOnly) result["generated"] = GeneratedSummary(doc);
         result["logPath"] = Save(kind, "txt", (kind == "build" ? SurveyReport.Build(model) + "\nWHAT WAS DONE IN REVIT\n" : kind.ToUpperInvariant() + "\n") + string.Join("\n", log.Select(l => "  - " + l)));
         result["undo"] = "One undo step in Revit: 'Build from survey'.";
-        Save(kind, "json", result.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        Save(kind, "json", result.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true, TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() }));
         return result;
     }
 
@@ -404,7 +404,7 @@ internal static class SurveyPipeline
             ["notes"] = new JsonArray(score.Notes.Select(n => (JsonNode)n).ToArray()),
             ["reportPath"] = Save("score", "txt", text),
         };
-        Save("score", "json", result.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        Save("score", "json", result.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true, TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() }));
         return result;
     }
 

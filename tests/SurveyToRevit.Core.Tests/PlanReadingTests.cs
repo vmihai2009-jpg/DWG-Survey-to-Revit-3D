@@ -117,6 +117,55 @@ public class PlanReadingTests
     }
 
     [Fact]
+    public void A_row_of_windows_a_narrow_pier_apart_is_one_window_each()
+    {
+        // ten frames 1298 wide, 150 apart (closer than the 150 mm join), each a frame line, two glass lines and
+        // jamb returns into the wall: once read as one 14 m window and dropped
+        var walls = new List<WallCandidate> { W(-500, 300, 15500, 300, 440) };
+        var glass = new List<Segment2>();
+        for (int k = 0; k < 10; k++)
+        {
+            double x0 = k * 1448, x1 = x0 + 1298;
+            glass.Add(S(x0, 80, x1, 80, "WINDOWS"));
+            glass.Add(S(x0 + 75, 110, x1 - 75, 110, "WINDOWS"));
+            glass.Add(S(x0 + 75, 120, x1 - 75, 120, "WINDOWS"));
+            glass.Add(S(x0 + 25, 140, x0 + 25, 460, "WINDOWS"));
+            glass.Add(S(x1 - 25, 140, x1 - 25, 460, "WINDOWS"));
+        }
+        var found = WindowFinder.Find(glass, walls, new List<(Vec2, string)>(), 3220);
+        Assert.Equal(10, found.Count);
+        Assert.All(found, w => Assert.InRange(w.WidthMm, 1250, 1300));
+    }
+
+    [Fact]
+    public void A_row_takes_the_heights_noted_on_one_of_its_windows()
+    {
+        // equal windows in one wall, "fs 0.65 / sh 2.31" written under the second only; another note for a
+        // different window 1.9 m from the last one must not reach it
+        var walls = new List<WallCandidate> { W(0, 300, 12000, 300, 440), W(11800, 300, 11800, 4000, 300) };
+        var glass = new List<Segment2>();
+        for (int k = 0; k < 5; k++) glass.Add(S(500 + k * 2000, 150, 1800 + k * 2000, 150, "WINDOWS"));
+        glass.Add(S(11900, 1500, 11900, 2500, "WINDOWS"));
+        var texts = new List<(Vec2, string)> { (new Vec2(3150, -300), "fs 0.65"), (new Vec2(3150, -450), "sh 2.31"),
+                                               (new Vec2(11500, 1500), "fs 0.93"), (new Vec2(11500, 1350), "sh 1.65") };
+        var found = WindowFinder.Find(glass, walls, texts, 3220);
+        var row = found.Where(w => Math.Abs(w.Center.Y - 300) < 50).ToList();
+        Assert.Equal(5, row.Count);
+        Assert.All(row, w => { Assert.Equal(650, w.SillMm); Assert.Equal(2960, w.HeadMm); });
+    }
+
+    [Fact]
+    public void Glass_broken_at_a_mullion_stays_one_window()
+    {
+        // two panes 40 mm apart under one frame line: one window
+        var walls = new List<WallCandidate> { W(0, 300, 10000, 300, 400) };
+        var glass = new[] { S(2000, 200, 3600, 200, "Window"), S(2050, 250, 2780, 250, "Window"), S(2820, 250, 3550, 250, "Window"),
+                            S(2000, 200, 2000, 400, "Window"), S(3600, 200, 3600, 400, "Window") };
+        var w = Assert.Single(WindowFinder.Find(glass, walls, new List<(Vec2, string)>(), 3500));
+        Assert.Equal(1600, w.WidthMm);
+    }
+
+    [Fact]
     public void Window_without_texts_gets_default_heights_below_the_floor_above()
     {
         var walls = new List<WallCandidate> { W(0, 300, 10000, 300, 600) };

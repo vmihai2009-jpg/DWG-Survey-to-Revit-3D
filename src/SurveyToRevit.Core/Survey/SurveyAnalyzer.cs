@@ -250,6 +250,15 @@ public static class SurveyAnalyzer
             facade = WallDetector.CloseFacade(facade, raster.Outline, tol);
             facade = WallFit.Fit(facade, raster.IsMaterial, raster.Outline, tol);
             facade = facade.Where(w => w.Length >= tol.MinWallLength).ToList();
+            // the buildings next door drawn on the outline layer: walls from that layer only, away from all of this
+            // building's own linework (its other wall layers, doors, stairs)
+            var ownLinework = lines.Where(l => !rules.FacesOnly.IsMatch(l.Layer) && rules.Classify(l.Layer) == LayerRole.Wall)
+                .Concat(openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door))
+                .Concat(p.FeatureLines.Where(f => rules.Classify(f.Layer) == LayerRole.Stair).Select(frame.ToModel))
+                .SelectMany(l => new[] { l.A, l.B });
+            facade = NeighbourWalls.Remove(facade, ownLinework, rules.FacesOnly.IsMatch, out int neighbourWalls);
+            if (neighbourWalls > 0)
+                notes.Add($"{name}: {neighbourWalls} walls on the outline layer away from this building's own walls, doors and stairs left out (the buildings next door).");
             facade = Rosettes.Remove(facade, out var rosettes);
             foreach (var (c, r, n) in rosettes)
                 notes.Add($"{name}: {n} lines crossing at one point (x {c.X / 1000:0.0}, y {c.Y / 1000:0.0} m, {2 * r / 1000:0.0} m across) read as a pattern, not walls: a lantern, rooflight or round feature.");

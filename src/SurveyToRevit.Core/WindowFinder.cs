@@ -61,7 +61,7 @@ public static class WindowFinder
         IReadOnlyList<(Vec2 Position, string Value)> texts, double storeyMm,
         double joinMm = 150, double textReach = 2000, double minWidth = 300, double maxWidth = 6000, Polygon2? outline = null, double? ceilingMm = null,
         List<WallCandidate>? added = null, Func<Vec2, bool>? isMaterial = null, IReadOnlyList<double>? wallSizes = null,
-        IReadOnlyDictionary<string, HeightKind>? labelWords = null)
+        IReadOnlyDictionary<string, HeightKind>? labelWords = null, double pierGapMm = 100)
     {
         var lines = windowLines.Where(l => l.Length >= 20).ToList();
         // touching lines → one window (union-find)
@@ -75,7 +75,9 @@ public static class WindowFinder
 
         var all = walls.ToList();
         var found = new List<(int Host, Vec2 Center, double Width, double? Sill, double? Head, Vec2? Out)>();
-        foreach (var cluster in Enumerable.Range(0, lines.Count).GroupBy(Root).Select(g => g.Select(i => lines[i]).ToList()))
+        // a row of windows whose frames stand a narrow pier apart touches within joinMm: split it where nothing is drawn
+        // along the row (the piers), so each window is its own opening instead of one too wide to place
+        foreach (var cluster in Enumerable.Range(0, lines.Count).GroupBy(Root).Select(g => g.Select(i => lines[i]).ToList()).SelectMany(c => SplitAtGaps(c, pierGapMm)))
         {
             var main = cluster.OrderByDescending(l => l.Length).First();
             var pts = cluster.SelectMany(l => new[] { l.A, l.B }).ToList();
@@ -120,11 +122,44 @@ public static class WindowFinder
             if (width < minWidth || width > maxWidth) continue;
             var center = WallGeometry.PointAt(hw, (lo + hi) / 2);
 
-            var s = SurveyHeights.Nearest(notes, HeightKind.Sill, center, textReach);
-            var h = SurveyHeights.Nearest(notes, HeightKind.Head, center, textReach);
+            found.Add((host, center, width, null, null, Outward(hw, (lo + hi) / 2, outline)));
+        }
+
+        // each height note belongs to the window it is written next to (the nearest one), not to every window within
+        // reach: a note between two windows must not give a far window another row's heights
+        var own = found.Select(_ => new List<HeightNote>()).ToList();
+        foreach (var n in notes.Where(n => n.Kind is HeightKind.Sill or HeightKind.Head or HeightKind.OpeningHeight))
+        {
+            int best = -1; double bestD = textReach;
+            for (int k = 0; k < found.Count; k++)
+            {
+                double d = n.Position.DistanceTo(found[k].Center);
+                if (d <= bestD) { bestD = d; best = k; }
+            }
+            if (best >= 0) own[best].Add(n);
+        }
+        for (int k = 0; k < found.Count; k++)
+        {
+            var c = found[k].Center;
+            var s = SurveyHeights.Nearest(own[k], HeightKind.Sill, c, textReach);
+            var h = SurveyHeights.Nearest(own[k], HeightKind.Head, c, textReach);
             // a window height (sill to head) instead of a head
-            if (h == null && s != null && SurveyHeights.Nearest(notes, HeightKind.OpeningHeight, center, textReach) is double oh) h = s + oh;
-            found.Add((host, center, width, s, h, Outward(hw, (lo + hi) / 2, outline)));
+            if (h == null && s != null && SurveyHeights.Nearest(own[k], HeightKind.OpeningHeight, c, textReach) is double oh) h = s + oh;
+            found[k] = found[k] with { Sill = s, Head = h };
+        }
+        // a window with no note of its own takes its row's: the noted windows of the same width in the same wall
+        // (surveyors note one window of a row of equal ones), before the floor's usual heights
+        for (int k = 0; k < found.Count; k++)
+        {
+            if (found[k].Sill != null && found[k].Head != null) continue;
+            var f = found[k];
+            // same façade line: the same wall, or another wall on its line (a façade the reading split in two)
+            var fw = all[f.Host];
+            bool SameLine(int h, Vec2 p) => h == f.Host || (Math.Abs(WallGeometry.Offset(fw, p)) <= 300
+                && SegmentCleaner.AngleDiffDeg(all[h].Centerline.AngleDeg, fw.Centerline.AngleDeg) <= 5);
+            var row = found.Where((o, j) => j != k && SameLine(o.Host, o.Center) && Math.Abs(o.Width - f.Width) <= 100 && o.Sill != null && o.Head != null).ToList();
+            if (row.Count == 0) continue;
+            found[k] = f with { Sill = f.Sill ?? Median(row.Select(o => o.Sill!.Value)), Head = f.Head ?? Median(row.Select(o => o.Head!.Value)) };
         }
 
         // where the survey gives no height for a window, the floor's usual surveyed sill and head
@@ -173,6 +208,41 @@ public static class WindowFinder
             if (!kept.Any(k => k.HostIndex == w.HostIndex && k.Center.DistanceTo(w.Center) < (k.WidthMm + w.WidthMm) / 2 + 100))
                 kept.Add(w);
         return kept;
+    }
+
+    /// <summary>
+    /// One cluster of touching window lines split where, along its longest line, no line of the cluster is drawn for
+    /// at least minGap mm: the piers between windows set side by side. Lines across the row (jamb returns, reveals)
+    /// go with the part they stand in or touch. A cluster drawn without such a gap comes back as it is.
+    /// </summary>
+    public static List<List<Segment2>> SplitAtGaps(List<Segment2> cluster, double minGap)
+    {
+        if (cluster.Count < 2 || minGap <= 0) return new() { cluster };
+        var main = cluster.OrderByDescending(l => l.Length).First();
+        var dir = main.Direction;
+        (double lo, double hi) Span(Segment2 l) { double a = (l.A - main.A).Dot(dir), b = (l.B - main.A).Dot(dir); return (Math.Min(a, b), Math.Max(a, b)); }
+        // the stretches the row's own lines (those along it) cover
+        var along = cluster.Where(l => SegmentCleaner.AngleDiffDeg(l.AngleDeg, main.AngleDeg) <= 5).Select(Span).OrderBy(s => s.lo).ToList();
+        var parts = new List<(double lo, double hi)>();
+        foreach (var s in along)
+        {
+            if (parts.Count > 0 && s.lo < parts[^1].hi + minGap) parts[^1] = (parts[^1].lo, Math.Max(parts[^1].hi, s.hi));
+            else parts.Add(s);
+        }
+        if (parts.Count < 2) return new() { cluster };
+        var groups = parts.Select(_ => new List<Segment2>()).ToList();
+        foreach (var l in cluster)
+        {
+            var (lo, hi) = Span(l); double mid = (lo + hi) / 2;
+            int best = 0; double bestD = double.MaxValue;
+            for (int k = 0; k < parts.Count; k++)
+            {
+                double d = mid < parts[k].lo ? parts[k].lo - mid : mid > parts[k].hi ? mid - parts[k].hi : 0;
+                if (d < bestD) { bestD = d; best = k; }
+            }
+            groups[best].Add(l);
+        }
+        return groups.Where(g => g.Count > 0).ToList();
     }
 
     static bool Near(Segment2 a, Segment2 b, double d) =>
