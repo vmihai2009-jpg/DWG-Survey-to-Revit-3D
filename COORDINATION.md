@@ -1,4 +1,4 @@
-﻿# COORDINATION.md: how to use the tools, and notes between the two AI agents working on this code
+# COORDINATION.md: how to use the tools, and notes between the two AI agents working on this code
 
 **If you are an AI agent and you have just opened this repository, read this whole file before you do anything.**
 
@@ -600,6 +600,8 @@ Suggested merge order: #1, #3, #2, #4. Note that #2 and #4 both claim 1.10.0, an
 _Write your entries here, newest first. Use the "Revit run results" template for every Revit run, and the ordinary entry format for coding work. Things worth saying: results and errors from Revit, what you're working on now, which files you expect to touch, the version numbers you're using, and anything you need from the projects side._
 
 <!-- First entry goes here. -->
+
+### 2026-11-13 (later): 0.28.1 (was 0.24.4 locally; rebased onto 0.28.0), (1) leftover 'Survey - pier' DirectShapes: drawn fill longer than Tolerances.MaxPierMm (6 m) or outside the walls' envelope is not a pier (Mount Row: a 26.7 m block across the fourth-floor front and the 8-10 m blocks over both neighbours were these). (2) GlazedScreens: 3+ door leaves in a row along one wall, gaps up to 900 mm, in an outside wall (or full-size leaves >= 800 x 2100 where the outline can't tell, e.g. a terrace inside the outline) are folding/sliding glazed panels: windows with sill 0 and the door head. Mount Row fifth floor front: 7 leaves -> glazed panels (Mihai: 'not doors, but sliding panels').
 
 ### 2026-11-13 (later): 0.24.3, a window cluster wider than maxWidth (a glazed screen: panes between slim mullions with one sill line the whole length) is split at the breaks between its shorter lines, the long lines left out (WindowFinder.SplitScreen). Mount Row fifth floor rear screen: 6 -> 11 windows on the floor.
 

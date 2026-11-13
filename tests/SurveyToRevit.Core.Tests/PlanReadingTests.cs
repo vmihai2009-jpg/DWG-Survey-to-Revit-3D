@@ -204,6 +204,30 @@ public class PlanReadingTests
     }
 
     [Fact]
+    public void A_row_of_door_leaves_in_an_outside_wall_is_a_glazed_screen()
+    {
+        // outside wall along y = 0 of a 12 x 8 m building; six 900 mm leaves side by side, and one door on its own
+        var walls = new List<WallCandidate> { W(0, 0, 12000, 0, 300) };
+        var outline = new Polygon2(new[] { new Vec2(0, -150), new Vec2(12000, -150), new Vec2(12000, 8000), new Vec2(0, 8000) });
+        var doors = Enumerable.Range(0, 6).Select(k => new DoorCandidate(0, new Vec2(1000 + 450 + k * 950, 0), 900, 2300, false)).ToList();
+        doors.Add(new DoorCandidate(0, new Vec2(10500, 0), 900, 2100, false));
+        var screens = GlazedScreens.FromDoorRows(doors, walls, outline);
+        var s = Assert.Single(screens);
+        Assert.Equal(6, s.Panels.Count);
+        Assert.All(s.Panels, p => { Assert.Equal(0, p.SillMm); Assert.Equal(2300, p.HeadMm); });
+    }
+
+    [Fact]
+    public void A_row_of_cubicle_doors_inside_stays_doors()
+    {
+        // an inner wall (building on both sides), four 650 x 2000 cubicle doors 150 apart: doors
+        var walls = new List<WallCandidate> { W(0, 4000, 12000, 4000, 100) };
+        var outline = new Polygon2(new[] { new Vec2(0, 0), new Vec2(12000, 0), new Vec2(12000, 8000), new Vec2(0, 8000) });
+        var doors = Enumerable.Range(0, 4).Select(k => new DoorCandidate(0, new Vec2(2000 + k * 800, 4000), 650, 2000, false)).ToList();
+        Assert.Empty(GlazedScreens.FromDoorRows(doors, walls, outline));
+    }
+
+    [Fact]
     public void Glass_broken_at_a_mullion_stays_one_window()
     {
         // two panes 40 mm apart under one frame line: one window

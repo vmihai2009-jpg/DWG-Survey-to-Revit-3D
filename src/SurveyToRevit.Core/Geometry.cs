@@ -62,6 +62,8 @@ public sealed record Tolerances
     public double MaxWallThickness { get; init; } = 1000.0;
     /// <summary>Shortest wall piece to accept.</summary>
     public double MinWallLength { get; init; } = 200.0;
+    /// <summary>Longest drawn fill read as a pier (longer: a ledge, terrace or the building next door).</summary>
+    public double MaxPierMm { get; init; } = 6000.0;
     /// <summary>Wall pieces either side of a door or window up to this wide are joined into one wall.</summary>
     public double MaxOpeningWidth { get; init; } = 3000.0;
     /// <summary>Gaps up to this in a wall line are closed for a continuous concept wall (doors, missing linework), and hanging wall ends run on this far to meet a wall.</summary>

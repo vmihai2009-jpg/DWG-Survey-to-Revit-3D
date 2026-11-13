@@ -297,6 +297,22 @@ public static class SurveyAnalyzer
                     .Where(cells => !IsDoorSwing(cells, openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList()))
                     // drawn material only (not the outline's fill where it bridges a concave façade)
                     .Where(cells => raster.IsMaterial == null || cells.Count(raster.IsMaterial) >= 0.7 * cells.Count).ToList();
+            // a pier is a short piece of masonry: drawn fill longer than maxPierMm is a ledge, a terrace or the building
+            // next door, not a pier; nor is fill outside this building's walls
+            if (level.Leftover != null)
+            {
+                var env = NeighbourWalls.Envelope(facade);
+                int fills = level.Leftover.Count;
+                level.Leftover = level.Leftover.Where(cells =>
+                {
+                    double w = cells.Max(c => c.X) - cells.Min(c => c.X), h = cells.Max(c => c.Y) - cells.Min(c => c.Y);
+                    if (Math.Max(w, h) > tol.MaxPierMm) return false;
+                    var mid = new Vec2(cells.Average(c => c.X), cells.Average(c => c.Y));
+                    return env == null || NeighbourWalls.Outside(env, mid) <= 300;
+                }).ToList();
+                if (level.Leftover.Count < fills)
+                    notes.Add($"{name}: {fills - level.Leftover.Count} drawn fills left out as piers (longer than {tol.MaxPierMm / 1000:0.#} m, or outside this building's walls).");
+            }
             level.Stairs = StairFinder.Find(p.FeatureLines.Where(f => rules.Classify(f.Layer) == LayerRole.Stair).Select(frame.ToModel).ToList(),
                 p.Texts.Select(t => (frame.ToModel(t.Position), t.Value)).ToList());
             doorInput[level] = openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList();
@@ -431,6 +447,16 @@ public static class SurveyAnalyzer
             {
                 levels[i].Doors = levels[i].Doors.Concat(named).ToList();
                 notes.Add($"{levels[i].Name}: {named.Count} doors where a note names one (sliding, folding, fire door) beside door linework.");
+            }
+            // a row of door leaves side by side in an outside wall, no wall between them, is a folding or sliding glazed
+            // screen (onto a terrace or balcony): glazed panels from the floor, not doors
+            var screen = GlazedScreens.FromDoorRows(levels[i].Doors, levels[i].Walls.Walls, levels[i].Outline);
+            if (screen.Count > 0)
+            {
+                var gone = screen.SelectMany(s => s.Doors).ToHashSet();
+                levels[i].Doors = levels[i].Doors.Where(d => !gone.Contains(d)).ToList();
+                levels[i].Windows = levels[i].Windows.Concat(screen.SelectMany(s => s.Panels)).ToList();
+                notes.Add($"{levels[i].Name}: {gone.Count} door leaves in {screen.Count} row(s) along outside walls read as folding/sliding glazed screens: glazed panels from the floor.");
             }
             // windows the survey notes as blocked up ("Blocked Window") are wall
             var blockedNotes = tx.Where(t => DoorFinder.IsBlockedNote(t.Item2) && t.Item2.Contains("window", StringComparison.OrdinalIgnoreCase)).Select(t => t.Item1).ToList();
