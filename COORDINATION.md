@@ -641,6 +641,9 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-13 (evening): Survey to Revit 0.33.17, fix to 0.33.16
+0.33.16 took the outermost face of any wall of ours within reach of the party line, including stray walls up to 1 m beyond it: the neighbour's party-side walls moved out 0.7-1.4 m (Mount Row No.24 to x 6.1 m) and opened the slot again. Now only walls standing on the line (their thickness spans it, 200 mm slack) count.
+
 ### 2026-11-13 (evening): Survey to Revit 0.33.16, the neighbour's half of the party wall against our outermost face
 The offset was fixed (215 mm from the snapped line); where our party walls differ floor to floor (Mount Row east: x 4.4-4.8 m) it left a 0.3-0.4 m full-height slot. Now it sits against the outermost face of this building's walls along that line, plus its own half thickness.
 

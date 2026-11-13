@@ -199,7 +199,9 @@ public static class ElevationContext
                 if (inside is not Vec2 ins) return;
                 var n = s.Direction.Perp(); if ((ins - s.Mid).Dot(n) < 0) n = new Vec2(-n.X, -n.Y);
                 // against the outermost face of this building's walls along it (floors differ), its own half-thickness on
-                double face = ourWalls.Where(w => Alongside(w.Line, new[] { s }, PartyReachMm + w.T))
+                // only walls standing on the party line (their thickness spans it, 200 mm slack), not stray walls beyond it
+                double face = ourWalls.Where(w => Alongside(w.Line, new[] { s }, w.T / 2 + 200)
+                                                  && Math.Abs((w.Line.Mid - s.Mid).Dot(n)) <= w.T / 2 + 200)
                     .Select(w => (w.Line.Mid - s.Mid).Dot(n) + w.T / 2).DefaultIfEmpty(PartyGapMm - 100).Max();
                 double gap = Math.Max(face, 0) + 100;
                 s = new Segment2(s.A + n * gap, s.B + n * gap);
@@ -335,3 +337,4 @@ public static class ElevationContext
         return res;
     }
 }
+
