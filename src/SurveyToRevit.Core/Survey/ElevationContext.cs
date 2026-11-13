@@ -185,6 +185,7 @@ public static class ElevationContext
         var ours = ElevationIndex.Facades(levels).Select(f => f.Line)
             .Concat(levels.SelectMany(l => l.Walls.Walls.Where(w => w.Arc == null).Select(w => w.Centerline))).ToList();
         var outlines = levels.SelectMany(l => (l.Outline != null ? new[] { l.Outline } : Array.Empty<Polygon2>()).Concat(l.MoreOutlines)).ToList();
+        var ourWalls = levels.SelectMany(l => l.Walls.Walls.Where(w => w.Arc == null).Select(w => (Line: w.Centerline, T: w.TypeThickness))).ToList();
         int party = 0;
         // a wall along this building's own (the party line) is the neighbour's half of it: set just outside this building's
         // wall face, towards the neighbour (inside: a point inside the neighbour's block), so no floor where this building
@@ -197,7 +198,11 @@ public static class ElevationContext
                 party++;
                 if (inside is not Vec2 ins) return;
                 var n = s.Direction.Perp(); if ((ins - s.Mid).Dot(n) < 0) n = new Vec2(-n.X, -n.Y);
-                s = new Segment2(s.A + n * PartyGapMm, s.B + n * PartyGapMm);
+                // against the outermost face of this building's walls along it (floors differ), its own half-thickness on
+                double face = ourWalls.Where(w => Alongside(w.Line, new[] { s }, PartyReachMm + w.T))
+                    .Select(w => (w.Line.Mid - s.Mid).Dot(n) + w.T / 2).DefaultIfEmpty(PartyGapMm - 100).Max();
+                double gap = Math.Max(face, 0) + 100;
+                s = new Segment2(s.A + n * gap, s.B + n * gap);
                 note += " (its side of the party wall)";
             }
             walls.Add(new ContextWall(s, baseZ, topZ, note));

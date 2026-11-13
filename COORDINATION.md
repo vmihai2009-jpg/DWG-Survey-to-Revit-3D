@@ -641,6 +641,9 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-13 (evening): Survey to Revit 0.33.16, the neighbour's half of the party wall against our outermost face
+The offset was fixed (215 mm from the snapped line); where our party walls differ floor to floor (Mount Row east: x 4.4-4.8 m) it left a 0.3-0.4 m full-height slot. Now it sits against the outermost face of this building's walls along that line, plus its own half thickness.
+
 ### 2026-11-13 (evening): Survey to Revit 0.33.15, open outside corners closed
 Mihai: very visible slots at the corners. The facades stop short of the party walls (the corner pier from the party wall to the first window is drawn only as the outer line), up to ~1 m. New `PartyWalls.CloseCorners`: two walls on the floor's edge at 60 deg or more, whose free ends lie within 1.5 m of where their lines cross (or one free end while the other line runs through), are run on to the crossing. Mount Row: 7 corners on B1-3F; Swallow Place: 1 (7F). Tests 235.
 
