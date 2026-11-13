@@ -175,6 +175,18 @@ public class PlanReadingTests
     }
 
     [Fact]
+    public void A_floor_outline_over_next_door_is_cut_back_to_the_walls()
+    {
+        // walls of a 10 x 8 m building; the outline runs on 6 m over the building next door
+        var walls = new List<WallCandidate> { W(0, 0, 10000, 0, 300), W(10000, 0, 10000, 8000, 300), W(10000, 8000, 0, 8000, 300), W(0, 8000, 0, 0, 300) };
+        var outline = new Polygon2(new[] { new Vec2(-150, -150), new Vec2(16000, -150), new Vec2(16000, 8150), new Vec2(-150, 8150) });
+        var env = NeighbourWalls.Envelope(walls)!;
+        var clipped = NeighbourWalls.Clip(outline, env)!;
+        Assert.InRange(clipped.Vertices.Max(v => v.X), 10100, 10200);
+        Assert.InRange(clipped.Area / 1e6, 10.2 * 8.2 * 0.98, 10.3 * 8.3);
+    }
+
+    [Fact]
     public void Glass_broken_at_a_mullion_stays_one_window()
     {
         // two panes 40 mm apart under one frame line: one window

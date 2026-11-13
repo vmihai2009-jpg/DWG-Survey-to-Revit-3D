@@ -210,6 +210,7 @@ public static class SurveyAnalyzer
         }
         foreach (var s in sections) notes.Add(s.Note);
         var levels = new List<SurveyLevel>();
+        int neighbourTotal = 0;
         var windowInput = new Dictionary<SurveyLevel, (List<Segment2> Lines, List<(Vec2, string)> Texts)>(ReferenceEqualityComparer.Instance);
         var doorInput = new Dictionary<SurveyLevel, List<Segment2>>(ReferenceEqualityComparer.Instance);
         foreach (var p in chosen)
@@ -257,6 +258,7 @@ public static class SurveyAnalyzer
                 .Concat(p.FeatureLines.Where(f => rules.Classify(f.Layer) == LayerRole.Stair).Select(frame.ToModel))
                 .SelectMany(l => new[] { l.A, l.B });
             facade = NeighbourWalls.Remove(facade, ownLinework, rules.FacesOnly.IsMatch, out int neighbourWalls);
+            neighbourTotal += neighbourWalls;
             if (neighbourWalls > 0)
                 notes.Add($"{name}: {neighbourWalls} walls on the outline layer away from this building's own walls, doors and stairs left out (the buildings next door).");
             facade = Rosettes.Remove(facade, out var rosettes);
@@ -270,6 +272,13 @@ public static class SurveyAnalyzer
             // unclear pockets now filled by a pier wall are explained
             var unclearLeft = raster.Unclear.Where(u => !facade.Any(w => w.FaceA == "pier" && FacadeWalls.Contains(u.Outline, w.Centerline.Mid))).ToList();
             var plan = raster with { Walls = walls, Unclear = unclearLeft };
+            // with the buildings next door left out, the floor outline (the slab) is cut back to this building's walls too
+            if (neighbourWalls > 0 && plan.Outline is Polygon2 before && NeighbourWalls.Envelope(facade) is { } envelope
+                && NeighbourWalls.Clip(before, envelope) is Polygon2 clipped && clipped.Area < before.Area * 0.98)
+            {
+                plan = plan with { Outline = clipped };
+                notes.Add($"{name}: floor outline cut back to this building's walls, {before.Area / 1e6:0} -> {clipped.Area / 1e6:0} m² (the rest is next door).");
+            }
             var level = new SurveyLevel(p.Name.LevelCode!, name, order, est?.FloorLevelMm ?? double.NaN, est, p, plan.Walls, plan.Outline, plan.Unclear);
             level.IsRoom = raster.IsRoom;
             level.IsMaterial = raster.IsMaterial;
@@ -502,6 +511,14 @@ public static class SurveyAnalyzer
             noHeight += n;
         }
         if (noHeight > 0) notes.Add($"{noHeight} roof areas have no spot height inside them and were left out.");
+        // a roof plan drawn with the roofs next door: only the roofs over this building's walls (any floor's) are kept
+        if (neighbourTotal > 0 && NeighbourWalls.Envelope(levels.SelectMany(l => l.Walls.Walls)) is { } whole)
+        {
+            int before = roofs.Count;
+            roofs = roofs.Where(r => r.Outline.Vertices.Count < 3
+                || NeighbourWalls.Outside(whole, new Vec2(r.Outline.Vertices.Average(v => v.X), r.Outline.Vertices.Average(v => v.Y))) <= 500).ToList();
+            if (roofs.Count < before) notes.Add($"{before - roofs.Count} roof areas over the buildings next door left out.");
+        }
         if (roofPlans.Count == 0 && roofs.Count == 0) notes.Add("No roof plan or roof layer: no roofs built.");
         // self-checks: places to look at, listed for the review list and the report
         var checks = ModelChecks.Run(levels, frame, rules, FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList()));

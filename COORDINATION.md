@@ -572,6 +572,8 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-13 (later): 0.24.2, with neighbours found, the floor outline (slab, window 'ours' test) is clipped to the convex envelope of the kept walls, and roof-plan areas whose centre is over 0.5 m outside every floor's walls are dropped. Mount Row: First 658 -> 463 m2, Fifth 437 -> 273 m2, 7 neighbour roofs dropped, neighbour windows no longer counted (First 27 -> 23). Convex: an L-shaped building keeps its notch filled, as before.
+
 ### 2026-11-13 (later): 0.24.1, neighbour filter also takes walls the reading made itself (pier / facade / bridge / join lines carry no layer); Mount Row fifth floor 30 -> 40 left out.
 
 ### 2026-11-13: Survey to Revit 0.24.0, windows in a row, row heights, neighbours on the outline layer, item W
