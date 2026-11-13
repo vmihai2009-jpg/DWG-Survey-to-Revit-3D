@@ -1055,35 +1055,43 @@ public sealed class ModelBuilder
         var ground = levels.OrderBy(l => Math.Abs(l.Elevation)).First();
         var wallType = WallTypeFor(200);
         int made = 0;
-        foreach (var r in _model.Context)
+        // the plan (blocks from the elevations' fronts, roof-plan blocks, no walls along this building's own outline);
+        // without one, the roof-plan blocks as they are
+        var plan = _model.ContextPlan ?? new ContextPlan(new List<ContextFront>(),
+            _model.Context.SelectMany(r => r.Outline.Vertices.Select((v, i) => new ContextWall(new Segment2(v, r.Outline.Vertices[(i + 1) % r.Outline.Vertices.Count]), double.NaN, r.ElevationMm, "Context wall: " + r.Note))).ToList(),
+            _model.Context.Select(r => r with { Note = "Context roof: " + r.Note }).ToList(), new List<string>());
+        foreach (var cw in plan.Walls)
+        {
+            try
+            {
+                double bottom = double.IsNaN(cw.BaseZ) ? ground.Elevation : Z(cw.BaseZ), height = Z(cw.TopZ) - bottom;
+                if (height < Ft(1000)) continue;
+                var line = Line.CreateBound(new XYZ(Ft(cw.Line.A.X), Ft(cw.Line.A.Y), ground.Elevation), new XYZ(Ft(cw.Line.B.X), Ft(cw.Line.B.Y), ground.Elevation));
+                var w = Wall.Create(_doc, line, wallType.Id, ground.Id, height, bottom - ground.Elevation, false, false);
+                Put(w, cw.Note);
+            }
+            catch (Exception ex) { Log.Add($"Context wall not made ({ex.Message})."); }
+        }
+        foreach (var r in plan.Roofs)
         {
             double top = Z(r.ElevationMm);
             if (top - ground.Elevation < Ft(1000)) continue;
             if (Loop(r.Outline, ground.Elevation) is not CurveLoop loop) continue;
             try
             {
-                // the side an elevation already draws is built from the elevation (with its windows), below
-                var edges = loop.Select(c => new Segment2(new Vec2(Mm(c.GetEndPoint(0).X), Mm(c.GetEndPoint(0).Y)), new Vec2(Mm(c.GetEndPoint(1).X), Mm(c.GetEndPoint(1).Y)))).ToList();
-                var covered = ElevationContext.CoveredEdges(edges, _model.ContextFronts.ToList());
-                int ei = -1;
-                foreach (var c in loop)
-                {
-                    if (covered.Contains(++ei)) continue;
-                    var w = Wall.Create(_doc, c, wallType.Id, ground.Id, top - ground.Elevation, 0, false, false);
-                    Put(w, "Context wall: " + r.Note);
-                }
                 var slab = Floor.Create(_doc, new List<CurveLoop> { loop }, FloorTypeFor(200).Id, ground.Id);
                 slab.get_Parameter(BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM)?.Set(top - ground.Elevation);
-                Put(slab, "Context roof: " + r.Note);
+                Put(slab, r.Note);
                 made++;
             }
-            catch (Exception ex) { Log.Add($"Context block not made ({ex.Message})."); }
+            catch (Exception ex) { Log.Add($"Context roof not made ({ex.Message})."); }
         }
         // the neighbours' fronts the elevations draw: a wall per skyline step, the drawn windows in it
         int fronts = 0, windows = 0;
-        var family = _model.ContextFronts.Any(f => f.Windows.Count > 0) ? HostedFamily(BuiltInCategory.OST_Windows, "Window") : null;
+        var frontList = _model.ContextPlan?.Fronts ?? _model.ContextFronts.ToList();
+        var family = frontList.Any(f => f.Windows.Count > 0) ? HostedFamily(BuiltInCategory.OST_Windows, "Window") : null;
         var symbols = new Dictionary<(double, double), FamilySymbol>();
-        foreach (var f in _model.ContextFronts)
+        foreach (var f in frontList)
         {
             try
             {

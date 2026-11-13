@@ -93,6 +93,8 @@ public sealed class SurveyModel
     public IReadOnlyList<RoofCandidate> Context { get; init; } = Array.Empty<RoofCandidate>();
     /// <summary>The neighbours' fronts as the elevations draw them (skyline steps and windows), built as context.</summary>
     public IReadOnlyList<ContextFront> ContextFronts { get; init; } = Array.Empty<ContextFront>();
+    /// <summary>The context as built: fronts, block walls (none along this building's own outline) and roofs; null: build the roof-plan blocks as they are.</summary>
+    public ContextPlan? ContextPlan { get; init; }
     /// <summary>The layer rules used (built-in, plus any layers.txt).</summary>
     public LayerRules Rules { get; init; } = LayerRules.Default;
     /// <summary>Survey sections read from section sheets (heights, and cut lines for section views).</summary>
@@ -718,6 +720,13 @@ public static class SurveyAnalyzer
             }
             catch (Exception ex) { notes.Add($"Neighbours on the elevations not read ({ex.Message})."); }
         }
+        ContextPlan? contextPlan = null;
+        try
+        {
+            contextPlan = ElevationContext.Plan(fronts, context, levels);
+            if (fronts.Count > 0 || context.Count > 0) notes.AddRange(contextPlan.Notes);
+        }
+        catch (Exception ex) { notes.Add($"Context not planned ({ex.Message}); the roof-plan blocks are built as they are."); }
 
         if (topStorey != null && tops.Count > 0)
         {
@@ -732,7 +741,7 @@ public static class SurveyAnalyzer
         }
         // self-checks: places to look at, listed for the review list and the report
         var checks = ModelChecks.Run(levels, frame, rules, FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList()));
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Context = context, ContextFronts = fronts, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops, SectionIndex = sectionIndex, Elevations = elevations };
+        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Context = context, ContextFronts = fronts, ContextPlan = contextPlan, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops, SectionIndex = sectionIndex, Elevations = elevations };
     }
 
     /// <summary>Inside the box the walls span (their middle 98%, so one stray wall cannot stretch it), grown by a margin.</summary>

@@ -1,7 +1,19 @@
 namespace SurveyToRevit.Core.Survey;
 
 /// <summary>One step of a neighbour's front read off an elevation: a stretch of the facade line (model mm) and its height.</summary>
-public sealed record ContextFront(string Facade, Segment2 Line, double BaseZ, double TopZ, List<ContextWindow> Windows, string Note);
+public sealed record ContextFront(string Facade, Segment2 Line, double BaseZ, double TopZ, List<ContextWindow> Windows, string Note)
+{
+    /// <summary>Unit vector from the front into the neighbour (the side this building's floors are on).</summary>
+    public Vec2 Inward { get; init; }
+    /// <summary>The steps of one neighbour's front on one drawing share it (facade id and side).</summary>
+    public string Group { get; init; } = "";
+}
+
+/// <summary>A plain context wall (a block's side or back), from BaseZ (NaN: the ground floor) up to TopZ, model mm.</summary>
+public sealed record ContextWall(Segment2 Line, double BaseZ, double TopZ, string Note);
+
+/// <summary>What is built for the buildings next door: the fronts (with windows), the other walls, and the roofs.</summary>
+public sealed record ContextPlan(List<ContextFront> Fronts, List<ContextWall> Walls, List<RoofCandidate> Roofs, List<string> Notes);
 
 /// <summary>A neighbour's window: its centre on the front line (model mm) and its width, sill and head (model heights).</summary>
 public sealed record ContextWindow(Vec2 Centre, double WidthMm, double SillZ, double HeadZ);
@@ -25,7 +37,6 @@ public static class ElevationContext
         var res = new List<ContextFront>();
         var outlines = levels.SelectMany(l => (l.Outline != null ? new[] { l.Outline } : Array.Empty<Polygon2>()).Concat(l.MoreOutlines)).ToList();
         if (outlines.Count == 0) return res;
-        var centre = outlines[0].Vertices.Aggregate(new Vec2(0, 0), (a, v) => a + v) * (1.0 / outlines[0].Vertices.Count);
         double lowest = levels.Where(l => !double.IsNaN(l.ElevationMm)).Select(l => l.ElevationMm).DefaultIfEmpty(0).Min();
         // only a sure match places a neighbour: a drawing a bay off would put next door's front inside this building
         foreach (var d in elevations.Where(e => e.FacadeLine != null && e.Score >= ElevationIndex.SureScore && e.Parts.Count > 0 && e.Lines.Count > 0))
@@ -33,10 +44,12 @@ public static class ElevationContext
             var fl = d.FacadeLine!;
             var facade = new Segment2(new Vec2(fl[0], fl[1]), new Vec2(fl[2], fl[3]));
             var dir = facade.Direction; double len = facade.Length;
-            var n = new Vec2(-dir.Y, dir.X);
-            var inward = (centre - facade.Mid).X * n.X + (centre - facade.Mid).Y * n.Y > 0 ? n : new Vec2(-n.X, -n.Y);
+            if (Inward(facade, outlines) is not Vec2 inward) continue;
             Vec2 At(double t) => facade.A + dir * t;
-            bool Ours(double t) => outlines.Any(o => FacadeWalls.Contains(o, At(t) + inward * InsideMm));
+            // this building's where a point 1.5, 3 or 4.5 m in is inside a floor (a recess in the facade is still ours)
+            bool Ours(double t) => outlines.Any(o => FacadeWalls.Contains(o, At(t) + inward * InsideMm)
+                                                  || FacadeWalls.Contains(o, At(t) + inward * (2 * InsideMm))
+                                                  || FacadeWalls.Contains(o, At(t) + inward * (3 * InsideMm)));
             int sg = d.Mirrored ? -1 : 1;
             double T(double x) => d.ShiftMm + sg * d.Scale * x;
             double Z(double x, double y)
@@ -97,7 +110,8 @@ public static class ElevationContext
                         .Select(w => new ContextWindow(At(w.Centre), Math.Round(Math.Min(w.Width, st.T1 - st.T0 - 200)), Math.Round(w.SillZ), Math.Round(w.HeadZ)))
                         .Where(w => w.WidthMm >= ElevationWindows.MinWidthMm).ToList();
                     res.Add(new ContextFront(d.Facade ?? "", new Segment2(At(st.T0), At(st.T1)), Math.Round(baseZ), Math.Round(st.Top), ws,
-                        $"{d.Title.Replace(" ", "")} {(side < 0 ? "left" : "right")} of {d.Facade}, {(st.T1 - st.T0) / 1000:0.0} m wide, top {st.Top / 1000:0.00} m, {ws.Count} windows"));
+                        $"{d.Title.Replace(" ", "")} {(side < 0 ? "left" : "right")} of {d.Facade}, {(st.T1 - st.T0) / 1000:0.0} m wide, top {st.Top / 1000:0.00} m, {ws.Count} windows")
+                    { Inward = inward, Group = $"{d.Facade}{(side < 0 ? "<" : ">")}" });
                 }
             }
         }
@@ -121,6 +135,159 @@ public static class ElevationContext
             over += Math.Max(0, Math.Min(b, f.Line.Length) - Math.Max(a, 0));
         }
         return over >= 0.5 * edge.Length;
+    }
+
+    /// <summary>The side of a facade line the building is on, by floor-outline votes (1 m either side); null when no floor tells.</summary>
+    public static Vec2? Inward(Segment2 line, IReadOnlyList<Polygon2> outlines)
+    {
+        var dir = line.Direction; var n = new Vec2(-dir.Y, dir.X);
+        int vote = 0;
+        foreach (var o in outlines)
+        {
+            bool a = FacadeWalls.Contains(o, line.Mid + n * 1000), b = FacadeWalls.Contains(o, line.Mid - n * 1000);
+            if (a != b) vote += a ? 1 : -1;
+        }
+        return vote == 0 ? null : vote > 0 ? n : new Vec2(-n.X, -n.Y);
+    }
+
+    /// <summary>Lies alongside one of the lines: parallel within 5°, within reach, and at least half its length beside them together.</summary>
+    public static bool Alongside(Segment2 edge, IEnumerable<Segment2> lines, double reachMm)
+    {
+        double over = 0; var e = edge.Direction;
+        foreach (var l in lines)
+        {
+            var d = l.Direction;
+            if (l.Length < 1 || Math.Abs(d.X * e.X + d.Y * e.Y) < Math.Cos(5 * Math.PI / 180)) continue;
+            if (Math.Abs(SegmentCleaner.Offset(l, edge.Mid)) > reachMm) continue;
+            double T(Vec2 p) => (p - l.A).Dot(d);
+            double a = Math.Min(T(edge.A), T(edge.B)), b = Math.Max(T(edge.A), T(edge.B));
+            over += Math.Max(0, Math.Min(b, l.Length) - Math.Max(a, 0));
+        }
+        return over >= 0.5 * edge.Length;
+    }
+
+    public const double PartyReachMm = 800, MinDepthMm = 4000, MaxDepthMm = 20000, PairMinMm = 3000, SnapMm = 1500;
+
+    /// <summary>
+    /// The context to build, as one coherent set:
+    /// - each neighbour's front (its steps on one drawing) becomes a block: paired with the front of the same neighbour on
+    ///   the opposite elevation (parallel, facing the other way, behind it, overlapping half) the block runs between them;
+    ///   alone, it runs back as deep as this building does beside it (4-20 m). Sides, back and any stretch of the front no
+    ///   step covers are plain walls; the roof is a slab at the highest step.
+    /// - roof-plan blocks (over the neighbours) mostly inside a front block are left out (the elevation draws more);
+    ///   the others keep their walls, less the ones a front block already has.
+    /// - no context wall is built along this building's own outline (a party wall is this building's: built once).
+    /// </summary>
+    public static ContextPlan Plan(IReadOnlyList<ContextFront> fronts, IReadOnlyList<RoofCandidate> blocks, IReadOnlyList<SurveyLevel> levels)
+    {
+        var notes = new List<string>(); var walls = new List<ContextWall>(); var roofs = new List<RoofCandidate>();
+        // this building's own lines: its facades and every wall it builds (party walls included)
+        var ours = ElevationIndex.Facades(levels).Select(f => f.Line)
+            .Concat(levels.SelectMany(l => l.Walls.Walls.Where(w => w.Arc == null).Select(w => w.Centerline))).ToList();
+        var outlines = levels.SelectMany(l => (l.Outline != null ? new[] { l.Outline } : Array.Empty<Polygon2>()).Concat(l.MoreOutlines)).ToList();
+        int party = 0;
+        void Wall(Segment2 s, double baseZ, double topZ, string note)
+        {
+            if (s.Length < 300) return;
+            if (Alongside(s, ours, PartyReachMm)) { party++; return; }
+            walls.Add(new ContextWall(s, baseZ, topZ, note));
+        }
+        var groups = fronts.Where(f => f.Group != "").GroupBy(f => f.Group).Select(g =>
+        {
+            var l = g.ToList(); var u = l[0].Line.Direction; var o = l[0].Line.A;
+            double T(Vec2 p) => (p - o).Dot(u);
+            return (Fronts: l, U: u, N: l[0].Inward, O: o, A: l.Min(f => Math.Min(T(f.Line.A), T(f.Line.B))), B: l.Max(f => Math.Max(T(f.Line.A), T(f.Line.B))));
+        }).ToList();
+        var used = new HashSet<int>(); var boxes = new List<(Polygon2 Box, List<Segment2> Edges)>();
+        var lowered = new Dictionary<ContextFront, double>(ReferenceEqualityComparer.Instance);
+        for (int i = 0; i < groups.Count; i++)
+        {
+            if (used.Contains(i)) continue;
+            var g = groups[i]; used.Add(i);
+            double a = g.A, b = g.B, depth = 0; int pair = -1;
+            for (int j = 0; j < groups.Count; j++)
+            {
+                if (used.Contains(j)) continue;
+                var h = groups[j];
+                if (Math.Abs(h.U.Dot(g.U)) < Math.Cos(5 * Math.PI / 180) || h.N.Dot(g.N) > -0.9) continue;
+                double d = (h.O - g.O).Dot(g.N);
+                if (d < PairMinMm || d > MaxDepthMm) continue;
+                double ha = Math.Min((h.O + h.U * h.A - g.O).Dot(g.U), (h.O + h.U * h.B - g.O).Dot(g.U));
+                double hb = Math.Max((h.O + h.U * h.A - g.O).Dot(g.U), (h.O + h.U * h.B - g.O).Dot(g.U));
+                double over = Math.Min(b, hb) - Math.Max(a, ha);
+                if (over < 0.5 * Math.Min(b - a, hb - ha)) continue;
+                pair = j; depth = d; a = Math.Min(a, ha); b = Math.Max(b, hb); break;
+            }
+            if (pair >= 0) used.Add(pair);
+            else
+            {
+                // as deep as this building beside it
+                double far = outlines.SelectMany(o => o.Vertices).Select(v => (v - g.O).Dot(g.N)).DefaultIfEmpty(0).Max();
+                depth = Math.Clamp(far, MinDepthMm, MaxDepthMm);
+            }
+            var all = pair >= 0 ? g.Fronts.Concat(groups[pair].Fronts).ToList() : g.Fronts;
+            double top = all.Max(f => f.TopZ), baseZ = all.Min(f => f.BaseZ);
+            Vec2 P(double t, double s) => g.O + g.U * t + g.N * s;
+            // a side within 1.5 m of a wall of this building runs onto it (the party wall: no slot between them)
+            double Snap(double t)
+            {
+                var side = new Segment2(P(t, 0), P(t, depth));
+                var near = ours.Where(l => Alongside(side, new[] { l }, SnapMm) || Alongside(l, new[] { side }, SnapMm))
+                    .Select(l => (l.Mid - g.O).Dot(g.U)).Where(x => Math.Abs(x - t) <= SnapMm).OrderBy(x => Math.Abs(x - t)).ToList();
+                return near.Count > 0 ? near[0] : t;
+            }
+            a = Snap(a); b = Snap(b);
+            var box = new Polygon2(new[] { P(a, 0), P(b, 0), P(b, depth), P(a, depth) });
+            var edges = new List<Segment2> { new(P(a, 0), P(b, 0)), new(P(b, 0), P(b, depth)), new(P(b, depth), P(a, depth)), new(P(a, depth), P(a, 0)) };
+            boxes.Add((box, edges));
+            string note = $"Context block: {g.Fronts[0].Note.Split(',')[0]}" + (pair >= 0 ? $" and {groups[pair].Fronts[0].Note.Split(',')[0]}" : $", {depth / 1000:0.0} m deep (as this building)");
+            // the front lines' gaps (no step drawn there), the sides, and the back when no front stands there
+            foreach (var (line, mine) in new[] { (edges[0], g.Fronts), (edges[2], pair >= 0 ? groups[pair].Fronts : new List<ContextFront>()) })
+                foreach (var gap in Gaps(line, mine.Select(f => f.Line)))
+                    Wall(gap, baseZ, top, note);
+            Wall(edges[1], baseZ, top, note); Wall(edges[3], baseZ, top, note);
+            // a front that starts higher than the block (its lowest drawn line is up a storey) goes down to the block's foot
+            foreach (var f in all) lowered[f] = baseZ;
+            roofs.Add(new RoofCandidate(box, top, note));
+        }
+        int dropped = 0;
+        foreach (var r in blocks)
+        {
+            var vs = r.Outline.Vertices;
+            if (boxes.Any(bx => vs.Count(v => FacadeWalls.Contains(bx.Box, v) || bx.Edges.Any(e => Dist(v, e) <= 500)) >= 0.5 * vs.Count)) { dropped++; continue; }
+            for (int i = 0; i < vs.Count; i++)
+            {
+                var e = new Segment2(vs[i], vs[(i + 1) % vs.Count]);
+                if (Alongside(e, boxes.SelectMany(bx => bx.Edges), CoverReachMm)) continue;
+                Wall(e, double.NaN, r.ElevationMm, "Context wall: " + r.Note);
+            }
+            roofs.Add(r with { Note = "Context roof: " + r.Note });
+        }
+        notes.Add($"Context: {boxes.Count} blocks from the elevations' fronts, {roofs.Count - boxes.Count} roof-plan blocks"
+                  + (dropped > 0 ? $" ({dropped} inside a front block left out)" : "") + (party > 0 ? $"; {party} walls along this building's own outline not built (its party walls)" : "") + ".");
+        return new ContextPlan(fronts.Select(f => lowered.TryGetValue(f, out var z) && z < f.BaseZ ? f with { BaseZ = z } : f).ToList(), walls, roofs, notes);
+    }
+
+    static double Dist(Vec2 p, Segment2 s)
+    {
+        var d = s.B - s.A; double l2 = d.Dot(d);
+        double t = l2 == 0 ? 0 : Math.Clamp((p - s.A).Dot(d) / l2, 0, 1);
+        return p.DistanceTo(s.A + d * t);
+    }
+
+    /// <summary>The parts of a line no segment along it covers (pieces 300 mm or longer).</summary>
+    static IEnumerable<Segment2> Gaps(Segment2 line, IEnumerable<Segment2> covers)
+    {
+        var u = line.Direction; double len = line.Length;
+        var spans = covers.Select(c => (Math.Max(0, Math.Min((c.A - line.A).Dot(u), (c.B - line.A).Dot(u))), Math.Min(len, Math.Max((c.A - line.A).Dot(u), (c.B - line.A).Dot(u)))))
+            .Where(s => s.Item2 > s.Item1).OrderBy(s => s.Item1).ToList();
+        double at = 0;
+        foreach (var (s0, s1) in spans)
+        {
+            if (s0 - at >= 300) yield return new Segment2(line.A + u * at, line.A + u * s0);
+            at = Math.Max(at, s1);
+        }
+        if (len - at >= 300) yield return new Segment2(line.A + u * at, line.B);
     }
 
     /// <summary>
