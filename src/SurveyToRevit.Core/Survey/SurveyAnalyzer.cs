@@ -394,7 +394,19 @@ public static class SurveyAnalyzer
         var party = new List<PartyWalls.Added>();
         for (int pass = 0; pass < 3; pass++) // a floor filled in one pass can complete the floor next to it in the next
         {
-            var found = PartyWalls.Fill(levels.Select(l => ((IReadOnlyList<WallCandidate>)l.Walls.Walls.Concat(party.Where(a => a.Floor == levels.IndexOf(l)).Select(a => a.Wall)).ToList(), l.Walls.UnpairedSegments)).ToList());
+            // walls with window or door linework along them (windows are placed later): façades, not party walls
+            var opened = levels.Select(l =>
+            {
+                var marks = windowInput[l].Lines.Concat(doorInput[l]).Where(s => s.Length >= 300).ToList();
+                return l.Walls.Walls.Where(w => w.Arc == null && marks.Any(s =>
+                {
+                    var c = w.Centerline; var n = c.Direction.Perp();
+                    double along = (s.Mid - c.A).Dot(c.Direction);
+                    return along > 0 && along < c.Length && Math.Abs((s.Mid - c.A).Dot(n)) <= w.TypeThickness / 2 + 400;
+                })).ToHashSet(ReferenceEqualityComparer.Instance as IEqualityComparer<WallCandidate>);
+            }).ToList();
+            var found = PartyWalls.Fill(levels.Select(l => ((IReadOnlyList<WallCandidate>)l.Walls.Walls.Concat(party.Where(a => a.Floor == levels.IndexOf(l)).Select(a => a.Wall)).ToList(), l.Walls.UnpairedSegments)).ToList(),
+                withOpenings: opened);
             if (found.Count == 0) break;
             party.AddRange(found);
         }

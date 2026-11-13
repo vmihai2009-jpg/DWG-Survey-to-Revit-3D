@@ -47,19 +47,42 @@ public sealed class ElevationDrawing
 public static class ElevationIndex
 {
     public const double MinScore = 0.7, ColumnTolMm = 150, ColumnMergeMm = 100, FacadeReachMm = 800;
-    static readonly Regex TitleWords = new(@"\b(ELEVATION|ELEV\.|FA[CÇ]ADE)\b", RegexOptions.IgnoreCase);
+    static readonly Regex TitleWords = new(@"\b(ELEVATIONS?|ELEV\.|FA[CÇ]ADES?)\b", RegexOptions.IgnoreCase);
+    static readonly Regex Spaced = new(@"^\s*(\S\s+){3,}\S\s*$");
 
-    public static bool IsElevationSheet(SurveyDrawing d) => d.Texts.Any(t => t.Value.Length <= 60 && TitleWords.IsMatch(t.Value));
+    /// <summary>A title as words: letter-spaced titles ("N O R T H  E L E V A T I O N") closed up, word gaps (2+ spaces) kept.</summary>
+    public static string Clean(string s) => Spaced.IsMatch(s) ? Regex.Replace(Regex.Replace(s.Trim(), @"\s{2,}", "|"), @"\s", "").Replace("|", " ") : s;
+
+    static bool IsTitle(string s) { var c = Clean(s); return c.Length <= 60 && TitleWords.IsMatch(c); }
+
+    public static bool IsElevationSheet(SurveyDrawing d) => d.Texts.Any(t => IsTitle(t.Value));
+
+    static readonly Regex Datum = new(@"^\s*\+?(-?\d{1,3}\.\d{2,3})\s*m?\s*(A\.?\s?O\.?\s?D\.?|O\.?D\.?)\s*$", RegexOptions.IgnoreCase);
+
+    /// <summary>A datum mark's height in mm ("20.00m A.O.D."), on any layer; null when the text is not one.</summary>
+    public static double? DatumMm(string text) { var m = Datum.Match(text ?? ""); return m.Success ? double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) * 1000 : null; }
 
     /// <summary>The drawings on one sheet (sheet mm), each with its title, lines, window columns and level marks.</summary>
     public static List<(ElevationDrawing Drawing, List<(double X, double Y, double Mm)> Marks)> Split(SurveyDrawing d, LayerRules rules, IReadOnlyList<Segment2> lines)
     {
-        var titles = d.Texts.Where(t => t.Value.Length <= 60 && TitleWords.IsMatch(t.Value)).ToList();
+        var titles = d.Texts.Where(t => IsTitle(t.Value)).ToList();
         var res = new List<(ElevationDrawing, List<(double, double, double)>)>();
         if (titles.Count == 0) return res;
         var drawn = lines.Where(l => rules.Classify(l.Layer) is not (LayerRole.Annotation or LayerRole.LevelText or LayerRole.HeightText or LayerRole.RoomName)).ToList();
         var islands = SectionReader.Islands(drawn).Where(g => g.Count >= 20).ToList();
         var marks = d.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.LevelText).Select(t => (t.Position, Mm: LevelEstimator.ParseMm(t.Value))).Where(x => x.Mm != null).ToList();
+        // a datum mark ("20.00m A.O.D.") on any layer: its height is the flat line drawn next to it (just above or below the text);
+        // it belongs to the drawing whose title it sits by (it is drawn beside the title, outside the drawing)
+        var datums = new List<(Vec2 Text, Vec2 At, double Mm)>();
+        foreach (var t in d.Texts)
+        {
+            if (DatumMm(t.Value) is not double z) continue;
+            var line = lines.Where(l => Math.Abs(l.A.Y - l.B.Y) < 1 && Math.Abs(l.A.X - l.B.X) > 1000
+                                        && Math.Min(l.A.X, l.B.X) <= t.Position.X + 500 && Math.Max(l.A.X, l.B.X) >= t.Position.X - 3000
+                                        && Math.Abs(l.A.Y - t.Position.Y) <= 800)
+                            .OrderBy(l => Math.Abs(l.A.Y - t.Position.Y)).FirstOrDefault();
+            datums.Add((t.Position, new Vec2(t.Position.X, line?.A.Y ?? t.Position.Y), z));
+        }
         var taken = new HashSet<SurveyText>();
         foreach (var g in islands.OrderByDescending(g => g.Count))
         {
@@ -75,6 +98,9 @@ public static class ElevationIndex
             e.Columns = Columns(g.Where(s => rules.Classify(s.Layer) == LayerRole.Window).Select(s => (Math.Min(s.A.X, s.B.X), Math.Max(s.A.X, s.B.X))));
             var mine = marks.Where(m => m.Position.X >= x0 - 3000 && m.Position.X <= x1 + 3000 && m.Position.Y >= y0 - 3000 && m.Position.Y <= y1 + 3000)
                 .Select(m => (m.Position.X, m.Position.Y, m.Mm!.Value)).ToList();
+            foreach (var dm in datums)
+                if (titles.OrderBy(tt => tt.Position.DistanceTo(dm.Text)).First() == title && dm.Text.DistanceTo(title.Position) <= 12000)
+                    mine.Add((dm.At.X, dm.At.Y, dm.Mm));
             res.Add((e, mine));
         }
         return res;
@@ -121,6 +147,13 @@ public static class ElevationIndex
                         double shift = t - sg * scale * x;
                         int n = drawn.Count(xx => model.Any(tt => Math.Abs(shift + sg * scale * xx - tt) <= ColumnTolMm));
                         double sc = (double)Math.Min(n, model.Count) / denom;
+                        // a drawing wider than the facade (the street, the buildings next door drawn too): the share of the
+                        // facade's own columns found, when it has enough of them to be sure
+                        if (drawn.Count > model.Count && model.Count >= 4)
+                        {
+                            int hit = model.Count(tt => drawn.Any(xx => Math.Abs(shift + sg * scale * xx - tt) <= ColumnTolMm));
+                            sc = Math.Max(sc, 0.95 * hit / model.Count);
+                        }
                         if (sc > best.Item1 + 1e-9) best = (sc, mirrored, Math.Round(scale, 3), Math.Round(shift));
                     }
             }
@@ -132,6 +165,9 @@ public static class ElevationIndex
     {
         var one = SectionProfiles.Fit(marks.Select(m => (m.Y, m.Mm)).ToList());
         var parts = new List<ElevationPart>();
+        // one mark only (a datum line): survey elevations are drawn 1:1, so the offset alone
+        if (one == null && marks.Count >= 1 && marks.Select(m => Math.Round(m.Mm - m.Y)).Distinct().Count() == 1)
+            one = new HeightFit(1, marks[0].Mm - marks[0].Y, 0, marks.Select(m => new[] { m.Y, m.Mm }).ToList(), Array.Empty<double[]>());
         if (one == null) return parts;
         parts.Add(new ElevationPart(Math.Round(x0), Math.Round(x1), one.A, one.B, one.ResidualMm, one.Used, one.Rejected));
         if (one.Rejected.Count < 2 || marks.Count < 4) return parts;

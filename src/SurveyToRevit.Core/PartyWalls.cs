@@ -12,8 +12,11 @@ public static class PartyWalls
 
     /// <param name="floors">bottom to top: each floor's walls and its unpaired (single) drawn lines, in model mm</param>
     public static List<Added> Fill(IReadOnlyList<(IReadOnlyList<WallCandidate> Walls, IReadOnlyList<Segment2> Lines)> floors,
-        double minThickness = 100, double minLength = 2000, double edgeMm = 700, double minGap = 800)
+        double minThickness = 100, double minLength = 2000, double edgeMm = 700, double minGap = 800,
+        IReadOnlyList<HashSet<WallCandidate>>? withOpenings = null)
     {
+        // a party wall has no windows: a façade (which steps back on an upper floor) is never carried
+        bool Blank(int floor, WallCandidate w) => withOpenings == null || floor < 0 || floor >= withOpenings.Count || !withOpenings[floor].Contains(w);
         var added = new List<Added>();
         var envelopes = floors.Select(f => NeighbourWalls.Envelope(f.Walls)).ToList();
         for (int i = 0; i < floors.Count; i++)
@@ -22,8 +25,8 @@ public static class PartyWalls
             if (env == null) continue;
             var mine = floors[i].Walls;
             var sources = new List<WallCandidate>();
-            if (i > 0) sources.AddRange(floors[i - 1].Walls);
-            if (i + 1 < floors.Count) sources.AddRange(floors[i + 1].Walls);
+            if (i > 0) sources.AddRange(floors[i - 1].Walls.Where(w => Blank(i - 1, w)));
+            if (i + 1 < floors.Count) sources.AddRange(floors[i + 1].Walls.Where(w => Blank(i + 1, w)));
             var done = new List<WallCandidate>();
             foreach (var w in sources.Where(w => w.Arc == null && !w.Curtain && w.TypeThickness >= minThickness && w.Length >= minLength)
                                      .OrderByDescending(w => w.Length))
