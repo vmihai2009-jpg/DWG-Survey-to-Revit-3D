@@ -106,6 +106,14 @@ time), the cause in this repo, and the item in section 3 that removes it.
 
 ### P0: bugs and defaults that cost the most
 
+**W. A finished build's result lost to a JSON error (`SurveyPipeline.cs:173`, also :407).**
+`result.ToJsonString(new JsonSerializerOptions { WriteIndented = true })` throws inside Revit: "JsonSerializerOptions
+instance must specify a TypeInfoResolver setting before being marked as read-only". The build has finished by then,
+but `survey_build`'s answer (and the saved JSON) is lost: the Mount Row session hit it on 2026-11-13. Fix: one shared
+options instance with `TypeInfoResolver = new DefaultJsonTypeInfoResolver()`, frozen with `MakeReadOnly()`, used for
+every write (the hub fixed the same error this way in 1.3.0 and 1.36.11). Wrap the save in a try/catch so a failed
+report never loses the build's answer.
+
 **A. Roofs that are roofs (`ModelBuilder.cs:965-1024`).**
 - Create the mapping array first: `ModelCurveArray footprint = new ModelCurveArray(); _doc.Create.NewFootPrintRoof(curves, level, type, out footprint);`.
   This alone should turn the "slab fallback" into real roofs. Grep the repo for any other `out` arrays handed to
