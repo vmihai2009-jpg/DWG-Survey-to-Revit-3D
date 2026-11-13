@@ -8,6 +8,9 @@ namespace SurveyToRevit.Core;
 /// </summary>
 public static class NeighbourWalls
 {
+    /// <summary>Line tags the reading gives walls it makes itself (PierWalls, FacadeWalls, WallDetector bridges and joins).</summary>
+    static readonly HashSet<string> Generated = new(StringComparer.OrdinalIgnoreCase) { "pier", "facade", "bridge", "facade join", "window opening" };
+
     public static List<WallCandidate> Remove(IReadOnlyList<WallCandidate> walls, IEnumerable<Vec2> ownLinework, Func<string, bool> outlineLayer,
         out int removed, double marginMm = 1500, int minPoints = 40)
     {
@@ -19,7 +22,9 @@ public static class NeighbourWalls
         var kept = new List<WallCandidate>();
         foreach (var w in walls)
         {
-            bool fromOutline = outlineLayer(w.Centerline.Layer) && !w.Curtain;
+            // read from the outline layer, or made by the reading itself from outline material (piers, façade runs, bridges,
+            // joins: their line no longer carries a layer)
+            bool fromOutline = !w.Curtain && (outlineLayer(w.Centerline.Layer) || Generated.Contains(w.Centerline.Layer));
             if (fromOutline && Outside(hull, w.Centerline.Mid) > marginMm) { removed++; continue; }
             kept.Add(w);
         }

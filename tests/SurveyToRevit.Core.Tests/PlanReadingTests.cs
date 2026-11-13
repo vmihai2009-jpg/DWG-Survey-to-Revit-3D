@@ -155,6 +155,26 @@ public class PlanReadingTests
     }
 
     [Fact]
+    public void Walls_of_the_building_next_door_on_the_outline_layer_are_left_out()
+    {
+        // our building 10 x 8 m drawn on WALLS-INT (with a door), the neighbour 6 m to the east on BUILDINGS only
+        var own = new[] { S(0, 0, 10000, 0, "WALLS-INT"), S(10000, 0, 10000, 8000, "WALLS-INT"), S(10000, 8000, 0, 8000, "WALLS-INT"), S(0, 8000, 0, 0, "WALLS-INT"),
+                          S(4000, 3000, 5000, 3000, "DOORS") };
+        var pts = Enumerable.Range(0, 10).SelectMany(_ => own.SelectMany(l => new[] { l.A, l.B })).ToList();
+        WallCandidate On(double x1, double y1, double x2, double y2, string layer) => new(S(x1, y1, x2, y2, layer), 300, 300, Confidence.Low, "", "");
+        var walls = new List<WallCandidate>
+        {
+            On(0, 0, 10000, 0, "BUILDINGS"),          // our own front, on the outline layer
+            On(16000, 0, 22000, 0, "BUILDINGS"),      // next door
+            On(17000, 4000, 19000, 4000, "pier"),     // next door, made by the reading
+            On(2000, 4000, 8000, 4000, "WALLS-INT"),
+        };
+        var kept = NeighbourWalls.Remove(walls, pts, l => l == "BUILDINGS", out int removed);
+        Assert.Equal(2, removed);
+        Assert.DoesNotContain(kept, w => w.Centerline.A.X > 15000);
+    }
+
+    [Fact]
     public void Glass_broken_at_a_mullion_stays_one_window()
     {
         // two panes 40 mm apart under one frame line: one window
