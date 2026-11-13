@@ -4,6 +4,8 @@ _Last updated: 2026-10-23_
 
 ## Current milestone
 
+**0.33.0 (2026-11-13, item U of MCP-AUDIT-AND-TOOLS.md): rebuilds that keep the work done since**: matching walls and the windows and doors in them are kept on a rebuild; what others placed on changed walls is named in the preview and the log; option keep_matching. Not yet run in Revit.
+
 **0.32.0 (2026-11-13, item F of MCP-AUDIT-AND-TOOLS.md): windows from the elevations**: sills and heads from the drawn outlines on matched facades, widths where the plan's differ, and windows the plan missed added (tagged ElevationOnly). Panes not read yet. Not yet run in Revit.
 
 **0.31.0 (2026-11-13, item E of MCP-AUDIT-AND-TOOLS.md): elevations split, matched to their facade by window columns, fitted for height part by part**, in elevation-index.json. The overlay view (step 4) stays with the hub's elevation_overlay for now. Not yet run in Revit.

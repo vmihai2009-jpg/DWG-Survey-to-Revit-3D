@@ -33,6 +33,9 @@ public sealed class BuildOptions
     public SiteContext? Site { get; set; }
     /// <summary>Overlay only: coordinates, levels, plan links and section views; nothing is built.</summary>
     public bool OverlayOnly { get; set; }
+    /// <summary>On a rebuild, keep the walls (and the windows and doors in them) that match what is about to be built, so work
+    /// done on them since survives (item U). Off: every generated element of the floor is replaced, as before.</summary>
+    public bool KeepMatching { get; set; } = true;
     /// <summary>Drawings that are not a floor plan (elevations, sections, roof plans...), each linked into a drafting view of its own.</summary>
     public IReadOnlyList<string> OtherDrawings { get; set; } = Array.Empty<string>();
     /// <summary>
@@ -448,7 +451,15 @@ public sealed class ModelBuilder
             if (o.OnlyLevels != null && !o.OnlyLevels.Contains(sl.Code)) continue; // a floor left as it is
             int removed = 0;
             var done = new List<string>();
-            Step($"{sl.Name}: clearing an earlier run", done, () => removed = DeleteGenerated(sl.Code));
+            KeptWork? keep = null;
+            if (o.KeepMatching && o.Walls)
+                try { keep = Earlier(_doc, sl); } catch (Exception ex) { Log.Add($"{sl.Name}: earlier work not matched ({ex.Message}); replaced as before."); }
+            _keptOpenings = keep?.Openings ?? new HashSet<object>(ReferenceEqualityComparer.Instance);
+            Step($"{sl.Name}: clearing an earlier run", done, () => removed = DeleteGenerated(sl.Code, keep?.Ids));
+            if (keep != null && keep.Ids.Count > 0)
+                done.Add($"kept from the earlier run: {keep.Walls.Count} walls, {keep.Openings.Count} windows and doors");
+            if (keep != null && keep.Lost.Count > 0)
+                Log.Add($"{sl.Name}: {keep.Lost.Count} elements placed since on walls that changed went with them ({string.Join(", ", keep.Lost.Take(12))})");
 
             var created = new Dictionary<WallCandidate, Wall>(ReferenceEqualityComparer.Instance);
             if (o.Walls) Step($"{sl.Name}: walls, windows and doors", done, () =>
@@ -458,6 +469,7 @@ public sealed class ModelBuilder
                 {
                     var c = w.Centerline; // already in model (internal) coordinates
                     if (c.Length < 10) continue;
+                    if (keep != null && keep.Walls.TryGetValue(w, out var same)) { created[w] = same; made++; continue; }
                     try
                     {
                         Curve line = w.Arc is Arc2 a
@@ -1193,12 +1205,69 @@ public sealed class ModelBuilder
         return false;
     }
 
-    int DeleteGenerated(string levelCode)
+    HashSet<object> _keptOpenings = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>What an earlier run left on a floor that matches what is about to be built (item U), and what will go.</summary>
+    internal sealed class KeptWork
+    {
+        public Dictionary<WallCandidate, Wall> Walls { get; } = new(ReferenceEqualityComparer.Instance);
+        public HashSet<object> Openings { get; } = new(ReferenceEqualityComparer.Instance);
+        public HashSet<long> Ids { get; } = new();
+        /// <summary>Elements not made by this tool that sit on walls about to be replaced (they go with them).</summary>
+        public List<long> Lost { get; } = new();
+    }
+
+    static double OpeningWidthMm(FamilyInstance fi)
+    {
+        foreach (var p in new[] { BuiltInParameter.WINDOW_WIDTH, BuiltInParameter.DOOR_WIDTH, BuiltInParameter.FAMILY_WIDTH_PARAM })
+            if ((fi.get_Parameter(p) ?? fi.Symbol?.get_Parameter(p)) is Parameter q && q.HasValue) return Mm(q.AsDouble());
+        return 0;
+    }
+
+    internal static KeptWork Earlier(Document doc, SurveyLevel sl)
+    {
+        var keep = new KeptWork();
+        var prefix = $"{Tag}|{sl.Code}|";
+        string Note(Element e) => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
+        var oldWalls = new FilteredElementCollector(doc).OfClass(typeof(Wall)).Cast<Wall>()
+            .Where(w => Note(w).StartsWith(prefix, StringComparison.Ordinal) && w.Location is LocationCurve { Curve: Line }).ToList();
+        if (oldWalls.Count == 0) return keep;
+        var byId = oldWalls.ToDictionary(w => w.Id.Value);
+        Segment2 Seg(Wall w) { var c = ((LocationCurve)w.Location).Curve; var a = c.GetEndPoint(0); var b = c.GetEndPoint(1); return new Segment2(new Vec2(Mm(a.X), Mm(a.Y)), new Vec2(Mm(b.X), Mm(b.Y))); }
+        var cands = sl.Walls.Walls;
+        var wm = RebuildMatch.Walls(oldWalls.Select(w => (w.Id.Value, Seg(w), Mm(w.Width))).ToList(),
+            Enumerable.Range(0, cands.Count).Where(i => cands[i].Arc == null && !cands[i].Curtain).Select(i => (i, cands[i].Centerline, cands[i].TypeThickness)).ToList());
+        foreach (var (i, id) in wm) { keep.Walls[cands[i]] = byId[id]; keep.Ids.Add(id); }
+        // windows and doors of ours on the kept walls, matching ones about to be placed
+        var keptHost = keep.Walls.ToDictionary(kv => kv.Key, kv => kv.Value.Id.Value, ReferenceEqualityComparer.Instance);
+        var oldOpen = new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>()
+            .Where(f => f.Host != null && keep.Ids.Contains(f.Host.Id.Value) && Note(f).StartsWith(prefix, StringComparison.Ordinal) && f.Location is LocationPoint)
+            .Select(f => (f.Id.Value, f.Host.Id.Value, new Vec2(Mm(((LocationPoint)f.Location).Point.X), Mm(((LocationPoint)f.Location).Point.Y)), OpeningWidthMm(f))).ToList();
+        var fresh = new List<(int, long, Vec2, double)>(); var objs = new List<object>();
+        foreach (var w in sl.Windows)
+            if (keptHost.TryGetValue(cands[w.HostIndex], out var h)) { fresh.Add((objs.Count, h, w.Center, w.WidthMm)); objs.Add(w); }
+        foreach (var d in sl.Doors)
+            if (keptHost.TryGetValue(cands[d.HostIndex], out var h)) { fresh.Add((objs.Count, h, d.Center, d.WidthMm)); objs.Add(d); }
+        foreach (var (k, id) in RebuildMatch.Openings(oldOpen, fresh)) { keep.Openings.Add(objs[k]); keep.Ids.Add(id); }
+        // what others placed on walls that will be replaced
+        var going = oldWalls.Where(w => !keep.Ids.Contains(w.Id.Value)).Select(w => w.Id.Value).ToHashSet();
+        if (going.Count > 0)
+        {
+            keep.Lost.AddRange(new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>()
+                .Where(f => f.Host != null && going.Contains(f.Host.Id.Value) && !Note(f).StartsWith(Tag + "|", StringComparison.Ordinal)).Select(f => f.Id.Value));
+            keep.Lost.AddRange(new FilteredElementCollector(doc).OfClass(typeof(WallSweep)).Cast<WallSweep>()
+                .Where(s => s.GetHostIds().Any(id => going.Contains(id.Value))).Select(s => s.Id.Value));
+        }
+        return keep;
+    }
+
+    int DeleteGenerated(string levelCode, HashSet<long>? except = null)
     {
         var prefix = $"{Tag}|{levelCode}|";
         var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape), typeof(FamilyInstance), typeof(Opening), typeof(SpatialElement), typeof(Toposolid), typeof(CurveElement), typeof(Autodesk.Revit.DB.Architecture.Stairs), typeof(RoofBase) });
         var ids = new FilteredElementCollector(_doc).WherePasses(classes).WhereElementIsNotElementType()
             .Where(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(prefix) == true)
+            .Where(e => except == null || !except.Contains(e.Id.Value))
             .Select(e => e.Id).ToList();
         if (ids.Count > 0) _doc.Delete(ids);
         return ids.Count;
@@ -1213,13 +1282,13 @@ public sealed class ModelBuilder
     string CreateWindows(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created)
     {
         var (made, failed, real) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Windows, "Window",
-            sl.Windows.Where(w => !w.FromElevation).Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward, (Vec2?)null, (Vec2?)null)));
+            sl.Windows.Where(w => !w.FromElevation && !_keptOpenings.Contains(w)).Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward, (Vec2?)null, (Vec2?)null)));
         // drawn on an elevation only (item F): tagged so they can be found and checked
         int fromElevation = 0;
         if (sl.Windows.Any(w => w.FromElevation))
         {
             var (m2, f2, _) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Windows, "Window",
-                sl.Windows.Where(w => w.FromElevation).Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward, (Vec2?)null, (Vec2?)null)), "Window ElevationOnly");
+                sl.Windows.Where(w => w.FromElevation && !_keptOpenings.Contains(w)).Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward, (Vec2?)null, (Vec2?)null)), "Window ElevationOnly");
             made += m2; failed += f2; fromElevation = m2;
         }
         // a window set in an inner wall, with the façade in front of it: cut through the façade too
@@ -1240,8 +1309,8 @@ public sealed class ModelBuilder
     string CreateDoors(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created)
     {
         var (made, failed, real) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Doors, "Door",
-            sl.Doors.Where(d => !d.Double).Select(d => (d.HostIndex, d.Center, d.WidthMm, 0.0, d.HeightMm, (Vec2?)null, d.Hinge, d.Swing)));
-        var doubles = sl.Doors.Where(d => d.Double).ToList();
+            sl.Doors.Where(d => !d.Double && !_keptOpenings.Contains(d)).Select(d => (d.HostIndex, d.Center, d.WidthMm, 0.0, d.HeightMm, (Vec2?)null, d.Hinge, d.Swing)));
+        var doubles = sl.Doors.Where(d => d.Double && !_keptOpenings.Contains(d)).ToList();
         int made2 = 0, failed2 = 0;
         if (doubles.Count > 0)
             (made2, failed2, _) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Doors, "Double Door",
