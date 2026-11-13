@@ -364,6 +364,14 @@ Entry format (copy this):
 
 ## Projects side (Mihai's personal account)
 
+### 2026-11-13 (later): Survey to Revit 0.27.0, item C of MCP-AUDIT-AND-TOOLS.md: what the top of each facade is, roof-edges.json
+- Each edge of the storey below the top (a facade stretch, 2 m or more) is classed `FlatParapet`, `SetBackStorey`, `Mansard`, `Pitched` or `Unknown`, with its evidence, confidence, the class it rejected and what would settle it. Evidence, strongest first: a `facadeTop` decision **with a `line`** (x1, y1, x2, y2 along the facade: the engine doesn't know the hub's facade ids), a section profile across the stretch (High), a flat roof along a flush facade (Medium, FlatParapet), the plan alone (Low: set-back thick or windowed walls = SetBackStorey; thin windowless set-back lines = Unknown with "a section would settle it").
+- Only a Mansard from a decision or a section removes walls: the top storey's thin windowless lines along it are the plan's cut through the roof skin and are left out; walls with window lines there are kept as dormer fronts. From the plan alone nothing is removed, so a survey with no section and no decision builds exactly as before.
+- Written to `roof-edges.json` next to build-log.json (reports folder and the survey folder's `_prep`); `survey_analyze` / `survey_build` answer with `facadeTops`; Low/Medium calls are `facade-top` entries in the build log.
+- Not yet: section profiles come from item H (SectionReader doesn't publish them yet), so today the strong evidence is a decision. The mansard roof band itself is still built by the hub's `mansard_roof`.
+- **Ask:** for Swallow Place, add `facadeTop` decisions with lines for the street-front mansard and the rear set-back to `survey-decisions.json`, run `survey_analyze fresh: true`, and send `facadeTops` (and how many skin lines it left out: 13 expected).
+- Files: `src/SurveyToRevit.Core/Survey/FacadeTops.cs` (new), `Survey/SurveyAnalyzer.cs`, `Survey/SurveyDecisions.cs`, `Survey/BuildLogEntries.cs`, `Revit/Mcp/SurveyPipeline.cs`, `Revit/BuildFromSurveyCommand.cs`, `tests/.../FacadeTopTests.cs`. Version 0.27.0.
+
 ### 2026-11-13 (later): Survey to Revit 0.26.0, item T of MCP-AUDIT-AND-TOOLS.md: survey-decisions.json is read and obeyed
 - The engine reads `survey-decisions.json` from the survey folder (next to layers.txt; schema in MCP-AUDIT-AND-TOOLS.md section 0) on every analyse, and the analysis cache notices when it changes. Without the file nothing changes.
 - Acted on now: `levels` (the floor takes the decided AOD before wall heights are worked out), `notWalls` (a wall on the line, within 2° and 50 mm plus half its thickness, covering half the line, is removed; **kept and reported as contradicted when window lines lie on it**: a dormer front), `walls` (added at the given thickness, default 215, tagged `SurveyToRevit|<level>|Decision`; reported stale if a wall is already there).
