@@ -8,6 +8,10 @@ public sealed record WindowCandidate(int HostIndex, Vec2 Center, double WidthMm,
     public double HeightMm => HeadMm - SillMm;
     /// <summary>Other walls the opening must also be cut through (an outer façade in front of the wall it is set in), each at a point on that wall.</summary>
     public IReadOnlyList<(int Wall, Vec2 At)> AlsoCut { get; init; } = Array.Empty<(int, Vec2)>();
+    /// <summary>Drawn on an elevation only, not found on the plan (item F): placed, tagged ElevationOnly, worth a look.</summary>
+    public bool FromElevation { get; init; }
+    /// <summary>Where the sill and head came from when not the plan ("elevation FRONT ELEVATION"), else null.</summary>
+    public string? HeightsFrom { get; init; }
 }
 
 /// <summary>

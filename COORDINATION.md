@@ -364,6 +364,15 @@ Entry format (copy this):
 
 ## Projects side (Mihai's personal account)
 
+### 2026-11-13 (later): Survey to Revit 0.32.0, item F of MCP-AUDIT-AND-TOOLS.md: windows from the elevations
+- On each facade an elevation matched (0.31.0), the drawing's window outlines (window-layer lines grouped where under ~100 mm apart; 300 mm wide and 400 mm tall at least) are mapped onto the facade and into heights with the drawing's fit, and given to the floor whose level is at or under the sill (300 mm slack).
+- **Plan windows there take the drawn sill and head** (the plan's S/H notes are internal heights), and the drawn width where the plan's differs by more than 50 mm. `HeightsFrom` on the window says which elevation.
+- **Windows drawn but not on the plan are added** where a wall of that floor runs along the facade under the whole width and is as tall as the head; they are tagged `SurveyToRevit|<level>|Window ElevationOnly` (same family and types as the rest). Drawn windows with no wall to take them are counted in the note.
+- Not yet: panes, bars, meeting rails and arched heads (they belong on the window type, item G).
+- Nothing changes without elevations, or on facades no elevation matched.
+- **Ask:** on Swallow Place, send the "Windows from the elevations" note (the audit counted 101 windows drawn on elevations that the plan missed) and how many `Window ElevationOnly` were placed.
+- Files: `src/SurveyToRevit.Core/Survey/ElevationWindows.cs` (new), `WindowFinder.cs` (`FromElevation`, `HeightsFrom`), `Survey/SurveyAnalyzer.cs`, `Revit/ModelBuilder.cs` (`CreateWindows`, `PlaceHosted` tag), `tests/.../ElevationWindowTests.cs`. Version 0.32.0.
+
 ### 2026-11-13 (later): Survey to Revit 0.31.0, item E of MCP-AUDIT-AND-TOOLS.md (steps 1-3 and 5): elevations split, matched to their facade, fitted for height; elevation-index.json
 - Elevation sheets (a title with ELEVATION / ELEV. / FACADE) are read, also when they share a sheet with plans or sections. Each **drawing** is an island of linework (gaps of 2 m or more) with such a title within a fifth of its size; title blocks and keys have no title and fall away.
 - **Facade**: the drawing's window columns (window-layer lines merged in x, 300 mm or wider) against the model's along each edge of the ground floor's outline (F1.. in outline order; every floor's windows within 800 mm of the edge, merged within 100 mm), both ways round, 98%-102% scale; the share of columns within 150 mm, 70% or more to be taken. Each drawing gets at most one facade and each facade at most one drawing, best first. Unmatched drawings are CHECK notes saying why (too few columns drawn on a window layer, or the best facade's score).

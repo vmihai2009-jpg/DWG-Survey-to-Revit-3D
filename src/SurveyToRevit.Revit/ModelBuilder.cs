@@ -1213,14 +1213,22 @@ public sealed class ModelBuilder
     string CreateWindows(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created)
     {
         var (made, failed, real) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Windows, "Window",
-            sl.Windows.Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward, (Vec2?)null, (Vec2?)null)));
+            sl.Windows.Where(w => !w.FromElevation).Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward, (Vec2?)null, (Vec2?)null)));
+        // drawn on an elevation only (item F): tagged so they can be found and checked
+        int fromElevation = 0;
+        if (sl.Windows.Any(w => w.FromElevation))
+        {
+            var (m2, f2, _) = PlaceHosted(sl, level, created, BuiltInCategory.OST_Windows, "Window",
+                sl.Windows.Where(w => w.FromElevation).Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward, (Vec2?)null, (Vec2?)null)), "Window ElevationOnly");
+            made += m2; failed += f2; fromElevation = m2;
+        }
         // a window set in an inner wall, with the façade in front of it: cut through the façade too
         foreach (var w in sl.Windows)
             foreach (var (k, at) in w.AlsoCut)
                 if (created.TryGetValue(sl.Walls.Walls[k], out var facade))
                     try { Cut(facade, new XYZ(Ft(at.X), Ft(at.Y), level.Elevation), w.WidthMm, w.SillMm, w.HeadMm, sl.Code, "Window opening"); }
                     catch { /* does not reach this wall */ }
-        return real ? $"{made} windows" + (failed > 0 ? $" ({failed} did not fit)" : "")
+        return real ? $"{made} windows" + (fromElevation > 0 ? $" ({fromElevation} from the elevation only, tagged ElevationOnly)" : "") + (failed > 0 ? $" ({failed} did not fit)" : "")
                     : $"{made} window openings (no window family found)";
     }
 
@@ -1245,7 +1253,7 @@ public sealed class ModelBuilder
 
     (int Made, int Failed, bool Real) PlaceHosted(SurveyLevel sl, Level level, Dictionary<WallCandidate, Wall> created,
         BuiltInCategory category, string what,
-        IEnumerable<(int Host, Vec2 Center, double Width, double Bottom, double Top, Vec2? Outward, Vec2? Hinge, Vec2? Swing)> items)
+        IEnumerable<(int Host, Vec2 Center, double Width, double Bottom, double Top, Vec2? Outward, Vec2? Hinge, Vec2? Swing)> items, string? tag = null)
     {
         var family = HostedFamily(category, what);
         var symbols = new Dictionary<(double, double), FamilySymbol>();
@@ -1266,7 +1274,7 @@ public sealed class ModelBuilder
                     if (outward is Vec2 o && inst.CanFlipFacing && inst.FacingOrientation.DotProduct(new XYZ(o.X, o.Y, 0)) < 0) inst.flipFacing();
                     // a door: open to the side, and hang on the jamb, the survey's swing shows
                     if (category == BuiltInCategory.OST_Doors && (hinge != null || swing != null)) TurnDoor(inst, level, c, hinge, swing);
-                    Mark(inst, sl.Code, what);
+                    Mark(inst, sl.Code, tag ?? what);
                     _placed.Add(new Placed(inst, wall, c, width, bottom, top, what));
                 }
                 else Cut(wall, c, width, bottom, top, sl.Code, what + " opening");

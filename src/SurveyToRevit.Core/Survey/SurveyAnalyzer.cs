@@ -620,6 +620,9 @@ public static class SurveyAnalyzer
             elevations = ElevationIndex.Build(found, levels);
             notes.Add($"Elevations: {elevations.Count} drawings on {elevationSheets.Count} sheets, {elevations.Count(e => e.Facade != null)} matched to a facade.");
             foreach (var e in elevations) notes.Add((e.Facade == null ? "CHECK " : "") + e.Note + ".");
+            // item F: the matched drawings' windows set the sills and heads, and add the windows the plan missed
+            try { notes.AddRange(ElevationWindows.Apply(elevations, levels, rules).Notes); }
+            catch (Exception ex) { notes.Add($"Windows from the elevations not read ({ex.Message})."); }
         }
 
         if (topStorey != null && tops.Count > 0)
