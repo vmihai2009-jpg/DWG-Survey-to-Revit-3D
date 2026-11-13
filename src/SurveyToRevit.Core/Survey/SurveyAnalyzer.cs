@@ -590,7 +590,14 @@ public static class SurveyAnalyzer
                     if (w.Arc != null || w.Curtain || w.HeightMm != null || hosts.Contains(k) || w.Length < 500) continue;
                     var c = w.Centerline; var n = c.Direction.Perp();
                     var on = spots.Where(s => { double a = (s.P - c.A).Dot(c.Direction), o = Math.Abs((s.P - c.A).Dot(n)); return a >= 0 && a <= c.Length && o <= w.TypeThickness / 2 + 50; }).ToList();
-                    if (on.Count == 0 || on.Any(s => s.Rel < 200 || s.Rel > levels[i].WallHeightMm - 500)) continue;
+                    // every spot on it low, at least 0.3 m up (0.2 m is a kerb or a floor band), and enough of them to speak for
+                    // its whole length (one spot at one end of a long party wall says nothing about the rest)
+                    if (on.Count == 0 || on.Any(s => s.Rel < 300 || s.Rel > levels[i].WallHeightMm - 500)) continue;
+                    if (w.Length > 4000)
+                    {
+                        var at = on.Select(s => (s.P - c.A).Dot(c.Direction)).ToList();
+                        if (on.Count < Math.Ceiling(w.Length / 5000) || at.Max() - at.Min() < 0.5 * w.Length) continue;
+                    }
                     ws[k] = w with { HeightMm = Math.Round(on.Max(s => s.Rel) / 10) * 10 };
                     lowered++;
                 }
@@ -600,7 +607,9 @@ public static class SurveyAnalyzer
                     notes.Add($"{levels[i].Name}: {lowered} walls with spot heights on their top built to them (parapets, terrace and boundary walls), not a storey high.");
                 }
             }
-            if (next == null) notes.Add($"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
+            if (next == null) notes.Add(levels[i].WallHeightMm != DefaultTopWallHeightMm
+                ? $"{levels[i].Name}: top level, walls {levels[i].WallHeightMm:0} mm high, up to the lowest roof-plan spot over it (eaves / flat roof)."
+                : $"{levels[i].Name}: top level, walls given an assumed height of {DefaultTopWallHeightMm:0} mm.");
         }
 
         // a mezzanine covers part of the floor below; elsewhere that floor is double height, its walls running up past it
@@ -751,6 +760,20 @@ public static class SurveyAnalyzer
     }
 
     /// <summary>Frame from the ground floor (or lowest plan): centre of its walls rounded to 1 m, and its main wall direction.</summary>
+    /// <summary>
+    /// The top storey's wall height from the roof plan: the lowest spot height over its outline standing 2.2-4.5 m above
+    /// it (the eaves or a flat roof over the storey; higher spots are ridges and plant). Null with no roof plan or no such spot.
+    /// </summary>
+    static double? TopStoreyHeight(SurveyLevel top, IReadOnlyList<SurveyDrawing> roofPlans, SurveyFrame frame, LayerRules rules)
+    {
+        if (double.IsNaN(top.ElevationMm) || top.Outline == null) return null;
+        var rel = roofPlans.SelectMany(rp => rp.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.LevelText)
+                .Select(t => (P: frame.ToModel(t.Position), Mm: LevelEstimator.ParseMm(t.Value))))
+            .Where(s => s.Mm != null && FacadeWalls.Contains(top.Outline, s.P))
+            .Select(s => s.Mm!.Value - top.ElevationMm).Where(r => r >= 2200 && r <= 4500).OrderBy(r => r).ToList();
+        return rel.Count == 0 ? null : Math.Round(rel[0] / 10) * 10;
+    }
+
     static SurveyFrame MakeFrame(List<SurveyDrawing> plans, Tolerances tol)
     {
         var reference = plans.OrderBy(p => Math.Abs(DrawingName.DescribeLevel(p.Name.LevelCode!).Order)).FirstOrDefault();

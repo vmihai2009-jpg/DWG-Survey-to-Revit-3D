@@ -878,6 +878,9 @@ public sealed class ModelBuilder
         // the flight and shows only part of it) the reading's own count stands
         int drawn = stair.Flights.Sum(f => f.Risers.Count);
         if (drawn >= 3 && riseMm / drawn is double h && h >= 130 && h <= 220) risers = drawn;
+        // the plan shows only part of the flight (it runs on above the cut): a believable riser (~185 mm) over the storey,
+        // not the few drawn risers stretched to reach the floor above (466 mm risers)
+        if (riseMm / risers > 220) risers = Math.Max(risers, (int)Math.Round(riseMm / 185));
         double riserMm = riseMm / risers;
         using var scope = new StairsEditScope(_doc, "Survey stair");
         var id = scope.Start(level.Id, above.Id);

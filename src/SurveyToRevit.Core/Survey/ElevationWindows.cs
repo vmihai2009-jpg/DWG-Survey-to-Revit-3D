@@ -72,6 +72,10 @@ public static class ElevationWindows
                     if (k >= 0)
                     {
                         var p = list[k];
+                        // the plan's own surveyed sill and head (notes) stand; a drawn opening that would run through the floor
+                        // above (a row's sill on the wrong storey) or is far narrower/wider than the plan's is not this window
+                        if (p.HeightsFromSurvey || head > level.WallHeightMm - 50 || sill < -50
+                            || Math.Abs(p.WidthMm - w.Width) > 0.15 * p.WidthMm) continue;
                         double width = Math.Abs(p.WidthMm - w.Width) > WidthAgreeMm ? Math.Round(w.Width) : p.WidthMm;
                         if (width != p.WidthMm) widths++;
                         list[k] = p with { SillMm = sill, HeadMm = head, WidthMm = width, HeightsFrom = "elevation " + d.Title };
