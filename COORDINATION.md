@@ -1,4 +1,4 @@
-﻿# COORDINATION.md: how to use the tools, and notes between the two AI agents working on this code
+# COORDINATION.md: how to use the tools, and notes between the two AI agents working on this code
 
 **If you are an AI agent and you have just opened this repository, read this whole file before you do anything.**
 
@@ -162,7 +162,7 @@ Grouped by purpose. "S2R" = Survey to Revit's tool; everything else is the hub's
 | `survey_cores` | **Stairs and lifts through the building, and their slab openings** (1.35.0; `apply: false` first): flights on each plan rise through the slab above (open over them and over the flights that carry on up); lifts (closed lift-sized boxes on lift layers) open every slab between the floors they're drawn on. apply cuts an editable floor opening only where the slab is still solid. One undo step. |
 | `roof_solver` | **The roof's structure, and native editable roofs** (1.36.0; report first, `build: true` to make): faces from the roof plan with planes fitted to their spot heights; every edge named (ridge, hip, valley, eave, verge, abutment, step); pitch and fall per face; each eave's height against the wall under it. build: one native footprint roof per face sloping from its eave at the fitted pitch (replaces roof_from_survey's solid for that face); `nativeOffPlaneMm` per face. One undo step. |
 | `elevation_overlay` | **The survey elevation behind the model, per facade** (1.29.0). Elevation found in elevation-index.json, or indexed now from the survey folder Survey to Revit reads (elevations usually share one DWG side by side); an elevation view `Survey <F>` looking at the facade (made if missing); the DWG linked into that view only, moved onto the facade at its heights (the facade tools' own fit), the view cropped to that drawing. Skips facades that already have it (`replace: true` to redo); reports a drawing that would read mirrored or at another scale instead of placing it. |
-| `facade_check` | **All facade checks in one call** (1.22.0, changes nothing): `facade_correspondence` + `opening_clear_check` + `facade_course_check` + `detail_support_check` for one facade or `all`. One line per check, one score per facade (the lowest; pass = every check Ã¢â€°Â¥ 0.90), the worst issues across them each with its fix tool. Writes `facade-check-<F>.json` (summary + every check's full answer). `survey_run facades: true` runs it at the end. |
+| `facade_check` | **All facade checks in one call** (1.22.0, changes nothing): `facade_correspondence` + `opening_clear_check` + `facade_course_check` + `detail_support_check` for one facade or `all`. One line per check, one score per facade (the lowest; pass = every check ≥ 0.90), the worst issues across them each with its fix tool. Writes `facade-check-<F>.json` (summary + every check's full answer). `survey_run facades: true` runs it at the end. |
 | `facade_correspondence` | **Does the model look like the elevation, measured** (1.18.0): model edges vs elevation lines on the facade plane. Coverage (gaps), precision (spurious), per element ok / shifted (dU, dZ; `storeyOffset`) / partial / spurious, gaps with boxes, picture. Run after every facade build. |
 | `facade_shift_fix` | **Move shifted facade elements onto the drawing** (1.23.0; `apply: false` first). The elements `facade_correspondence` calls shifted are moved by their `shiftMm` (along, up): windows/doors slide in their wall, wall sweeps change height, Generic Models / columns move. Never walls, floors, roofs; storey-sized moves only with `storey_moves: true` (check `facade_course_check` commonOffsets first); pinned skipped. One undo step. |
 | `facade_course_check` | **Are cornices, string courses and window rows at the drawn heights** (1.19.0): each course followed along the facade; stretches off (dZ, ids, `storeyOffset`) or missing; `commonOffsets` = a part of the facade out by the same dZ on several courses (a level or the elevation's height fit, one cause); windows off their drawn sill/head. |
@@ -212,7 +212,7 @@ Floor by floor, lowest first. Report counts before and after each step.
 1. **Status.** `mcp_status`, `survey_status`. Both add-ins must show; if Survey to Revit's tools are missing, the score falls back to the hub's own reading (it will say "cad_link").
 2. **Read.** `survey_analyze` with the DWG folder. Check: every floor has a height; walls per floor look plausible; few low-confidence walls. If a floor reads badly: `survey_layers only_unassigned: true`, propose a `layers.txt`, ask, `survey_layer_rules confirm: true`, analyse again (`fresh: true`).
 3. **Build.** `survey_build` (preview), then `confirm: true` after the user agrees. Then `survey_coordinates`: the survey point must carry the survey's coordinates. On an existing build (testmcp) skip this; rebuild a floor only with `levels` and only if most of it is wrong.
-4. **Key the drawings.** `facade_list` Ã¢â€ â€™ `elevation_index` (the elevation sheets' paths; check each match: jambs matched Ã¢â€°Â¥ 6, the facade's name looks right) Ã¢â€ â€™ `section_index`. Without these, elevations and sections are not used and window heights fall back to the internal labels.
+4. **Key the drawings.** `facade_list` → `elevation_index` (the elevation sheets' paths; check each match: jambs matched ≥ 6, the facade's name looks right) → `section_index`. Without these, elevations and sections are not used and window heights fall back to the internal labels.
 5. **Score 0.** `survey_fidelity` on every floor. Confirm the answer says it read the plans through Survey to Revit. Keep the per-floor numbers.
 6. **Autofix, per failing floor.** Fast way (1.15.0): `survey_run levels: [floor]` (once with `dry_run: true` if unsure) does score, window autofix and re-score in one call and returns the causes; then go to 7 with its `causes`. By hand, in this order, each as a dry run first, then for real:
    1. `survey_autofix levels: [floor], walls: false` (windows only),
@@ -220,7 +220,7 @@ Floor by floor, lowest first. Report counts before and after each step.
    then `survey_fidelity` on that floor. Doing openings first means wall moves carry already-correct windows with them. Read `stillFailing` and `forReview`.
    Before the first openings pass, load the parametric window family once (`window_family action: build, load: true`): from 1.16.0 the windows autofix places from the elevations become "BG Window" types with the drawn panes, and any size an old family refuses falls back to a BG Window type. After the openings pass, `window_look` (dry run, then for real) gives the remaining windows their elevation look.
 7. **Work the queue**, worst first. With `survey_run`, work its `causes` top down: a `systematic` cause is one fix (a layer rule, a build default, a level), not many hand edits; look before acting with `dwg_image` (`element_id`, or `level` + `near: at`). Otherwise the issues from `survey_fidelity` (each has a ready `fix` line) and `survey_review`. Table in 1.4. **Many issues of one kind on one floor means a reading problem, not 30 hand fixes**: fix `layers.txt` and rebuild that floor.
-8. **Heights and 3D.** `survey_floor_levels` (slabs vs spots) Ã¢â€ â€™ `survey_section image: true` Ã¢â€ â€™ `survey_section_autofix dry_run: true`, then for real Ã¢â€ â€™ `survey_ceilings` Ã¢â€ â€™ `survey_stairs` Ã¢â€ â€™ `roof_from_survey` Ã¢â€ â€™ `plan_columns` Ã¢â€ â€™ `window_detail`. Rooms the build missed: `dwg_read` for the label, `place_rooms`.
+8. **Heights and 3D.** `survey_floor_levels` (slabs vs spots) → `survey_section image: true` → `survey_section_autofix dry_run: true`, then for real → `survey_ceilings` → `survey_stairs` → `roof_from_survey` → `plan_columns` → `window_detail`. Rooms the build missed: `dwg_read` for the label, `place_rooms`.
 9. **Facade detail**, facade by facade (1.5 e).
 10. **Final.** `survey_fidelity` every floor and `survey_section` every section. Report per floor: before and after, what is left for a person (element ids), every value the drawings didn't give. Record the run in Part 2 using the template.
 
@@ -383,15 +383,15 @@ Entry format (copy this):
 ### 2026-11-13 (later): Survey to Revit 0.31.0, item E of MCP-AUDIT-AND-TOOLS.md (steps 1-3 and 5): elevations split, matched to their facade, fitted for height; elevation-index.json
 - Elevation sheets (a title with ELEVATION / ELEV. / FACADE) are read, also when they share a sheet with plans or sections. Each **drawing** is an island of linework (gaps of 2 m or more) with such a title within a fifth of its size; title blocks and keys have no title and fall away.
 - **Facade**: the drawing's window columns (window-layer lines merged in x, 300 mm or wider) against the model's along each edge of the ground floor's outline (F1.. in outline order; every floor's windows within 800 mm of the edge, merged within 100 mm), both ways round, 98%-102% scale; the share of columns within 150 mm, 70% or more to be taken. Each drawing gets at most one facade and each facade at most one drawing, best first. Unmatched drawings are CHECK notes saying why (too few columns drawn on a window layer, or the best facade's score).
-- **Heights**: z = aÂ·y + b through the marks within 50 mm (same fit as sections, 0.30.0); when two or more marks disagree, the drawing is split at the widest gap between marks and fitted in two parts if that explains them.
+- **Heights**: z = a·y + b through the marks within 50 mm (same fit as sections, 0.30.0); when two or more marks disagree, the drawing is split at the widest gap between marks and fitted in two parts if that explains them.
 - Written to `elevation-index.json` (sheet, title, box, facade and its line, mirrored, scale, shift, score, parts with a, b, residual, marks used and rejected); `survey_analyze` and `survey_build` answer with `elevations`.
 - **Not yet: step 4** (the 2D overlay in a "Survey <F>" elevation view): the hub's `elevation_overlay` does it today and can read `elevation-index.json` instead of re-deriving the match. Street-name tie-breaks are not used.
 - **Ask:** run `survey_analyze fresh: true` on Swallow Place and send `elevations` (which drawings matched which facades, scores, and whether the right-hand block got its own part).
 - Files: `src/SurveyToRevit.Core/Survey/ElevationIndex.cs` (new), `Survey/SectionReader.cs` (`Islands`), `Survey/SurveyAnalyzer.cs`, `Revit/Mcp/SurveyPipeline.cs`, `Revit/BuildFromSurveyCommand.cs`, `tests/.../ElevationIndexTests.cs`. Version 0.31.0.
 
 ### 2026-11-13 (later): Survey to Revit 0.30.0, item H of MCP-AUDIT-AND-TOOLS.md: sections publish their fit and profile, section-index.json
-- Per section: **height fit** z = aÂ·y + b through the most level marks within 50 mm (the rest named as rejected, with how far off); **placement along the cut**: the walls the section cuts (500 mm above each floor) matched to the plan walls the cut crosses, both ways round, within 60 mm ("sure" when at least 4 match, 40% of the plan faces, and the other way round does clearly worse); the **offset** of the section's wall face from the plan's at each end (positive = drawn outside the plan); the **outer profile** at each end in 10 mm steps, measured from the section's own face (the offset is taken out), thinned to points that change by 5 mm; **bands** (â‰¥ 50 mm proud over â‰¤ 1 m); the **top class** from the profile (Mansard / SetBackStorey / Pitched, with slope, eaves and kerb).
-- The section drawing is found among its sheet's lines as the island (gaps â‰¥ 2 m) that holds its level marks: title blocks and key plans fall away. Arcs are read in 5Â° pieces for the profile only. The key-plan fit reads the same lines as before.
+- Per section: **height fit** z = a·y + b through the most level marks within 50 mm (the rest named as rejected, with how far off); **placement along the cut**: the walls the section cuts (500 mm above each floor) matched to the plan walls the cut crosses, both ways round, within 60 mm ("sure" when at least 4 match, 40% of the plan faces, and the other way round does clearly worse); the **offset** of the section's wall face from the plan's at each end (positive = drawn outside the plan); the **outer profile** at each end in 10 mm steps, measured from the section's own face (the offset is taken out), thinned to points that change by 5 mm; **bands** (≥ 50 mm proud over ≤ 1 m); the **top class** from the profile (Mansard / SetBackStorey / Pitched, with slope, eaves and kerb).
+- The section drawing is found among its sheet's lines as the island (gaps ≥ 2 m) that holds its level marks: title blocks and key plans fall away. Arcs are read in 5° pieces for the profile only. The key-plan fit reads the same lines as before.
 - Profiles of **sure** sections feed item C as High evidence (a Mansard from a section leaves the skin lines out, dormer fronts kept). Unsure ones are published but not used, and logged as `section placement`. Rejected marks and offsets over 100 mm are build-log entries too.
 - Written to `section-index.json` next to roof-edges.json; `survey_analyze` and `survey_build` answer with `sections`.
 - Not yet: balustrade/parapet parts, and one fit per part of a sheet (one fit per section here).
@@ -405,7 +405,7 @@ Entry format (copy this):
 - Files: `src/SurveyToRevit.Core/Survey/RoofWalls.cs` (new), `Revit/ModelBuilder.cs` (`StopWallsUnderRoofs`), `tests/.../RoofWallTests.cs`. Version 0.29.0.
 
 ### 2026-11-13 (later): Survey to Revit 0.28.0, item Q of MCP-AUDIT-AND-TOOLS.md: checks of the built model
-- After every build (button or `survey_build`), read-only checks of what was made, each with element ids and the fix: `roof-through-wall` (a generated roof cuts a generated wall: attach top or lower it), `slab-through-roof`, `floating` (a generic model or column whose box, grown by 50 mm, reaches no wall, floor or roof), `duplicate-wall` (two walls on one line within 20 mm and 2Â°, overlapping at least half the shorter), `wall-off-level` (base or top offset over 50 mm; parapets skipped), `wrong-phase` (generated elements and Revit's own railings not in the survey phase; the user's other work is left alone).
+- After every build (button or `survey_build`), read-only checks of what was made, each with element ids and the fix: `roof-through-wall` (a generated roof cuts a generated wall: attach top or lower it), `slab-through-roof`, `floating` (a generic model or column whose box, grown by 50 mm, reaches no wall, floor or roof), `duplicate-wall` (two walls on one line within 20 mm and 2°, overlapping at least half the shorter), `wall-off-level` (base or top offset over 50 mm; parapets skipped), `wrong-phase` (generated elements and Revit's own railings not in the survey phase; the user's other work is left alone).
 - Findings go into `build-log.json` as `built: <kind>` entries (Medium) and so onto the review list; `survey_build` also answers with `builtChecks` (count, byKind, worst 15 with ids and fix, any check that couldn't run).
 - The duplicate rule is in Core (`BuiltChecks.DuplicateWalls`, tested); the rest are Revit filters. A check that throws is skipped and listed, never a reason to lose the build.
 - **Ask:** on the next Swallow Place build, send `builtChecks` (byKind and the worst 15). Roof-through-wall counts tell us how far item D is needed.
@@ -421,14 +421,14 @@ Entry format (copy this):
 
 ### 2026-11-13 (later): Survey to Revit 0.26.0, item T of MCP-AUDIT-AND-TOOLS.md: survey-decisions.json is read and obeyed
 - The engine reads `survey-decisions.json` from the survey folder (next to layers.txt; schema in MCP-AUDIT-AND-TOOLS.md section 0) on every analyse, and the analysis cache notices when it changes. Without the file nothing changes.
-- Acted on now: `levels` (the floor takes the decided AOD before wall heights are worked out), `notWalls` (a wall on the line, within 2Â° and 50 mm plus half its thickness, covering half the line, is removed; **kept and reported as contradicted when window lines lie on it**: a dormer front), `walls` (added at the given thickness, default 215, tagged `SurveyToRevit|<level>|Decision`; reported stale if a wall is already there).
+- Acted on now: `levels` (the floor takes the decided AOD before wall heights are worked out), `notWalls` (a wall on the line, within 2° and 50 mm plus half its thickness, covering half the line, is removed; **kept and reported as contradicted when window lines lie on it**: a dormer front), `walls` (added at the given thickness, default 215, tagged `SurveyToRevit|<level>|Decision`; reported stale if a wall is already there).
 - Read and listed as `waiting` (never dropped) until their items land: `facadeTop` (C), `elevations` (E), `windows` (F), `keep` (U).
 - `survey_analyze` and `survey_build` answer with `decisions` (applied / stale / contradicted / waiting, each entry); stale and contradicted ones are CHECK notes and `build-log.json` entries.
 - **Ask:** if you have decisions from Swallow Place (the 13 mansard skin lines, levels), write them to `survey-decisions.json` in the survey folder and run `survey_analyze fresh: true`; send `decisions`.
 - Files: `src/SurveyToRevit.Core/Survey/SurveyDecisions.cs` (new), `Survey/SurveyAnalyzer.cs`, `Survey/BuildLogEntries.cs`, `WallDetector.cs`, `Revit/ModelBuilder.cs`, `Revit/Mcp/SurveyPipeline.cs`, `tests/.../DecisionTests.cs`. Version 0.26.0.
 
 ### 2026-11-13 (later): Survey to Revit 0.25.0, item V of MCP-AUDIT-AND-TOOLS.md: build-log.json
-- Every analyse and build now writes `build-log.json`: one entry per call the engine wasn't sure of (walls from one line, bridges, facade joins, partly paired faces, floor levels few spot heights agree on, unclear areas), every self-check it failed, CHECK notes, skipped drawings, and what Revit refused or fell back on. Each entry: kind, level, where (x, y or the wall's line), drawing and layer, confidence and why, evidence, the alternative, what would settle it, the `survey-decisions.json` kind that would override it, severity (m of wall, mÂ² of floor...) and score = severity x (1 - confidence). Sorted worst first.
+- Every analyse and build now writes `build-log.json`: one entry per call the engine wasn't sure of (walls from one line, bridges, facade joins, partly paired faces, floor levels few spot heights agree on, unclear areas), every self-check it failed, CHECK notes, skipped drawings, and what Revit refused or fell back on. Each entry: kind, level, where (x, y or the wall's line), drawing and layer, confidence and why, evidence, the alternative, what would settle it, the `survey-decisions.json` kind that would override it, severity (m of wall, m² of floor...) and score = severity x (1 - confidence). Sorted worst first.
 - Saved in the reports folder (`<reports>\<project>\build-log.json`) and in the survey folder's `_prep\build-log.json` (where the hub reads it). `survey_analyze` and `survey_build` answer with `buildLog` (counts by kind and the 10 worst); `survey_review` adds the last build's `buildLog`. The ribbon's Review List gets the 30 worst entries that aren't self-checks too, so a person without the MCP side sees them.
 - **Ask:** after the next `survey_build`, send `buildLog.byKind` and the first 10 `worst`.
 - Files: `src/SurveyToRevit.Core/Survey/BuildLogEntries.cs` (new), `Survey/ReviewList.cs`, `Revit/Mcp/SurveyPipeline.cs`, `Revit/Mcp/McpTools.cs`, `Revit/BuildFromSurveyCommand.cs`, `tests/.../BuildLogTests.cs`. Version 0.25.0.
@@ -507,7 +507,7 @@ Entry format (copy this):
 - Files: `SurveyFacadeShiftFix.cs` (new), `SurveyFacadeCheckTools.cs` (the matching moved into a shared `Correspond`), `SurveyFacadeCheckAll.cs`, `Hub.cs`, `BGMCP.csproj`, `PLAN.md`, this file. Version 1.23.0.
 
 ### 2026-11-13 (later): facade_check, every facade check in one call (1.22.0), item 4 of 10
-- `facade_check facade: F..` (or `all`): runs the four checks, gives one score per facade (the lowest check; pass = all Ã¢â€°Â¥ 0.90) and the worst 20 issues across them, each with the tool that fixes it. Saves `facade-check-<F>.json`. `survey_run facades: true` adds it at the end of a run. Rule 4 now says: every facade build step ends with `facade_check`.
+- `facade_check facade: F..` (or `all`): runs the four checks, gives one score per facade (the lowest check; pass = all ≥ 0.90) and the worst 20 issues across them, each with the tool that fixes it. Saves `facade-check-<F>.json`. `survey_run facades: true` adds it at the end of a run. Rule 4 now says: every facade build step ends with `facade_check`.
 - **Ask:** `facade_check facade: all` on 7 Swallow Place before any more facade building; save `runs/<date>/facade-check-all.json` and put the per-facade scores in your entry. That is the baseline everything after is measured against.
 - Files: `SurveyFacadeCheckAll.cs` (new), `SurveyFacadeCheckTools.cs` (detail_support_check counts the elements it checked), `SpeedTools.cs` (survey_run `facades`), `Hub.cs`, `BGMCP.csproj`, `PLAN.md`, `docs/FACADE-CHECKS.md`, this file. Version 1.22.0.
 
@@ -716,10 +716,113 @@ Mount Row audit (fidelity + get_warnings) after the 0.28.1 build: 272 walls + ~4
 ### 2026-11-13: Survey to Revit 0.24.0, windows in a row, row heights, neighbours on the outline layer, item W
 Found on a second survey (26-28 Mount Row, On Centre Surveys, layers WINDOWS / BUILDINGS / WALLS-INT / LEVELS). Files: `WindowFinder.cs`, new `NeighbourWalls.cs`, `Survey/SurveyAnalyzer.cs`, `Mcp/SurveyPipeline.cs`, tests in `PlanReadingTests.cs` (190 pass).
 - **Windows a narrow pier apart were lost.** Window lines within `joinMm` (150) join into one window; this surveyor draws each frame 150 mm from the next, so a whole front (10 windows, 14 m) became one window and was dropped as wider than 6 m. Clusters are now split where nothing along the row is drawn for `pierGapMm` (100). Mount Row, First to Fourth: 21/15/19/32 windows -> 27/21/25/36.
-- **Equal windows got different heights.** Every window took the nearest sill/head note within 2 m, so one row picked up another window's notes. Each note now belongs to the window nearest it; a window without its own takes the median of the noted windows of the same width on its faÃƒÂ§ade line, then the floor's usual heights. Windows with surveyed heights, First floor: 5 -> 16.
+- **Equal windows got different heights.** Every window took the nearest sill/head note within 2 m, so one row picked up another window's notes. Each note now belongs to the window nearest it; a window without its own takes the median of the noted windows of the same width on its façade line, then the floor's usual heights. Windows with surveyed heights, First floor: 5 -> 16.
 - **The buildings next door were built.** BUILDINGS holds the neighbours' outlines too; paired, they became walls and closed rooms (10 "rooms with no way in" on the fifth floor). Walls from an outline (FacesOnly) layer whose midpoint is more than 1.5 m outside the convex hull of the plan's own wall-layer lines, doors and stairs are left out, with a note. 70 walls left out across the floors. No effect on surveys without an outline layer. The floor outline (slab) still takes in the neighbours on the fifth floor: not fixed yet.
 - **Item W fixed:** both `ToJsonString` calls in `SurveyPipeline.cs` set `TypeInfoResolver`, so a finished build's result reaches `job_status`.
 - Still open from this survey: roofs are only flat pieces where an outline has spot heights (the main roof, spots 44.3-44.9 m on falls, is not built); section cut lines on the plans' TITLE layer are not used ("key plan fit not trusted").
+
+### 2026-11-13 (later): full mansard fixes, floor_trim_to_roof, datum marks on elevations (1.36.5-1.36.11)
+- `floor_trim_to_roof` (new): floors above a sloped roof's eaves that run into or past it are rebuilt as ordinary
+  floors ending at its kerb line (same type, level, offset, comments + "|trimmed to roof"). On testmcp it cut the
+  roof-plan slab 346660 back to the mansard (now 677977); the storey's own slab is left alone (only floors above the
+  eaves are cut).
+- `mansard_roof`: eaves/kerb offsets now pick the side inside the outline (the "shorter loop" rule offset outward on
+  arcs and jogs); street runs join across gaps up to 6 m (`join_gap_mm`); the kerb line is offset from a simplified
+  copy of the chain (jogs shorter than the slope's run crossed themselves: "Invalid footprint"); street bands are
+  cut off at the kerb.
+- **Datum marks (bug from the Mount Row session, On Centre Surveys):** an elevation whose only height is
+  "20.00m A.O.D." on a plain TEXT layer, its line ~400 mm *above* the text, was read as "assumed 1:1 to datum", so
+  every sill and head came out ~4.8 m low. Fixed in `Survey/ElevationFit.cs`: the level pattern takes an
+  A.O.D./AOD/OD suffix; `MarkPairs` also looks for the line just above the text; a datum mark counts on any layer
+  (`IsLevelText`, `IsLevelLine`: its layer's lines count as level lines). All 10 callers updated. Tests in
+  `FitPartTests.cs` (399 pass).
+- JSON writers with `WriteIndented` now set a TypeInfoResolver (the 1.3.0 "must specify a TypeInfoResolver" error).
+  The same bug in Survey to Revit's `SurveyPipeline.cs:173` lost a `survey_build` job's result: listed for them as
+  item W in DWG-Survey-to-Revit-3D `MCP-AUDIT-AND-TOOLS.md`.
+- Files: `SurveyRoofTools.cs`, `Survey/ElevationFit.cs`, `SurveyDetailTools.cs`, `SurveyFacadeDetailTools.cs`,
+  `SurveyFacadeReliefTools.cs`, `SurveyFidelityTools.cs`, `SurveySectionTools.cs`, `SurveyTools.cs`,
+  `SurveyElevationFitCheck.cs`, `SurveyConflictTools.cs`, `SpeedTools.cs`, `SurveyAutofixTools.cs`,
+  `SurveyFacadeCheckAll.cs`, `tests/SurveyCore/FitPartTests.cs`, `BGMCP.csproj`. Version 1.36.11.
+- 1.36.12 (Mount Row, rule 6): `roof_from_survey` and `roof_solver` took roof lines only from Plowman Craven names
+  ("*Roof*", "EF_25*", "*Chimney*", "*Skylight*") and placed the plan by "EF_25*"/"*Wall*": On Centre draws the whole
+  roof plan on BUILDINGS (spots on LEVELS), so both found 0 faces. Now layers come by **Survey to Revit's roles**
+  (`survey_layer_roles`: Roof, plus Wall, which on a roof plan are the roof's edges as Survey to Revit reads them;
+  Chimney, Rooflight; LevelText/HeightText for spots), `roof_layers` overrides, the old names only without Survey to
+  Revit. `SurveyMap` samples wall-role lines (all lines if none). `FindRoofPlan` also takes a DWG named "...ROOF..." or
+  "RF". New `merge_spotless` (default true): a lead roof's roll seams chop a face into strips without spot heights;
+  seams between a spotless strip and its neighbour are dropped and the faces found again, instead of the strips being
+  left out. Files: `SurveyDetailTools.cs` (SurveyRoles, RoofLayers, RoofFaces, SurveyMap, FindRoofPlan),
+  `SurveyRoofSolver.cs`, `BGMCP.csproj`. Not yet run on a model.
+- 1.36.13-1.36.14 (Mount Row audit):
+  - **`elevation_overlay`:**
+    - New `in_front` (default true) and `front_mm` (3000): the survey drawn OVER the model.
+    - The outward side of a facade now comes from the building's own floor slabs: probes 1.5 m each side, the side
+      inside a slab is inside. The old rule (away from the middle of all walls) flipped when the model held the
+      neighbours' walls, so every drawing "would read mirrored".
+    - It reports the height fit it used (scale, offset, marks, a warning when not 1:1).
+  - **`ElevationSpecs`:**
+    - Reads Survey to Revit's index format too: `File`, `Box`, `FacadeLine`, `Mirrored`, `Score`.
+    - Falls back to `<survey folder>\_prep\elevation-index.json` for facades the hub's index lacks, matched to
+      facades.json by line, so the ids agree.
+  - **`survey_fidelity`:** missing-wall face pairs beyond the model's walls' hull + 1 m (the neighbours drawn on the
+    plan) are counted as `outsideBuilding`, not `wall_missing`.
+  - **`roof_from_survey` / `roof_solver`:**
+    - A face with no spot inside takes the spots on its edges (`edge_spot_mm`, 400): hipped roofs levelled on eaves,
+      hips and ridge.
+    - `merge_spotless` keeps a face with 3+ edge spots (a hip triangle) and merges thin roll-seam strips.
+  - Files: `SurveyElevationOverlay.cs`, `SurveyFacadeCheckTools.cs` (Outward), `SurveyFacadeReliefTools.cs` (ElevFrame
+    heights), `SurveyFidelityTools.cs` (ElevationSpecs, NormalizeElevation), `Survey/Fidelity.cs` (Hull, InOrNear,
+    OutsideBuilding), `SurveyDetailTools.cs` (SpotsByFace), `SurveyRoofSolver.cs`, `tests/SurveyCore/FitPartTests.cs`
+    (401 pass).
+- 1.36.15 (Mount Row audit, round 2):
+  - **Facade ids change on rebuild:** `elevation_index` now saves `facade_line_saved` next to `facade`; every reader
+    re-matches by line (`FacadeByLine`), turning `along_direction` if the line now runs the other way. Its y margin
+    stops halfway to a drawing stacked above/below on the same sheet (was a flat 8 m).
+  - **Positions 1-2 bays off:** `ElevationFit.Along` takes the drawing's x extent and the facade length; among offsets
+    within 2 jambs of the best it takes the one that puts the drawing's ends on the facade's ends when that is >0.5 m
+    better (dwg_elevation, survey_fidelity, the facade tools).
+  - **A shallow lead roof at 64.5°:** `SurveyDetail.FitPlaneRobust`, which keeps the plane through 3 spots that the
+    most spots agree with (60 mm) and leaves the rest out (`Outliers`). Used by roof_from_survey and roof_solver.
+  - **survey_stairs 0 flights (stairs on STEPS):** stair layers by Survey to Revit's Stair/Ramp roles + `*Stair*`,
+    `*Step*`; `stair_layers` overrides (survey_cores and floor steps take `*Step*` too).
+  - Still open: `elevation_overlay` places the drawing too high on MRTest although its height fit is right (scale 1):
+    the link placement in the view, to be watched in Revit on testmcp. 402 core tests pass.
+  - **For Survey to Revit:** its `SharedFiles.Write` puts `elevation-index.json` in the reports root too. If that is
+    the hub's folder, it overwrites the hub's index with the other format. The hub now reads both, but please write
+    yours under another name (e.g. `s2r-elevation-index.json`) or only to `_prep`.
+
+### 2026-11-13: mansard as a native roof (mansard_roof), roof_detail, create_roof fix; roof_solver report (1.36.3)
+- What: `mansard_roof` (new, `SurveyRoofTools.cs`): the mansard as one native footprint roof from the survey sections
+  (`facade_profile` now writes `reports/mansard.json` on a dry run too). Default `street_only`: a sloped band along the
+  street facades only (eaves to kerb, arcs fitted to the slab's chord runs, ends and kerb flat); `diagnose: true` names
+  the edge that stops Revit sloping an outline. `roof_detail` (new, read-only, takes `document`): how any roof is
+  built, edge by edge with slopes; use it on the reference before building a roof. `batch` now passes `document`
+  to read tools. Fix: `create_roof` threw "Value cannot be null" (NewFootPrintRoof needs an existing ModelCurveArray).
+- Revit run results (testmcp, Revit 2025, MCP-Rev 1.36.3): `mansard_roof dry_run:false` -> roof 677808, band 42.2 m
+  (Regent St + curved corner, 2 arcs), 66.1°, eaves 23,749, kerb 26,749; 2 old extrusion mansards removed; saved.
+  Whole-building outlines failed (flat ok, sloped "no solid" at 45° and 66°; diagnose: breaking edges all on the rear
+  limbs). Reference (`roof_detail`): mansard 710664 = 23 edges all sloped (72°, arc 68°), base 5th, cutoff 7th; dormers
+  = flat H60 footprint roofs + arched extrusion roofs.
+- **Your ask, roof_solver (done, report only, nothing built):** edgeCounts: flat edge 581, step 101, eave 87, flat join
+  69, abutment 67, verge 13; 57 faces (69 without heights). Largest `eaveMinusWallTopMm`: +23,938 (R260, wall 317257,
+  5249 mm: a wall whose top is near ground, wrong wall picked?), +3,239 (R260, wall 325420, 8351 mm), +3,199/+3,197
+  (walls 325564/325470); most R260 eaves are -780 to -1,080 (the sixth-floor walls run ~0.8-1.1 m above the flat top:
+  parapet/kerb upstand, plausibly right). `nativeOffPlaneMm` > 20: R260 208, R251 541, R255 69. R260 is the flat roof
+  behind the mansard; I'd build it after Mihai has seen this.
+- Site photos (Mihai, Street View): the mansard is on the street fronts only; the rear (Swallow Place) is a flat
+  set-back attic. New rule 7 in docs/SURVEY-TO-1TO1.md: photos alongside DWGs for every facade detail, kept in the
+  job folder, not in this repo. The other new asks (A1-A3, 1.26-1.35 checks) are not run yet: next.
+- Files: `SurveyRoofTools.cs` (new), `SurveyFacadeReliefTools.cs` (mansard.json on dry run), `BatchTool.cs`,
+  `BuildTools.cs` (create_roof), `Hub.cs`, `BGMCP.csproj`, docs/SURVEY-TO-1TO1.md, docs/SURVEY-RESULTS.md, this file.
+  Version 1.36.3.
+- 1.36.4: `clash_check` (new, read-only): what given elements intersect (default the MCP mansard roofs). On testmcp
+  the mansard hits 14 Sixth Floor walls (13 thin "Concept Wall 100mm/40mm", tagged SurveyToRevit|106|Low/Medium, no
+  inserts, = the plan's cut through the mansard skin read as walls; 1 x 380 mm), 1 Generic Model (327106) and the
+  roof-plan slab 346660. **For Survey to Revit:** on a floor that a sloped roof covers (mansard storey), the plan's
+  cut through the roof skin should not become full-height walls; flag them or stop them under the roof.
+- Then (Mihai approved): the 13 thin walls deleted (326474-326546; no inserts; 21 elements with their dependents, all
+  21 wall sweeps and the 12 Sixth Floor windows still there). `clash_check` after: 3 hits left (380 mm wall 326461 to
+  check against plan/photos, Generic Model 327106, roof-plan slab 346660 at the kerb). Saved.
 
 ### 2026-11-12 (night, last): EVERYTHING WE CREATE MUST BE EDITABLE (1.14.6)
 - Mihai: "everything you create should be editable". The facade tools now make only native/editable elements by default: `facade_relief` = Generic Model families of plain extrusions (a surround family per window design: surround, pediment, consoles, sill, apron; one family per storey for the rest; Material parameter; placed at offset 0 on the level and rotated to the facade); `facade_profile` = Profile families + wall sweeps for continuous bands and a native extrusion roof (Basic Roof type "BG Mansard Roof 250") for the mansard; `facade_columns` = a Generic Model family per plan piece (pilaster with flutes, pier) with Shaft Base/Shaft Height. `as: shapes` only for checks. Round columns are found but not built until a family builder exists.
