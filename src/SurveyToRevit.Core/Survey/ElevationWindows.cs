@@ -1,4 +1,4 @@
-namespace SurveyToRevit.Core.Survey;
+﻿namespace SurveyToRevit.Core.Survey;
 
 /// <summary>A window drawn on an elevation, in model terms: along its facade (mm from the facade line's start) and heights above datum.</summary>
 public sealed record DrawnWindow(string Facade, double T0, double T1, double SillZ, double HeadZ)
@@ -51,7 +51,8 @@ public static class ElevationWindows
 
     public static ElevationWindowResult Apply(IReadOnlyList<ElevationDrawing> elevations, IReadOnlyList<SurveyLevel> levels, LayerRules rules)
     {
-        var notes = new List<string>(); int drawn = 0, heights = 0, widths = 0, added = 0, noWall = 0, unsure = 0;
+        var notes = new List<string>(); int drawn = 0, heights = 0, widths = 0, added = 0, noWall = 0, unsure = 0, infills = 0;
+        Why.Clear();
         foreach (var d in elevations.Where(e => e.Facade != null && e.FacadeLine != null))
         {
             var fl = d.FacadeLine!;
@@ -102,6 +103,7 @@ public static class ElevationWindows
                             && Math.Min(T(walls[i].Centerline.A), T(walls[i].Centerline.B)) <= w.T0 && Math.Max(T(walls[i].Centerline.A), T(walls[i].Centerline.B)) >= w.T1
                             && head <= level.WallHeightMm + 50)
                         .OrderBy(i => Math.Abs(SegmentCleaner.Offset(facade, walls[i].Centerline.Mid))).DefaultIfEmpty(-1).First();
+                    if (host < 0 && Infill(level, levels, facade, w, head) is int made) { host = made; walls = level.Walls.Walls; infills++; }
                     if (host < 0) { noWall++; continue; }
                     var c = walls[host].Centerline; var cd = c.Direction;
                     var onFacade = At(w.Centre);
@@ -117,8 +119,51 @@ public static class ElevationWindows
         }
         if (drawn > 0)
             notes.Add($"Windows from the elevations: {drawn} drawn on matched facades; {heights} plan windows take the drawn sill and head ({widths} the drawn width too); {added} drawn only, added (tagged ElevationOnly)"
+                      + (Why.Count > 0 ? $"; infill not made: {string.Join(", ", Why.Select(k => $"{k.Key} {k.Value}"))}" : "") + (infills > 0 ? $"; {infills} in a gap of their floor's facade under the facade above (a recessed entrance or bay): the facade wall built across the gap to take them" : "")
                       + (noWall > 0 ? $"; {noWall} drawn only with no wall of their floor along the facade to take them" : "")
                       + (unsure > 0 ? $"; {unsure} drawn only on a drawing matched under {ElevationIndex.SureScore:P0}, not added (check the match)" : "") + ".");
         return new ElevationWindowResult(drawn, heights, widths, added, noWall, notes);
     }
+
+    public const double MaxInfillMm = 8000;
+    [ThreadStatic] static Dictionary<string, int>? _why;
+    static Dictionary<string, int> Why => _why ??= new();
+
+    /// <summary>
+    /// An opening the elevation draws on its facade where the plan of its floor has no wall on the facade line, while the
+    /// floor above has one over the whole opening: a recessed entrance, garage or bay (the plan draws the door set back,
+    /// the facade above stands on a lintel). The facade wall is built across the floor's gap (between its own facade
+    /// walls' ends, at most 8 m) on the line of the wall above, as thick, so the drawn opening has its wall. Null when the
+    /// floor above has no wall there, or the gap is not bounded.
+    /// </summary>
+    static int? Infill(SurveyLevel level, IReadOnlyList<SurveyLevel> levels, Segment2 facade, DrawnWindow w, double head)
+    {
+        var above = levels.Where(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm > level.ElevationMm).OrderBy(l => l.ElevationMm).FirstOrDefault();
+        if (above == null) { Why["no floor above"] = Why.GetValueOrDefault("no floor above") + 1; return null; }
+        var dir = facade.Direction;
+        double T(Vec2 p) => (p - facade.A).Dot(dir);
+        bool On(WallCandidate x) => x.Arc == null && x.HeightMm == null && !x.Curtain
+            && Math.Abs(SegmentCleaner.Offset(facade, x.Centerline.A)) <= ElevationIndex.FacadeReachMm && Math.Abs(SegmentCleaner.Offset(facade, x.Centerline.B)) <= ElevationIndex.FacadeReachMm;
+        (double Lo, double Hi) Span(WallCandidate x) => (Math.Min(T(x.Centerline.A), T(x.Centerline.B)), Math.Max(T(x.Centerline.A), T(x.Centerline.B)));
+        // the wall above, over the whole opening
+        var over = above.Walls.Walls.Where(On).Where(x => Span(x).Lo <= w.T0 + 50 && Span(x).Hi >= w.T1 - 50).OrderByDescending(x => x.TypeThickness).FirstOrDefault();
+        if (over == null) { Why["no wall above"] = Why.GetValueOrDefault("no wall above") + 1; return null; }
+        // this floor's gap: from the nearest facade wall end before the opening to the nearest start after it
+        var own = level.Walls.Walls.Where(On).Select(Span).ToList();
+        if (own.Any(s => s.Lo < w.T1 - 50 && s.Hi > w.T0 + 50)) { Why["wall in it"] = Why.GetValueOrDefault("wall in it") + 1; return null; } // a wall stands in it: not a gap
+        double lo = own.Where(s => s.Hi <= w.T0 + 50).Select(s => s.Hi).DefaultIfEmpty(double.NaN).Max();
+        double hi = own.Where(s => s.Lo >= w.T1 - 50).Select(s => s.Lo).DefaultIfEmpty(double.NaN).Min();
+        // an open end (the floor's facade stops before the corner): the wall above's end bounds it
+        if (double.IsNaN(lo)) lo = Span(over).Lo;
+        if (double.IsNaN(hi)) hi = Span(over).Hi;
+        if (hi - lo > MaxInfillMm || hi - lo < w.Width) { Why["gap size"] = Why.GetValueOrDefault("gap size") + 1; return null; }
+        if (head > level.WallHeightMm + 50) return null;
+        var oc = over.Centerline; var od = oc.Direction;
+        Vec2 OnOver(double t) { var p = facade.A + dir * t; return oc.A + od * (p - oc.A).Dot(od); }
+        var wall = new WallCandidate(new Segment2(OnOver(lo), OnOver(hi), over.Centerline.Layer, "facade infill"), over.MeasuredThickness, over.TypeThickness, Confidence.Low, "facade infill", "facade infill");
+        var list = level.Walls.Walls.ToList(); list.Add(wall);
+        level.Walls = level.Walls with { Walls = list, ThicknessGroups = list.Select(x => x.TypeThickness).Distinct().OrderBy(x => x).ToList() };
+        return list.Count - 1;
+    }
 }
+

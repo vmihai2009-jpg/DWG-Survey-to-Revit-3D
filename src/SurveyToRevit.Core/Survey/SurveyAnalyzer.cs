@@ -703,6 +703,13 @@ public static class SurveyAnalyzer
             noHeight += n;
         }
         if (noHeight > 0) notes.Add($"{noHeight} roof areas have no spot height inside them and were left out.");
+        // a roof read from its planes stands on the walls of the floor under it (the highest a storey below its eaves)
+        roofs = roofs.Select(r =>
+        {
+            double foot = r.EavesMm ?? r.ElevationMm;
+            var under = levels.Where(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm <= foot - 1000).OrderByDescending(l => l.ElevationMm).FirstOrDefault();
+            return under == null ? r : RoofsAndDetails.OnWalls(r, under.Walls.Walls);
+        }).ToList();
         // a roof-plan area just above a floor's own slab (under 1.2 m: tiles, decking, lead on a terrace or balcony) is that
         // floor's finish, not a roof of its own: built as one it is a second slab stacked on the floor's
         {

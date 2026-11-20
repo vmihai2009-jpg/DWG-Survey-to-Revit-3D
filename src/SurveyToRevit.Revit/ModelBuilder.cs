@@ -1162,7 +1162,9 @@ public sealed class ModelBuilder
         var built = new List<(Element Roof, RoofCandidate Plan)>();
         foreach (var r in _model.Roofs)
         {
-            double top = Z(r.ElevationMm);
+            // a pitched roof stands on its eaves: the base is there and every edge slopes up to the ridge
+            bool pitched = r.EavesMm is double ev && r.ElevationMm - ev >= 150;
+            double top = Z(pitched ? r.EavesMm!.Value : r.ElevationMm);
             var level = levels.Where(l => l.Elevation <= top - thick).OrderByDescending(l => l.Elevation).FirstOrDefault() ?? levels.OrderBy(l => l.Elevation).First();
             try
             {
@@ -1170,8 +1172,24 @@ public sealed class ModelBuilder
                 var curves = new CurveArray();
                 var loop = Loop(r.Outline, level.Elevation) ?? throw new InvalidOperationException("outline too small");
                 foreach (var c in loop) curves.Append(c);
-                var roof = _doc.Create.NewFootPrintRoof(curves, level, type, out ModelCurveArray footprint);
+                // Revit 2025 wants an existing mapping array (a null one throws "Value cannot be null")
+                var footprint = new ModelCurveArray();
+                var roof = _doc.Create.NewFootPrintRoof(curves, level, type, out footprint);
                 roof.get_Parameter(BuiltInParameter.ROOF_LEVEL_OFFSET_PARAM)?.Set(top - thick - level.Elevation);
+                if (pitched)
+                {
+                    // rise over the run from the eaves to the middle: half the narrow width of the outline (area / perimeter
+                    // gives it for a rectangle: w*l / (w + l) -> w/2 when long; solved exactly here)
+                    double A = r.Outline.Area, P = 0;
+                    for (int k = 0; k < r.Outline.Vertices.Count; k++) P += r.Outline.Vertices[k].DistanceTo(r.Outline.Vertices[(k + 1) % r.Outline.Vertices.Count]);
+                    double disc = Math.Max(0, P * P / 4 - 4 * A), w = (P / 2 - Math.Sqrt(disc)) / 2;
+                    double run = Math.Max(500, w / 2), slope = (r.ElevationMm - r.EavesMm!.Value) / run;
+                    foreach (ModelCurve mc in footprint)
+                    {
+                        roof.set_DefinesSlope(mc, true);
+                        roof.set_SlopeAngle(mc, slope);
+                    }
+                }
                 Mark(roof, RoofCode, r.Note);
                 built.Add((roof, r));
                 native++;
