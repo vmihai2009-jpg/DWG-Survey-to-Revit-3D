@@ -641,6 +641,9 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-20: Survey to Revit 0.33.20, neighbour's half of the party wall against our innermost face
+The median face (0.33.19) still left No.24 0.3 m off: Mount Row's east party wall stands at x 4.5 m on 2F-4F and 4.78 m on 5F (the survey's floors disagree). The neighbour's wall now sits against the innermost face of our long (2 m+) walls on the line: it runs hidden inside the outer floors' walls instead of leaving a slot beside the inner ones. Verified on MRTest: No.24 inner face 4618 vs our 2F-4F face 4.61; No.30 inside our west wall; 3D front shows no slot. No.24's rear wing (roof-plan block) stays 0.35 m off at y -5.8..-0.8, where our east edge steps back (to check against the plan next round).
+
 ### 2026-11-20: Survey to Revit 0.33.19, audit round on Mount Row (determinism follow-ups)
 - Context party side: the neighbour's half sits against the length-weighted median face of our walls on the line, inward too (was: the max face of any wall within reach, which a thick basement wall or pier pushed 0.5 m out). Mount Row: No.30 flush with our west wall (inner face -12137 = ours); No.24 to be re-measured on the next build.
 - Partial rebuilds (levels only) no longer delete the stairs and stair blocks they do not rebuild (DeleteGenerated keepStairs).

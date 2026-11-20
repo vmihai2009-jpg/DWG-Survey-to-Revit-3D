@@ -205,12 +205,10 @@ public static class ElevationContext
                 var faces = ourWalls.Where(w => Alongside(w.Line, new[] { s }, w.T / 2 + 200)
                                                 && Math.Abs((w.Line.Mid - s.Mid).Dot(n)) <= w.T / 2 + 200)
                     .Select(w => (F: (w.Line.Mid - s.Mid).Dot(n) + w.T / 2, L: w.Line.Length)).OrderBy(x => x.F).ToList();
-                double face = PartyGapMm - 100;
-                if (faces.Count > 0)
-                {
-                    double half = faces.Sum(x => x.L) / 2, run = 0;
-                    foreach (var x in faces) { run += x.L; if (run >= half) { face = x.F; break; } }
-                }
+                // against the innermost face of the long ones (2 m or more): where floors put the party wall at different
+                // places (a survey's floors rarely agree to the mm), the neighbour's wall then runs inside the outer ones,
+                // hidden, rather than leaving a slot open beside the inner ones
+                double face = faces.Where(x => x.L >= 2000).Select(x => x.F).DefaultIfEmpty(PartyGapMm - 100).Min();
                 // inward too (the snapped line is the walls' mean centre; their face can lie inside it), at most 300 mm
                 double gap = Math.Max(face, -300) + 100;
                 s = new Segment2(s.A + n * gap, s.B + n * gap);
