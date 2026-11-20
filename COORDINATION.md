@@ -641,6 +641,23 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-20: Survey to Revit 0.33.27, pitched roofs from the roof plan
+- **Native roofs.** S2R's roofs are native Revit roofs again. `NewFootPrintRoof` needs an existing `ModelCurveArray` in Revit 2025; it had fallen back to floor slabs on every build.
+- **Pitched roofs from roof-plan planes.** Roof-plan planes with no spot height inside them are now kept. These are the planes between seams, hips and the ridge; the surveyor writes the heights on the lines.
+  - Neighbouring planes are joined across up to 300 mm of linework.
+  - A joined area whose heights fall into groups more than 1 m apart is split by group (a gutter between two roofs).
+  - The joined area becomes its box when the planes fill at least 60 % of it.
+  - The box is snapped onto the outer wall faces of the floor below, within 2 m (`RoofsAndDetails.OnWalls`).
+  - Eaves = the lowest height two spots agree on; ridge = the highest. A rise of 150 mm or more is built as a footprint roof with every edge sloping, otherwise flat.
+  - A plane roof sitting on a roof read from its own spot heights is dropped.
+- **Mount Row result.** The main roof is now built by S2R: 162 m², eaves 44.32, ridge 44.93, x -12.3..4.9, y -13.0..-3.6. It matches the hand-built 'MCP|main roof' within about 150 mm. Facade tops classed: 3 -> 7 of 10.
+- **Swallow Place.** 4 small extra roofs, 23 m², in areas that had no height before.
+- **Facade infill under recessed bays/entrances.** Code is in (`ElevationWindows.Infill`) but did not trigger on Mount Row; the log gives the reasons: no wall above 49, no floor above 6. Next round.
+- **Still open:**
+  - The hand-built roof is now a duplicate; it is the user's to delete.
+  - The 2 m² roof at x 5.8..7.9 sits on No.24.
+  - 13 roof-through-wall checks: top-storey walls run 90 mm into the roof's eaves.
+
 ### 2026-11-20: Survey to Revit 0.33.25-0.33.26, full audit round on Mount Row (plans, facades, context, roof)
 Three read-only auditors went over the 0.33.24 build. Generic fixes:
 - **Stairs:** a cut stair's last straight flight now runs on so the stair climbs the whole storey (`StairCandidate.Completed`). The B1 stair now reaches y 11.87 m, but Revit still reports "top cannot reach" on all 14 stairs. Open.
