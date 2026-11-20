@@ -641,6 +641,9 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-20: Survey to Revit 0.33.24, jambs snapped to drawn across-wall lines
+After the gap fit, each jamb of a window/door moves onto the nearest line drawn across its wall (reveal return, frame end; wall + opening layers) within 150 mm, keeping at least 85 % of the width. Mount Row openings out of tolerance 30 -> 22 (of ~210; started at 41). Note: BGMCP survey_fidelity measures jambs with the same 'nearest across line' rule, so this score is not independent; spot checks by eye are in the audit round that follows.
+
 ### 2026-11-20: Survey to Revit 0.33.21-0.33.23, doors and openings (interiors audit round)
 Mihai: focus on interiors, door positions and openings. Audit = BGMCP survey_fidelity openings vs plan jambs on MRTest, before/after each change.
 - 0.33.21 `OpeningJambs.Fit` (new, before OpeningClearance): a door read from its symbol is the leaf (hinge to swing end), a window its frame; where the host wall's face lines stop on both sides within 300 mm out / 150 mm in, the opening takes the drawn gap jamb to jamb. A line across the opening alone (threshold/head) is ignored; a face running on past both sides means no gap is drawn: unchanged. Mount Row 14 openings fitted, Swallow 69. Hosted door/window types sized to 10 mm (was rounded to 50: up to 25 mm per jamb).

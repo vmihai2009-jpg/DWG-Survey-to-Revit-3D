@@ -671,7 +671,8 @@ public static class SurveyAnalyzer
         foreach (var l in levels)
         {
             // first to the gap the plan draws in the wall, jamb to jamb (a door's leaf and a window's frame are narrower)
-            var (jd, jw) = OpeningJambs.Fit(l, l.Plan.WallLines.Select(frame.ToModel).ToList());
+            var faces = l.Plan.WallLines.Select(frame.ToModel).ToList();
+            var (jd, jw) = OpeningJambs.Fit(l, faces, faces.Concat(l.Plan.OpeningLines.Select(frame.ToModel)).ToList());
             if (jd + jw > 0) notes.Add($"{l.Name}: {jd} doors and {jw} windows set to the gap drawn in their wall, jamb to jamb.");
             var (moved, narrowed, rehosted, trimmed) = OpeningClearance.Fit(l);
             if (moved + narrowed + rehosted + trimmed > 0)

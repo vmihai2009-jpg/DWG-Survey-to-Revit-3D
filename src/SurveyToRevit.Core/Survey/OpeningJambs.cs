@@ -10,9 +10,9 @@ namespace SurveyToRevit.Core.Survey;
 /// </summary>
 public static class OpeningJambs
 {
-    public const double OutMm = 300, InMm = 150, MaxWidenMm = 500, MinShrink = 0.85;
+    public const double OutMm = 300, InMm = 150, MaxWidenMm = 500, MinShrink = 0.85, SnapMm = 150;
 
-    public static (int Doors, int Windows) Fit(SurveyLevel level, IReadOnlyList<Segment2> faceLines)
+    public static (int Doors, int Windows) Fit(SurveyLevel level, IReadOnlyList<Segment2> faceLines, IReadOnlyList<Segment2>? acrossLines = null)
     {
         var walls = level.Walls.Walls;
         int nd = 0, nw = 0;
@@ -44,15 +44,43 @@ public static class OpeningJambs
             if (Math.Abs(width - w) < 10 && Math.Abs((L + R) / 2) < 10) return null;
             return (c + d * ((L + R) / 2), width);
         }
+        // each jamb onto the nearest line drawn across the wall (a reveal return, a frame's end) within SnapMm: the frame
+        // cluster or leaf a window/door was read from rarely ends exactly at the drawn jamb
+        (Vec2 Centre, double Width)? Snap(int host, Vec2 c, double w)
+        {
+            if (host < 0 || host >= walls.Count || acrossLines == null) return null;
+            var h = walls[host];
+            if (h.Arc != null || h.Curtain) return null;
+            var d = h.Centerline.Direction; var n = d.Perp(); double reach = h.TypeThickness / 2 + 250;
+            var cands = new List<double>();
+            foreach (var l in acrossLines)
+            {
+                if (l.Length < 30 || l.Length > h.TypeThickness + 400) continue;
+                if (Math.Abs(l.Direction.Dot(d)) > 0.1) continue;
+                if (Math.Abs((l.Mid - c).Dot(n)) > reach) continue;
+                cands.Add((l.Mid - c).Dot(d));
+            }
+            double? Near(double at) => cands.Where(x => Math.Abs(x - at) <= SnapMm).OrderBy(x => Math.Abs(x - at)).Select(x => (double?)x).FirstOrDefault();
+            double L = Near(-w / 2) ?? -w / 2, R = Near(w / 2) ?? w / 2;
+            double width = Math.Round((R - L) / 10) * 10;
+            if (width < 400 || width < MinShrink * w || (Math.Abs(width - w) < 10 && Math.Abs((L + R) / 2) < 10)) return null;
+            return (c + d * ((L + R) / 2), width);
+        }
+        (Vec2 Centre, double Width)? Both(int host, Vec2 c, double w)
+        {
+            var g = Gap(host, c, w);
+            var s = g is { } gg ? Snap(host, gg.Centre, gg.Width) ?? gg : Snap(host, c, w);
+            return s;
+        }
         level.Doors = level.Doors.Select(o =>
         {
-            if (Gap(o.HostIndex, o.Center, o.WidthMm) is not { } g) return o;
+            if (Both(o.HostIndex, o.Center, o.WidthMm) is not { } g) return o;
             nd++; var shift = g.Centre - o.Center;
             return o with { Center = g.Centre, WidthMm = g.Width, Hinge = o.Hinge + shift, Swing = o.Swing + shift };
         }).ToList();
         level.Windows = level.Windows.Select(o =>
         {
-            if (Gap(o.HostIndex, o.Center, o.WidthMm) is not { } g) return o;
+            if (Both(o.HostIndex, o.Center, o.WidthMm) is not { } g) return o;
             nw++;
             return o with { Center = g.Centre, WidthMm = g.Width };
         }).ToList();
