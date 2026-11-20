@@ -439,6 +439,10 @@ public static class WallDetector
                 var gap = (q - p) * (1 / d);
                 // both walls point into the gap and roughly along it
                 if (op.Dot(gap) < cos || oq.Dot(gap * -1) < cos) continue;
+                // between walls square to the building the bridge is square too: a slanted span across a gap between
+                // square walls closes an opening (a lobby, a door) the bends rule is not for
+                static double OffAxis(Vec2 v) { double a = Math.Atan2(v.Y, v.X) * 180 / Math.PI; return Math.Abs(a - Math.Round(a / 90) * 90); }
+                if (OffAxis(op) <= 5 && OffAxis(oq) <= 5 && OffAxis(gap) > 10) continue;
                 if (d > tol.DoorGap && !openings.Any(o => DistanceToSegment(o.Mid, new Segment2(p, q)) <= Math.Max(straight[i].TypeThickness, straight[j].TypeThickness))) continue;
                 options.Add((x, y, d));
             }

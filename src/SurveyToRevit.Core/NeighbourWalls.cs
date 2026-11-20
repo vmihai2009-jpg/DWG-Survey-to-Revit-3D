@@ -26,9 +26,35 @@ public static class NeighbourWalls
             // joins: their line no longer carries a layer)
             bool fromOutline = !w.Curtain && (outlineLayer(w.Centerline.Layer) || Generated.Contains(w.Centerline.Layer));
             if (fromOutline && Outside(hull, w.Centerline.Mid) > marginMm) { removed++; continue; }
+            // a wall paired with an outline-layer face (our party wall's face with the neighbour's outline line beside it)
+            // runs on along the neighbour as far as their line does: it stops where this building's own linework ends
+            bool outlineFace = !w.Curtain && w.Arc == null && (fromOutline || outlineLayer(w.FaceA ?? "") || outlineLayer(w.FaceB ?? ""));
+            if (outlineFace && (Outside(hull, w.Centerline.A) > TrimMm || Outside(hull, w.Centerline.B) > TrimMm)
+                && Clip(w.Centerline, hull, TrimMm) is Segment2 cut && cut.Length >= 300)
+            { kept.Add(w with { Centerline = cut }); continue; }
             kept.Add(w);
         }
         return kept;
+    }
+
+    public const double TrimMm = 300;
+
+    /// <summary>The part of a segment inside the convex hull (counter-clockwise) grown by grow mm; null when none.</summary>
+    static Segment2? Clip(Segment2 s, IReadOnlyList<Vec2> hull, double grow)
+    {
+        double t0 = 0, t1 = 1; var d = s.B - s.A;
+        for (int i = 0; i < hull.Count; i++)
+        {
+            var a = hull[i]; var e = hull[(i + 1) % hull.Count] - a; double len = Math.Sqrt(e.Dot(e));
+            if (len == 0) continue;
+            // inside when cross(e, p - a)/len >= -grow
+            double f0 = e.Cross(s.A - a) / len + grow, fd = e.Cross(d) / len;
+            if (Math.Abs(fd) < 1e-12) { if (f0 < 0) return null; continue; }
+            double t = -f0 / fd;
+            if (fd > 0) t0 = Math.Max(t0, t); else t1 = Math.Min(t1, t);
+            if (t0 > t1) return null;
+        }
+        return s with { A = s.A + d * t0, B = s.A + d * t1 };
     }
 
     /// <summary>
