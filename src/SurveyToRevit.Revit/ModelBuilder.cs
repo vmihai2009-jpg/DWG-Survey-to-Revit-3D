@@ -34,8 +34,10 @@ public sealed class BuildOptions
     /// <summary>Overlay only: coordinates, levels, plan links and section views; nothing is built.</summary>
     public bool OverlayOnly { get; set; }
     /// <summary>On a rebuild, keep the walls (and the windows and doors in them) that match what is about to be built, so work
-    /// done on them since survives (item U). Off: every generated element of the floor is replaced, as before.</summary>
-    public bool KeepMatching { get; set; } = true;
+    /// done on them since survives (item U). Off (the default): every generated element of the floor is replaced, so the same
+    /// survey always builds the same model whatever an earlier run left (kept walls keep their old type, height and joins, and
+    /// which ones match depends on that earlier run).</summary>
+    public bool KeepMatching { get; set; } = false;
     /// <summary>Drawings that are not a floor plan (elevations, sections, roof plans...), each linked into a drafting view of its own.</summary>
     public IReadOnlyList<string> OtherDrawings { get; set; } = Array.Empty<string>();
     /// <summary>
@@ -151,6 +153,13 @@ public sealed class ModelBuilder
         }
         // families first, outside the floor-by-floor transactions: making our own window family opens a family document
         if (o.Windows && _model.Levels.Any(l => l.Windows.Count > 0)) HostedFamily(BuiltInCategory.OST_Windows, "Window");
+        // an earlier run's context goes first: rooms and ceilings found below must not depend on what that run left
+        if (o.Roofs && o.OnlyLevels == null)
+        {
+            using var t = new Transaction(_doc, "Survey context cleared");
+            t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
+            t.Start(); DeleteGenerated(ContextCode); t.Commit();
+        }
         BuildElements(levels, o);
         if (o.Stairs) BuildStairs(levels);
         if (o.Roofs && _model.Roofs.Count > 0) BuildRoofs(levels.Values.Select(v => v.level).ToList());
@@ -1051,6 +1060,8 @@ public sealed class ModelBuilder
         {
             Mark(e, ContextCode, what);
             if (ws != null) try { e.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM)?.Set(ws.IntegerValue); } catch { }
+            // the neighbours' walls never bound this building's rooms
+            if (e is Wall) try { e.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING)?.Set(0); } catch { }
         }
         var ground = levels.OrderBy(l => Math.Abs(l.Elevation)).First();
         var wallType = WallTypeFor(200);
