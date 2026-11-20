@@ -1265,6 +1265,11 @@ public sealed class ModelBuilder
                         try { w.AddAttachment(roof.Id, AttachmentLocation.Top); attached++; }
                         catch (Exception ex) { refused++; why ??= ex.Message; }
                         break;
+                    // a pitched roof sits on its eaves walls: they stop under it too (a flat roof's edge wall may be a parapet)
+                    case RoofWallPlace.Edge when plan.EavesMm != null:
+                        try { w.AddAttachment(roof.Id, AttachmentLocation.Top); attached++; }
+                        catch (Exception ex) { refused++; why ??= ex.Message; }
+                        break;
                     case RoofWallPlace.Edge: edge++; break;
                     default: crossing++; break;
                 }

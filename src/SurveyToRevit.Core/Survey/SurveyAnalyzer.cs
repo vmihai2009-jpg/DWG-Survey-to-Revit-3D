@@ -731,8 +731,16 @@ public static class SurveyAnalyzer
         if (neighbourTotal > 0 && NeighbourWalls.Envelope(levels.SelectMany(l => l.Walls.Walls)) is { } whole)
         {
             int before = roofs.Count;
-            bool Ours(RoofCandidate r) => r.Outline.Vertices.Count < 3
-                || NeighbourWalls.Outside(whole, new Vec2(r.Outline.Vertices.Average(v => v.X), r.Outline.Vertices.Average(v => v.Y))) <= 500;
+            // over this building: near its walls' envelope and over one of its floors (the envelope is convex: a neighbour's
+            // roof in the corner of an L-shaped plan lies inside it but over none of the floors)
+            bool Ours(RoofCandidate r)
+            {
+                if (r.Outline.Vertices.Count < 3) return true;
+                var mid = new Vec2(r.Outline.Vertices.Average(v => v.X), r.Outline.Vertices.Average(v => v.Y));
+                if (NeighbourWalls.Outside(whole, mid) > 500) return false;
+                var floors = levels.Where(l => l.Outline != null).ToList();
+                return floors.Count == 0 || floors.Any(l => FacadeWalls.Contains(l.Outline!, mid));
+            }
             context = roofs.Where(r => !Ours(r)).ToList();
             roofs = roofs.Where(Ours).ToList();
             if (roofs.Count < before) notes.Add($"{before - roofs.Count} roof areas over the buildings next door: built as context (their own workset), not as this building's roofs.");

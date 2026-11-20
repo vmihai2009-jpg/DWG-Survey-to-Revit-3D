@@ -22,9 +22,11 @@ internal static class BuiltModelChecks
     {
         var found = new List<BuiltFinding>();
         var gen = SurveyPipeline.Generated(doc).Select(g => g.Element).ToList();
-        var walls = gen.OfType<Wall>().ToList();
-        var floors = gen.OfType<Floor>().ToList();
-        var roofs = gen.OfType<RoofBase>().ToList();
+        // the buildings next door (context) meet this building's roofs and slabs at the party wall by design
+        bool Context(Element e) => (e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "").Contains("|CONTEXT|");
+        var walls = gen.OfType<Wall>().Where(w => !Context(w)).ToList();
+        var floors = gen.OfType<Floor>().Where(f => !Context(f)).ToList();
+        var roofs = gen.OfType<RoofBase>().Where(r => !Context(r)).ToList();
         void Try(string what, Action a) { try { a(); } catch (Exception ex) { problems?.Add($"{what}: {ex.Message}"); } }
 
         // roofs through walls and slabs (item D will stop walls under roofs; until then, say where)

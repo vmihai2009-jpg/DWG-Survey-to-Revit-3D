@@ -3,6 +3,8 @@
 /// <summary>A window drawn on an elevation, in model terms: along its facade (mm from the facade line's start) and heights above datum.</summary>
 public sealed record DrawnWindow(string Facade, double T0, double T1, double SillZ, double HeadZ)
 {
+    /// <summary>Drawn on a door layer: a door or an entrance/garage opening (used only where the plan has no door on the facade there).</summary>
+    public bool Door { get; init; }
     public double Centre => (T0 + T1) / 2;
     public double Width => T1 - T0;
 }
@@ -30,15 +32,15 @@ public static class ElevationWindows
         var res = new List<DrawnWindow>();
         if (d.Facade == null || d.Parts.Count == 0) return res;
         int sg = d.Mirrored ? -1 : 1;
-        var lines = d.Lines.Where(s => rules.Classify(s.Layer) == LayerRole.Window).ToList();
-        foreach (var g in SectionReader.Islands(lines, GroupGapMm))
+        foreach (var role in new[] { LayerRole.Window, LayerRole.Door })
+        foreach (var g in SectionReader.Islands(d.Lines.Where(s => rules.Classify(s.Layer) == role).ToList(), GroupGapMm))
         {
             double x0 = g.Min(s => Math.Min(s.A.X, s.B.X)), x1 = g.Max(s => Math.Max(s.A.X, s.B.X));
             double y0 = g.Min(s => Math.Min(s.A.Y, s.B.Y)), y1 = g.Max(s => Math.Max(s.A.Y, s.B.Y));
             var part = d.Parts.FirstOrDefault(p => (x0 + x1) / 2 >= p.X0 && (x0 + x1) / 2 <= p.X1) ?? d.Parts[0];
             double z0 = part.A * y0 + part.B, z1 = part.A * y1 + part.B;
             double ta = d.ShiftMm + sg * d.Scale * x0, tb = d.ShiftMm + sg * d.Scale * x1;
-            var w = new DrawnWindow(d.Facade, Math.Min(ta, tb), Math.Max(ta, tb), z0, z1);
+            var w = new DrawnWindow(d.Facade, Math.Min(ta, tb), Math.Max(ta, tb), z0, z1) { Door = role == LayerRole.Door };
             if (w.Width < MinWidthMm || z1 - z0 < MinHeightMm || z1 - z0 > MaxHeightMm) continue;
             res.Add(w);
         }
@@ -51,7 +53,7 @@ public static class ElevationWindows
 
     public static ElevationWindowResult Apply(IReadOnlyList<ElevationDrawing> elevations, IReadOnlyList<SurveyLevel> levels, LayerRules rules)
     {
-        var notes = new List<string>(); int drawn = 0, heights = 0, widths = 0, added = 0, noWall = 0, unsure = 0, infills = 0;
+        var notes = new List<string>(); int drawn = 0, heights = 0, widths = 0, added = 0, noWall = 0, unsure = 0, infills = 0, nextDoor = 0;
         Why.Clear();
         foreach (var d in elevations.Where(e => e.Facade != null && e.FacadeLine != null))
         {
@@ -96,6 +98,8 @@ public static class ElevationWindows
                     // drawn only: a wall of this floor along the facade, under the window's whole width and as tall as its head;
                     // only from a sure match (a drawing matched a bay off would add a whole row of windows in the wrong place)
                     if (d.Score < ElevationIndex.SureScore) { unsure++; continue; }
+                    // past the ends of this building's facade: the buildings next door, drawn on the same elevation (context)
+                    if (w.T1 < -100 || w.T0 > facade.Length + 100) { nextDoor++; continue; }
                     var walls = level.Walls.Walls;
                     int host = Enumerable.Range(0, walls.Count).Where(i => walls[i].Arc == null && walls[i].HeightMm == null
                             && Math.Abs(SegmentCleaner.Offset(facade, walls[i].Centerline.A)) <= ElevationIndex.FacadeReachMm
@@ -119,7 +123,7 @@ public static class ElevationWindows
         }
         if (drawn > 0)
             notes.Add($"Windows from the elevations: {drawn} drawn on matched facades; {heights} plan windows take the drawn sill and head ({widths} the drawn width too); {added} drawn only, added (tagged ElevationOnly)"
-                      + (Why.Count > 0 ? $"; infill not made: {string.Join(", ", Why.Select(k => $"{k.Key} {k.Value}"))}" : "") + (infills > 0 ? $"; {infills} in a gap of their floor's facade under the facade above (a recessed entrance or bay): the facade wall built across the gap to take them" : "")
+                      + (nextDoor > 0 ? $"; {nextDoor} past the facade's ends (the buildings next door, built as context)" : "") + (Why.Count > 0 ? $"; infill not made: {string.Join(", ", Why.Select(k => $"{k.Key} {k.Value}"))}" : "") + (infills > 0 ? $"; {infills} in a gap of their floor's facade under the facade above (a recessed entrance or bay): the facade wall built across the gap to take them" : "")
                       + (noWall > 0 ? $"; {noWall} drawn only with no wall of their floor along the facade to take them" : "")
                       + (unsure > 0 ? $"; {unsure} drawn only on a drawing matched under {ElevationIndex.SureScore:P0}, not added (check the match)" : "") + ".");
         return new ElevationWindowResult(drawn, heights, widths, added, noWall, notes);
@@ -147,10 +151,10 @@ public static class ElevationWindows
         (double Lo, double Hi) Span(WallCandidate x) => (Math.Min(T(x.Centerline.A), T(x.Centerline.B)), Math.Max(T(x.Centerline.A), T(x.Centerline.B)));
         // the wall above, over the whole opening
         var over = above.Walls.Walls.Where(On).Where(x => Span(x).Lo <= w.T0 + 50 && Span(x).Hi >= w.T1 - 50).OrderByDescending(x => x.TypeThickness).FirstOrDefault();
-        if (over == null) { Why["no wall above"] = Why.GetValueOrDefault("no wall above") + 1; return null; }
+        if (over == null) { var key = "no wall above"; Why[key] = Why.GetValueOrDefault(key) + 1; return null; }
         // this floor's gap: from the nearest facade wall end before the opening to the nearest start after it
         var own = level.Walls.Walls.Where(On).Select(Span).ToList();
-        if (own.Any(s => s.Lo < w.T1 - 50 && s.Hi > w.T0 + 50)) { Why["wall in it"] = Why.GetValueOrDefault("wall in it") + 1; return null; } // a wall stands in it: not a gap
+        if (own.Any(s => s.Lo < w.T1 - 50 && s.Hi > w.T0 + 50)) { var key = "a wall already in the gap"; Why[key] = Why.GetValueOrDefault(key) + 1; return null; } // a wall stands in it: not a gap
         double lo = own.Where(s => s.Hi <= w.T0 + 50).Select(s => s.Hi).DefaultIfEmpty(double.NaN).Max();
         double hi = own.Where(s => s.Lo >= w.T1 - 50).Select(s => s.Lo).DefaultIfEmpty(double.NaN).Min();
         // an open end (the floor's facade stops before the corner): the wall above's end bounds it
