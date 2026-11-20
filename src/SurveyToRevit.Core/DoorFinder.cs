@@ -279,6 +279,10 @@ public static class DoorFinder
     // a wall across an empty opening, run on at each end to the wall body forming the jamb (up to 400 mm), as thick as those walls (100–300 mm)
     static WallCandidate AcrossOpening(Vec2 a, Vec2 b, List<WallCandidate> walls, IReadOnlyList<double>? sizes)
     {
+        // the jambs: a free wall end at the opening's ends. A door drawn swung open gives a slanted hinge-to-tip line; the
+        // opening lies in the wall the door continues, so with a jamb wall at either end the opening runs on from that
+        // wall's end along its axis (both ends: jamb to jamb), as thick as the wall it is in, not the leaf's slant
+        if (Jambs(a, b, walls, sizes) is { } jamb) return jamb;
         var u = (b - a).Normalized();
         var hits = new List<WallCandidate>();
         Vec2 Run(Vec2 p, Vec2 dir)
@@ -300,9 +304,68 @@ public static class DoorFinder
             a = mid - u * half; b = mid + u * half;
         }
         var s = Run(a, u * -1); var e = Run(b, u);
-        double t = hits.Count > 0 ? Math.Clamp(hits.Min(h => h.TypeThickness), 100, 300) : 100;
+        // as thick as the wall the door sits in (the jamb walls in line with it), not a thick wall it meets end-on
+        var inLine = hits.Where(h => h.Arc == null && SegmentCleaner.AngleDiffDeg(h.Centerline.AngleDeg, Math.Atan2(u.Y, u.X) * 180 / Math.PI) <= 15).ToList();
+        double t = inLine.Count > 0 ? Math.Clamp(inLine.Min(h => h.TypeThickness), 100, 300)
+                 : hits.Count > 0 ? Math.Clamp(hits.Min(h => h.TypeThickness), 100, 300) : 100;
         double type = sizes != null && sizes.Count > 0 ? WallDetector.SnapThickness(t, sizes) : t;
         return new WallCandidate(new Segment2(s, e, "door opening", "door opening"), t, type, Confidence.Low, "door opening", "door opening");
+    }
+
+    public const double JambReachMm = 450;
+
+    /// <summary>
+    /// The opening between the jamb walls at a door's ends, when its own line is slanted (more than 6° off square to the
+    /// building) and a wall ends within <see cref="JambReachMm"/> of either end of it: jamb to jamb when both ends have one
+    /// in line, else from the one jamb along its wall's axis for the door's width. Null when no jamb fits.
+    /// </summary>
+    static WallCandidate? Jambs(Vec2 a, Vec2 b, List<WallCandidate> walls, IReadOnlyList<double>? sizes)
+    {
+        double width = a.DistanceTo(b);
+        var u0 = (b - a).Normalized();
+        double ang = Math.Atan2(u0.Y, u0.X) * 180 / Math.PI;
+        if (Math.Abs(ang - Math.Round(ang / 90) * 90) <= 6) return null;
+        (Vec2 End, Vec2 Out, WallCandidate W)? Near(Vec2 p)
+        {
+            (Vec2, Vec2, WallCandidate)? best = null; double bd = JambReachMm;
+            foreach (var w in walls)
+            {
+                if (w.Curtain || w.Arc != null || w.FaceA == "door opening" || w.Centerline.Length < 300) continue;
+                var cl = w.Centerline;
+                foreach (var (e, o) in new[] { (cl.A, cl.Direction * -1), (cl.B, cl.Direction) })
+                {
+                    double d = e.DistanceTo(p);
+                    // the end must be free: no other wall's body there
+                    if (d >= bd || walls.Any(x => !ReferenceEquals(x, w) && x.FaceA != "door opening" && Body(x, e + o * 60))) continue;
+                    bd = d; best = (e, o, w);
+                }
+            }
+            return best;
+        }
+        var ja = Near(a); var jb = Near(b);
+        WallCandidate Make(Vec2 s, Vec2 e, double t)
+        {
+            double type = sizes != null && sizes.Count > 0 ? WallDetector.SnapThickness(t, sizes) : t;
+            return new WallCandidate(new Segment2(s, e, "door opening", "door opening"), t, type, Confidence.Low, "door opening", "door opening");
+        }
+        // both jambs, facing each other in line: the gap between them
+        if (ja is { } x && jb is { } y && !ReferenceEquals(x.W, y.W))
+        {
+            double gap = x.End.DistanceTo(y.End);
+            var g = (y.End - x.End).Normalized();
+            if (gap >= 0.7 * width && gap <= 1.5 * width && x.Out.Dot(g) > 0.97 && y.Out.Dot(g) < -0.97)
+                return Make(x.End, y.End, Math.Min(x.W.TypeThickness, y.W.TypeThickness));
+        }
+        // one jamb: on along its wall for the door's width
+        foreach (var j in new[] { ja, jb })
+            if (j is { } k)
+            {
+                var e = k.End + k.Out * width;
+                // the far end must land near the door's other end's reach (not off into a room)
+                if (Math.Min(e.DistanceTo(a), e.DistanceTo(b)) > width) continue;
+                return Make(k.End, e, k.W.TypeThickness);
+            }
+        return null;
     }
 
     static bool Body(WallCandidate w, Vec2 p)

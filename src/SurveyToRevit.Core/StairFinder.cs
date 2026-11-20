@@ -23,6 +23,23 @@ public sealed record StairCandidate(IReadOnlyList<StairFlight> Flights, bool Dir
 {
     public int Risers => Flights.Sum(f => f.Risers.Count);
 
+    /// <summary>
+    /// The stair with <paramref name="risers"/> risers in all: a plan cut shows only the treads below the cut, so a stair
+    /// drawn with fewer risers than the storey needs runs on past its last drawn riser, the same way at the same going
+    /// (a straight last flight only; otherwise unchanged). Then the sketched runs climb the whole storey, not part of it.
+    /// </summary>
+    public StairCandidate Completed(int risers)
+    {
+        int missing = risers - Risers;
+        if (missing <= 0 || Flights.Count == 0) return this;
+        var last = Flights[^1];
+        if (last.Risers.Count < 2 || last.Curved || last.Going < 150 || last.Going > 400) return this;
+        var step = (last.Risers[^1].Mid - last.Risers[^2].Mid).Normalized() * last.Going;
+        var more = last.Risers.ToList();
+        for (int k = 1; k <= missing; k++) more.Add(new Segment2(last.Risers[^1].A + step * k, last.Risers[^1].B + step * k));
+        return this with { Flights = Flights.Take(Flights.Count - 1).Append(new StairFlight(more)).ToList() };
+    }
+
     /// <summary>The stair's footprint (flights and the landings between them) as a convex outline, grown by a margin: the opening it needs in the floor above.</summary>
     public Polygon2 Footprint(double margin = 50)
     {

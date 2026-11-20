@@ -275,7 +275,11 @@ public static class ElevationContext
             // the front lines' gaps (no step drawn there), the sides, and the back when no front stands there
             foreach (var (line, mine) in new[] { (edges[0], g.Fronts), (edges[2], pair >= 0 ? groups[pair].Fronts : new List<ContextFront>()) })
                 foreach (var gap in Gaps(line, mine.Select(f => f.Line)))
-                    Wall(gap, baseZ, top, note);
+                    // in the front's plane: only the stretch this building's own lines there do not cover (our facade
+                    // runs on past the party line by its wall's thickness; the rest up to the neighbour's flank is theirs)
+                    foreach (var rest in Gaps(gap, ours.Where(l => l.Length >= 1 && Math.Abs(l.Direction.Dot(gap.Direction)) >= Math.Cos(5 * Math.PI / 180)
+                                                        && Math.Abs(SegmentCleaner.Offset(l, gap.Mid)) <= PartyReachMm)))
+                        walls.Add(new ContextWall(rest, baseZ, top, note));
             var mid = P((a + b) / 2, depth / 2);
             Wall(edges[1], baseZ, top, note, mid); Wall(edges[3], baseZ, top, note, mid);
             // a front that starts higher than the block (its lowest drawn line is up a storey) goes down to the block's foot

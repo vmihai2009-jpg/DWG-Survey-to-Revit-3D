@@ -21,6 +21,7 @@ public sealed record ElevationWindowResult(int Drawn, int HeightsSet, int Widths
 /// </summary>
 public static class ElevationWindows
 {
+    public const double HeadAgreeMm = 100;
     public const double WidthAgreeMm = 50, MinWidthMm = 300, MinHeightMm = 400, MaxHeightMm = 6000, GroupGapMm = 100;
 
     /// <summary>Window outlines on a matched drawing: its window-layer lines grouped (gaps under ~100 mm), each group's box mapped to the facade and to heights.</summary>
@@ -74,8 +75,17 @@ public static class ElevationWindows
                         var p = list[k];
                         // the plan's own surveyed sill and head (notes) stand; a drawn opening that would run through the floor
                         // above (a row's sill on the wrong storey) or is far narrower/wider than the plan's is not this window
-                        if (p.HeightsFromSurvey || head > level.WallHeightMm - 50 || sill < -50
-                            || Math.Abs(p.WidthMm - w.Width) > 0.15 * p.WidthMm) continue;
+                        if (head > level.WallHeightMm - 50 || sill < -50 || Math.Abs(p.WidthMm - w.Width) > 0.15 * p.WidthMm) continue;
+                        if (p.HeightsFromSurvey)
+                        {
+                            // a plan's head note is taken inside, under the lintel or a louvre; the elevation draws the opening
+                            // in the wall face, which is what the model shows: its head wins where they differ by more than
+                            // HeadAgreeMm (the sill note, agreeing within that, stands)
+                            if (d.Score < ElevationIndex.SureScore || Math.Abs(p.HeadMm - head) <= HeadAgreeMm || head <= p.SillMm + 300) continue;
+                            list[k] = p with { HeadMm = head, HeightsFrom = "plan sill, head from elevation " + d.Title };
+                            heights++; changed = true;
+                            continue;
+                        }
                         double width = Math.Abs(p.WidthMm - w.Width) > WidthAgreeMm ? Math.Round(w.Width) : p.WidthMm;
                         if (width != p.WidthMm) widths++;
                         list[k] = p with { SillMm = sill, HeadMm = head, WidthMm = width, HeightsFrom = "elevation " + d.Title };

@@ -195,7 +195,10 @@ public static class WallDetector
         var t = tol.SingleLineWallThickness;
         foreach (var s in unpaired.Where(s => s.Length >= tol.MinSingleLineWall && facesOnly?.Invoke(s.Layer) != true))
         {
-            if (outline != null && !FacadeWalls.Contains(outline, s.Mid)) continue;
+            // a line on the building's edge (a party wall drawn by its inside face only) lies on the outline itself: inside
+            // when the line or a point just in from it on either side is
+            var nIn = s.Direction.Perp() * (t + 50);
+            if (outline != null && !FacadeWalls.Contains(outline, s.Mid) && !FacadeWalls.Contains(outline, s.Mid + nIn) && !FacadeWalls.Contains(outline, s.Mid - nIn)) continue;
             bool isFace = result.Any(w =>
             {
                 var c = w.Centerline;
@@ -536,7 +539,22 @@ public static class WallDetector
                 if (p.DistanceTo(c) > tol.JoinGap) added.Add(Piece(p, c, wa));
                 if (q.DistanceTo(c) > tol.JoinGap) added.Add(Piece(q, c, wb));
             }
-            else added.Add(Piece(p, q, wa.TypeThickness <= wb.TypeThickness ? wa : wb));
+            else
+            {
+                var thin = wa.TypeThickness <= wb.TypeThickness ? wa : wb;
+                var g = (q - p) * (1 / d);
+                // a straight span in line with either wall; two walls side by side but offset: run the first on, then
+                // square across to the second (a slanted span across a corner is not what was built)
+                if (Math.Abs(g.Dot(op)) >= Math.Cos(10 * Math.PI / 180) || Math.Abs(g.Dot(oq)) >= Math.Cos(10 * Math.PI / 180))
+                    added.Add(Piece(p, q, thin));
+                else if (Math.Abs(den) <= 0.05)
+                {
+                    var m = p + op * (q - p).Dot(op);
+                    if (p.DistanceTo(m) > tol.JoinGap) added.Add(Piece(p, m, wa));
+                    if (m.DistanceTo(q) > tol.JoinGap) added.Add(Piece(m, q, thin));
+                }
+                // otherwise left open: nothing square fits
+            }
         }
         return walls.Concat(added).ToList();
     }

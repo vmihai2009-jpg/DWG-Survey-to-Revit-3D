@@ -295,7 +295,9 @@ public static class SurveyAnalyzer
             var unclearLeft = raster.Unclear.Where(u => !facade.Any(w => w.FaceA == "pier" && FacadeWalls.Contains(u.Outline, w.Centerline.Mid))).ToList();
             var plan = raster with { Walls = walls, Unclear = unclearLeft };
             // with the buildings next door left out, the floor outline (the slab) is cut back to this building's walls too
-            if (neighbourWalls > 0 && plan.Outline is Polygon2 before && NeighbourWalls.Envelope(facade) is { } envelope
+            // (also with none on the outline layer: the plan's outline can run on over a roof, terrace or the neighbours'
+            // linework drawn on other layers, and a slab past every wall of the floor is not this floor)
+            if (plan.Outline is Polygon2 before && NeighbourWalls.Envelope(facade) is { } envelope
                 && NeighbourWalls.Clip(before, envelope) is Polygon2 clipped && clipped.Area < before.Area * 0.98)
             {
                 plan = plan with { Outline = clipped };

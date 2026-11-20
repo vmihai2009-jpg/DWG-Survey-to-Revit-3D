@@ -892,6 +892,8 @@ public sealed class ModelBuilder
         // not the few drawn risers stretched to reach the floor above (466 mm risers)
         if (riseMm / risers > 220) risers = Math.Max(risers, (int)Math.Round(riseMm / 185));
         double riserMm = riseMm / risers;
+        // the treads above the plan cut: the last flight runs on so the stair reaches the floor above
+        stair = stair.Completed(risers);
         using var scope = new StairsEditScope(_doc, "Survey stair");
         var id = scope.Start(level.Id, above.Id);
         using (var t = new Transaction(_doc, "Survey stair runs"))
