@@ -66,6 +66,9 @@ public static class PartyWalls
             foreach (var w in floors[i])
             {
                 if (w.Arc != null || w.Curtain || w.HeightMm != null || w.TypeThickness > maxThinMm || w.Length < minLength) continue;
+                // only a wall read from one drawn line: where both faces are drawn (even 100 mm apart) they are surveyed
+                // faces, and moving one off its line is worse than a thin wall
+                if (w.DrawnFaceSide == 0) continue;
                 if (withOpenings != null && i < withOpenings.Count && withOpenings[i].Contains(w)) continue;
                 if (EdgeDistance(env, w.Centerline.Mid) > w.TypeThickness / 2 + edgeMm) continue;
                 bool Stacked(int j) => j >= 0 && j < floors.Count && floors[j].Any(o => o.Arc == null

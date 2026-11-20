@@ -200,10 +200,19 @@ public static class ElevationContext
                 var n = s.Direction.Perp(); if ((ins - s.Mid).Dot(n) < 0) n = new Vec2(-n.X, -n.Y);
                 // against the outermost face of this building's walls along it (floors differ), its own half-thickness on
                 // only walls standing on the party line (their thickness spans it, 200 mm slack), not stray walls beyond it
-                double face = ourWalls.Where(w => Alongside(w.Line, new[] { s }, w.T / 2 + 200)
-                                                  && Math.Abs((w.Line.Mid - s.Mid).Dot(n)) <= w.T / 2 + 200)
-                    .Select(w => (w.Line.Mid - s.Mid).Dot(n) + w.T / 2).DefaultIfEmpty(PartyGapMm - 100).Max();
-                double gap = Math.Max(face, 0) + 100;
+                // the face most of the line's length shows (length-weighted median): one thick stretch (a basement
+                // retaining wall, a pier) on one floor must not push the whole neighbour off the rest
+                var faces = ourWalls.Where(w => Alongside(w.Line, new[] { s }, w.T / 2 + 200)
+                                                && Math.Abs((w.Line.Mid - s.Mid).Dot(n)) <= w.T / 2 + 200)
+                    .Select(w => (F: (w.Line.Mid - s.Mid).Dot(n) + w.T / 2, L: w.Line.Length)).OrderBy(x => x.F).ToList();
+                double face = PartyGapMm - 100;
+                if (faces.Count > 0)
+                {
+                    double half = faces.Sum(x => x.L) / 2, run = 0;
+                    foreach (var x in faces) { run += x.L; if (run >= half) { face = x.F; break; } }
+                }
+                // inward too (the snapped line is the walls' mean centre; their face can lie inside it), at most 300 mm
+                double gap = Math.Max(face, -300) + 100;
                 s = new Segment2(s.A + n * gap, s.B + n * gap);
                 note += " (its side of the party wall)";
             }

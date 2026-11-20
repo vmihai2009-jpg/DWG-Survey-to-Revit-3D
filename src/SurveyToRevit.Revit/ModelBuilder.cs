@@ -482,7 +482,7 @@ public sealed class ModelBuilder
             if (o.KeepMatching && o.Walls)
                 try { keep = Earlier(_doc, sl); } catch (Exception ex) { Log.Add($"{sl.Name}: earlier work not matched ({ex.Message}); replaced as before."); }
             _keptOpenings = keep?.Openings ?? new HashSet<object>(ReferenceEqualityComparer.Instance);
-            Step($"{sl.Name}: clearing an earlier run", done, () => removed = DeleteGenerated(sl.Code, keep?.Ids));
+            Step($"{sl.Name}: clearing an earlier run", done, () => removed = DeleteGenerated(sl.Code, keep?.Ids, keepStairs: !o.Stairs));
             if (keep != null && keep.Ids.Count > 0)
                 done.Add($"kept from the earlier run: {keep.Walls.Count} walls, {keep.Openings.Count} windows and doors");
             if (keep != null && keep.Lost.Count > 0)
@@ -1431,13 +1431,17 @@ public sealed class ModelBuilder
         return keep;
     }
 
-    int DeleteGenerated(string levelCode, HashSet<long>? except = null)
+    int DeleteGenerated(string levelCode, HashSet<long>? except = null, bool keepStairs = false)
     {
         var prefix = $"{Tag}|{levelCode}|";
         var classes = new ElementMulticlassFilter(new List<Type> { typeof(Wall), typeof(Floor), typeof(Ceiling), typeof(DirectShape), typeof(FamilyInstance), typeof(Opening), typeof(SpatialElement), typeof(Toposolid), typeof(CurveElement), typeof(Autodesk.Revit.DB.Architecture.Stairs), typeof(RoofBase) });
+        // a build that does not rebuild the stairs (one floor only) leaves them, and the stair blocks, as they are
+        bool Stair(Element e) => e is Autodesk.Revit.DB.Architecture.Stairs
+            || (e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "").EndsWith("|Stair blocks", StringComparison.Ordinal);
         var ids = new FilteredElementCollector(_doc).WherePasses(classes).WhereElementIsNotElementType()
             .Where(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(prefix) == true)
             .Where(e => except == null || !except.Contains(e.Id.Value))
+            .Where(e => !keepStairs || !Stair(e))
             .Select(e => e.Id).ToList();
         // a wall opening has no Comments to carry the tag: the ones cut in our walls (kept walls included) go too, or every
         // rebuild adds another identical opening to a kept wall
