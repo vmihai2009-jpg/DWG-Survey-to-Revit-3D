@@ -10,6 +10,8 @@ namespace SurveyToRevit.Core.Survey;
 /// </summary>
 public static class OpeningClearance
 {
+    public const double EdgeSlackMm = 60;
+
     public static (int Moved, int Narrowed, int Rehosted, int Trimmed) Fit(SurveyLevel level)
     {
         var walls = level.Walls.Walls;
@@ -122,7 +124,9 @@ public static class OpeningClearance
         // the host's own ends limit the slide too
         double a0 = (h.Centerline.A - c).Dot(d), b0 = (h.Centerline.B - c).Dot(d);
         double hostLo = Math.Min(a0, b0), hostHi = Math.Max(a0, b0);
-        bool Blocked(double lo, double hi) => spans.Any(s => s.Hi > lo + 5 && s.Lo < hi - 5);
+        // a wall reaching less than EdgeSlackMm into the opening's edge is a partition meeting the host beside the jamb
+        // (run on to the host's centre line): the drawn opening stands; only a real intrusion moves or narrows it
+        bool Blocked(double lo, double hi) => spans.Any(s => s.Hi > lo + EdgeSlackMm && s.Lo < hi - EdgeSlackMm);
         if (!Blocked(-width / 2, width / 2)) return null;
         // free intervals along the host near the opening
         var merged = new List<(double Lo, double Hi)>();

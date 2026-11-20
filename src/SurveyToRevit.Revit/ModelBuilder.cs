@@ -1517,7 +1517,8 @@ public sealed class ModelBuilder
             {
                 if (family != null)
                 {
-                    double w = Math.Round(width / 50) * 50, h = Math.Round((top - bottom) / 50) * 50;
+                    // sizes to 10 mm: rounding to 50 put a jamb up to 25 mm off the survey (a type per size either way)
+                    double w = Math.Round(width / 10) * 10, h = Math.Round((top - bottom) / 10) * 10;
                     if (!symbols.TryGetValue((w, h), out var symbol)) symbols[(w, h)] = symbol = HostedType(family, what, w, h);
                     var inst = _doc.Create.NewFamilyInstance(c, symbol, wall, level, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
                     if (category == BuiltInCategory.OST_Windows) inst.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM)?.Set(Ft(bottom));
@@ -1553,7 +1554,11 @@ public sealed class ModelBuilder
     string Unblock(string code, Level level)
     {
         _doc.Regenerate();
-        int cut = 0, carved = 0, removed = 0, hosts = 0, left = 0, clear = 0;
+        int cut = 0, carved = 0, removed = 0, hosts = 0, left = 0, clear = 0, refused = 0;
+        // a window or door Revit refused to cut out of its wall (and so deleted): the opening is still made, as a plain cut
+        foreach (var p in _placed.Where(p => !p.Inst.IsValidObject && p.Host.IsValidObject).ToList())
+            try { Cut(p.Host, p.At, p.WidthMm, p.BottomMm, p.TopMm, code, p.What + " opening (Revit refused the family)"); refused++; }
+            catch { /* the wall cannot take it either */ }
         var cats = new ElementMulticategoryFilter(new List<BuiltInCategory> { BuiltInCategory.OST_Walls, BuiltInCategory.OST_GenericModel });
         foreach (var p in _placed)
         {
@@ -1598,7 +1603,7 @@ public sealed class ModelBuilder
                 catch (Exception ex) { left++; if (left <= 5) Log.Add($"{code}: could not clear {e.Category?.Name} id {e.Id.Value} from a {p.What.ToLowerInvariant()}: {ex.Message}"); }
             }
         }
-        return $"openings checked: {clear} clear" + (cut > 0 ? $", {cut} more walls cut" : "") + (carved > 0 ? $", {carved} generic models carved" : "")
+        return $"openings checked: {clear} clear" + (refused > 0 ? $", {refused} cut as plain openings (Revit refused the family)" : "") + (cut > 0 ? $", {cut} more walls cut" : "") + (carved > 0 ? $", {carved} generic models carved" : "")
                + (removed > 0 ? $", {removed} short walls across openings removed" : "") + (hosts > 0 ? $", {hosts} host walls cut by hand (the family did not cut them)" : "")
                + (left > 0 ? $", {left} still blocked (see above)" : "");
     }

@@ -641,6 +641,15 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-20: Survey to Revit 0.33.21-0.33.23, doors and openings (interiors audit round)
+Mihai: focus on interiors, door positions and openings. Audit = BGMCP survey_fidelity openings vs plan jambs on MRTest, before/after each change.
+- 0.33.21 `OpeningJambs.Fit` (new, before OpeningClearance): a door read from its symbol is the leaf (hinge to swing end), a window its frame; where the host wall's face lines stop on both sides within 300 mm out / 150 mm in, the opening takes the drawn gap jamb to jamb. A line across the opening alone (threshold/head) is ignored; a face running on past both sides means no gap is drawn: unchanged. Mount Row 14 openings fitted, Swallow 69. Hosted door/window types sized to 10 mm (was rounded to 50: up to 25 mm per jamb).
+- 0.33.22 `OpeningClearance`: a wall reaching less than 60 mm into an opening's edge no longer moves or narrows it (was 5 mm: partitions run on to the host's centre line beside a jamb pushed doors/windows; Mount Row moves 36 -> 15).
+- 0.33.23 ModelBuilder: a window/door Revit refuses to cut out of its wall (and deletes) is cut as a plain wall opening at the same place and size; the openings-check line counts them. Mount Row: 4 doors (GF 2, 1F, 3F) now open.
+- Result on Mount Row (fidelity, own openings): out of 30 mm tolerance 41 -> 30 of ~210; the 4 'missing' are the plain openings above (fidelity counts only door/window families). Swallow Place offline: doors unchanged, fewer moved/narrowed; windows per floor shift by 1-3 (elevation-only windows re-matched after jamb moves) - to check in Revit by whoever owns the Swallow model.
+- **For the hub side (survey_fidelity):** count wall Openings (cut by S2R, tagged '... opening') as present openings; skip CONTEXT windows (3 of the 43 opening issues were neighbour windows).
+- Still open: doors in walls drawn as one continuous line (no gap) keep the leaf width; narrowing by perpendicular walls that S2R places too thick at T-junctions; 20 join refusals per build.
+
 ### 2026-11-20: Survey to Revit 0.33.20, neighbour's half of the party wall against our innermost face
 The median face (0.33.19) still left No.24 0.3 m off: Mount Row's east party wall stands at x 4.5 m on 2F-4F and 4.78 m on 5F (the survey's floors disagree). The neighbour's wall now sits against the innermost face of our long (2 m+) walls on the line: it runs hidden inside the outer floors' walls instead of leaving a slot beside the inner ones. Verified on MRTest: No.24 inner face 4618 vs our 2F-4F face 4.61; No.30 inside our west wall; 3D front shows no slot. No.24's rear wing (roof-plan block) stays 0.35 m off at y -5.8..-0.8, where our east edge steps back (to check against the plan next round).
 
