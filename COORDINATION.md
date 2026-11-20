@@ -641,6 +641,35 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-20: Survey to Revit 0.33.25-0.33.26, full audit round on Mount Row (plans, facades, context, roof)
+Three read-only auditors went over the 0.33.24 build. Generic fixes:
+- **Stairs:** a cut stair's last straight flight now runs on so the stair climbs the whole storey (`StairCandidate.Completed`). The B1 stair now reaches y 11.87 m, but Revit still reports "top cannot reach" on all 14 stairs. Open.
+- **Door openings:** an opening drawn at a slant (a leaf swung open) follows its jamb walls instead of the leaf (`DoorFinder.Jambs`). The infill takes the thickness of the wall the door sits in, not a thick wall it meets end-on.
+- **Facade joins:** joins are square: in line, or an L between offset walls. No diagonal spans.
+- **Single-line walls:** a single-line wall lying on the outline edge (a party wall drawn by its inside face) is kept. Mount Row B1 +61 m, GF +30 m.
+- **Window heads:** when a plan head note and a sure elevation differ by more than 100 mm, the elevation's head wins; the sill note stands. Mount Row: 60 windows took the drawn heads, up from 5.
+- **Context fronts:** the neighbours' front walls now run up to their flanks. The stretch is measured against our built walls, not the facade line. The south corners are closed (checked in 3D).
+- **Floor outline:** it is now cut back to the building's walls even when nothing was found on the outline layer.
+
+Results on Mount Row:
+- placed rooms 43 -> 54 (480 -> 625 m2);
+- missing ceilings about 69 -> 60;
+- openings out of tolerance unchanged;
+- Swallow Place moves a little, from the same single-line rule.
+
+Still open, for the next rounds:
+- No hipped roof from the roof plan: eaves and ridge spots sit on the facet edges, so the facets are dropped.
+- Recessed entrances and the GF west bay leave the facade open; the elevation is not used to close them.
+- The rear court's No.46 linework is built as our GF walls.
+- The 5F slab runs about 3.9 m past the walls.
+- Section A/B registration: marks are not split per drawing.
+- The mews elevation (79 %) contributes nothing; per-column gating is needed.
+- 5F top storey is fixed at 3000 mm instead of following the skyline.
+- Lift boxes drawn in single lines are not closed.
+- Duplicate party walls.
+
+**Hub (MCP-Rev):** survey_fidelity / elevation_fit_check fail with "There is no file 29463B-9 (SECTIONS & ELEVATIONS)". The index stores the sheet name without its folder and .dwg extension, so the hub should resolve it against the survey folder.
+
 ### 2026-11-20: Survey to Revit 0.33.24, jambs snapped to drawn across-wall lines
 After the gap fit, each jamb of a window/door moves onto the nearest line drawn across its wall (reveal return, frame end; wall + opening layers) within 150 mm, keeping at least 85 % of the width. Mount Row openings out of tolerance 30 -> 22 (of ~210; started at 41). Note: BGMCP survey_fidelity measures jambs with the same 'nearest across line' rule, so this score is not independent; spot checks by eye are in the audit round that follows.
 
