@@ -641,6 +641,18 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-20: Survey to Revit 0.33.28-0.33.29, entrances from the elevation, neighbour trims, square bridges
+- **Elevation doors.** The elevation reader also reads door-layer groups: doors, entrances, a garage portal. They are used only where the plan has no door on the facade line there, never to change a plan window.
+- **Neighbour openings.** Openings past the facade's ends are the neighbours' and are counted as context. Mount Row: all 55 "no wall" openings were these.
+- **Built on Mount Row (0.33.28):** GF +2 ElevationOnly openings, roofs 3 -> 2, built checks 16 -> 4.
+  - A roof counts as ours only when it is over one of our floors; the 2 m2 roof on No.24 is now context.
+  - Eaves walls attach to a pitched roof: roof-through-wall 13 -> 2.
+  - The built checks skip context elements.
+- **Trimmed neighbour walls.** A wall paired with an outline-layer face (our party wall plus the neighbour's outline line) stops 300 mm past this building's own linework hull (`NeighbourWalls.Clip`). Mount Row 5F: walls 161.6 -> 148.3 m, slab 273 -> 241 m2. Swallow Place: unchanged.
+- **Square bridges.** A bridge between two walls square to the building must be square too: no diagonal closing walls across lobbies and doors. Mount Row: 1F, 3F and 4F each lose one diagonal. Swallow Place loses a few metres per floor (B -4 walls, GF -3).
+- **Tried and reverted:** giving section level marks to the nearest title in 2D, with elevation titles competing. Mount Row did not change (A 87, B 0), and Swallow Place's sections lost 20-50 marks.
+- **Revit was blocked** by a dialog (the save reminder) from 17:45, so 0.33.29 is installed but not yet built on Mount Row.
+
 ### 2026-11-20: Survey to Revit 0.33.27, pitched roofs from the roof plan
 - **Native roofs.** S2R's roofs are native Revit roofs again. `NewFootPrintRoof` needs an existing `ModelCurveArray` in Revit 2025; it had fallen back to floor slabs on every build.
 - **Pitched roofs from roof-plan planes.** Roof-plan planes with no spot height inside them are now kept. These are the planes between seams, hips and the ridge; the surveyor writes the heights on the lines.
