@@ -26,15 +26,17 @@ public static class NeighbourWalls
             // joins: their line no longer carries a layer)
             bool fromOutline = !w.Curtain && (outlineLayer(w.Centerline.Layer) || Generated.Contains(w.Centerline.Layer));
             if (fromOutline && Outside(hull, w.Centerline.Mid) > marginMm) { removed++; continue; }
-            // nearer than that, but wholly beyond this building's own linework (its nearest face more than TrimMm out):
-            // the neighbour's roof, flank or yard drawn on the outline layer just past the party wall
-            if (fromOutline && !w.Curtain && w.Arc == null
+            // nearer than that, wholly beyond this building's own linework (its nearest face more than TrimMm out) and
+            // running off the building's axes: the neighbour's roof slopes and hatching drawn on the outline layer just past
+            // the party wall. A straight wall there (a terrace's boundary, a parapet) is kept: it is often ours
+            if (fromOutline && !w.Curtain && w.Arc == null && OffAxisDeg(w.Centerline) > 10
                 && Math.Min(Outside(hull, w.Centerline.A), Outside(hull, w.Centerline.B)) - w.TypeThickness / 2 > TrimMm
                 && Outside(hull, w.Centerline.Mid) - w.TypeThickness / 2 > TrimMm) { removed++; continue; }
             // a wall paired with an outline-layer face (our party wall's face with the neighbour's outline line beside it)
             // runs on along the neighbour as far as their line does: it stops where this building's own linework ends
             bool outlineFace = !w.Curtain && w.Arc == null && (fromOutline || outlineLayer(w.FaceA ?? "") || outlineLayer(w.FaceB ?? ""));
-            if (outlineFace && (Outside(hull, w.Centerline.A) > TrimMm || Outside(hull, w.Centerline.B) > TrimMm)
+            // (one end inside, the other run on past it: a wall lying wholly beyond, a terrace parapet, is left alone)
+            if (outlineFace && (Outside(hull, w.Centerline.A) > TrimMm) != (Outside(hull, w.Centerline.B) > TrimMm)
                 && Clip(w.Centerline, hull, TrimMm) is Segment2 cut && cut.Length >= 300)
             { kept.Add(w with { Centerline = cut }); continue; }
             kept.Add(w);
@@ -43,6 +45,8 @@ public static class NeighbourWalls
     }
 
     public const double TrimMm = 300;
+
+    static double OffAxisDeg(Segment2 s) { double a = s.AngleDeg; return Math.Abs(a - Math.Round(a / 90) * 90); }
 
     /// <summary>The part of a segment inside the convex hull (counter-clockwise) grown by grow mm; null when none.</summary>
     static Segment2? Clip(Segment2 s, IReadOnlyList<Vec2> hull, double grow)
