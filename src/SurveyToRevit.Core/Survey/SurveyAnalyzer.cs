@@ -53,6 +53,9 @@ public sealed record SurveyLevel(
     public double CeilingHeightMm { get; set; }
     /// <summary>Where the ceiling goes, when not the whole floor (under a mezzanine only: the rest is double height).</summary>
     public Polygon2? CeilingOutline { get; set; }
+    /// <summary>The part of the floor with the floor above over it (its outline clipped to the floor above's walls); null
+    /// when that is all of it. A terrace on the roof of the floor below is open to the sky: no ceiling there.</summary>
+    public List<Polygon2>? CoveredOutlines { get; set; }
     /// <summary>True when <see cref="CeilingHeightMm"/> comes from ceiling heights written on the plan.</summary>
     public bool CeilingFromSurvey { get; set; }
     /// <summary>Each ceiling height written on the plan (in a room), for ceilings room by room.</summary>
@@ -157,7 +160,42 @@ public static class SurveyAnalyzer
     /// <summary>A stair whose foot has a spot height this far or more below its floor comes up from the floor below.</summary>
     public const double StairFromBelowMm = 1500, StairFootReachMm = 1500;
     public const int MinStairRisers = 6;
-    public const double LowNoteReachMm = 800, RaisedReachMm = 1500, RailingReachMm = 1500;
+    public const double CoverCellMm = 250, OpenMinM2 = 4;
+
+    /// <summary>Notes a plan writes only out in the open: roof lights, gullies, rainwater pipes, railings, plant, terraces, roof finishes.</summary>
+    static readonly System.Text.RegularExpressions.Regex OpenAirNote = new(
+        @"^(g|rwp|svp)$|roof\s*light|sky\s*light|gull(y|ies)|railing|balustrade|plant|terrace|balcony|pav(ing|ed)|decking|\blead\b|\bfelt\b|asphalt|ladder|open\s+to\s+sky",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    public const int OpenAirNotes = 2;
+
+    /// <summary>
+    /// The parts of a floor's outline that have a ceiling: everything but the stretches with no higher floor and no roof
+    /// over them (on a 250 mm grid) that the plan itself marks as outdoors, with <see cref="OpenAirNotes"/> or more
+    /// open-air notes inside (a terrace's roof lights, gullies, railings). A stretch with nothing over it and no such notes
+    /// keeps its ceiling (its roof is just not drawn). Null when nothing is left open.
+    /// </summary>
+    public static List<Polygon2>? Covered(Polygon2 own, IReadOnlyList<Polygon2> over, IReadOnlyList<Vec2> openAirMarks, IReadOnlyList<WallCandidate>? walls = null)
+    {
+        var grid = ShapeGrid.Around(own.Vertices, CoverCellMm, CoverCellMm);
+        var inside = grid.Fill(own);
+        var bare = new bool[inside.Length];
+        // full-height walls part the bare stretches into spaces (a yard and the roofed wing beyond it are judged apart)
+        var parting = (walls ?? Array.Empty<WallCandidate>()).Where(w => w.Arc == null && w.HeightMm == null && !w.Curtain).ToList();
+        for (int k = 0; k < inside.Length; k++)
+        {
+            if (!inside[k]) continue;
+            var c = grid.Centre(k);
+            bare[k] = !over.Any(o => FacadeWalls.Contains(o, c))
+                      && !parting.Any(w => { double a = SegmentCleaner.Along(w.Centerline, c); return a >= -50 && a <= w.Centerline.Length + 50 && Math.Abs(SegmentCleaner.Offset(w.Centerline, c)) <= w.TypeThickness / 2 + CoverCellMm / 2; });
+        }
+        var open = grid.Outlines(bare, OpenMinM2 * 1e6).Where(p => openAirMarks.Count(m => FacadeWalls.Contains(p, m)) >= OpenAirNotes).ToList();
+        if (open.Count == 0) return null;
+        var cov = new bool[inside.Length];
+        for (int k = 0; k < inside.Length; k++)
+            cov[k] = inside[k] && !(bare[k] && open.Any(p => FacadeWalls.Contains(p, grid.Centre(k))));
+        return grid.Outlines(cov, OpenMinM2 * 1e6);
+    }
+    public const double LowNoteReachMm = 800, RaisedReachMm = 1500, RailingReachMm = 1500, OpenAirMm = 500, OpenAirReachMm = 400;
 
     /// <summary>
     /// A low element named by a note but not read as a wall: the pair of parallel lines (each 1 m or longer, 50-250 mm
@@ -779,6 +817,22 @@ public static class SurveyAnalyzer
                     ws[k] = w with { HeightMm = Math.Round(up.Max(s => s.Rel) / 10) * 10 };
                     raised++;
                 }
+                // walls out in the open (past every wall of the floor above: a terrace's edge, a parapet round the roof of
+                // the floor below): built to the spot height written on or just beside their top, not a storey high
+                if (next != null && NeighbourWalls.Envelope(next.Walls.Walls) is { } envAbove)
+                    for (int k = 0; k < ws.Count; k++)
+                    {
+                        var w = ws[k];
+                        if (w.Arc != null || w.Curtain || w.HeightMm != null || hosts.Contains(k) || w.Length < 500) continue;
+                        if (NeighbourWalls.Outside(envAbove, w.Centerline.Mid) <= OpenAirMm) continue;
+                        var c = w.Centerline; var n = c.Direction.Perp();
+                        var onTop = spots.Where(s => { double a = (s.P - c.A).Dot(c.Direction), o = Math.Abs((s.P - c.A).Dot(n));
+                                                      return a >= -200 && a <= c.Length + 200 && o <= w.TypeThickness / 2 + OpenAirReachMm; })
+                                        .Where(s => s.Rel >= 300 && s.Rel <= levels[i].WallHeightMm - 300).ToList();
+                        if (onTop.Count == 0) continue;
+                        ws[k] = w with { HeightMm = Math.Round(onTop.Max(s => s.Rel) / 10) * 10 };
+                        raised++;
+                    }
                 if (raised > 0)
                 {
                     levels[i].Walls = levels[i].Walls with { Walls = ws };
@@ -899,6 +953,22 @@ public static class SurveyAnalyzer
             if (roofs.Count < before) notes.Add($"{before - roofs.Count} roof areas over the buildings next door: built as context (their own workset), not as this building's roofs.");
         }
         if (roofPlans.Count == 0 && roofs.Count == 0) notes.Add("No roof plan or roof layer: no roofs built.");
+        // the part of each floor with something over it (any higher floor, or a roof): a terrace on the roof of the floor
+        // below is open to the sky, so no ceiling there. Without a roof plan the top floor is taken as covered.
+        for (int i = 0; i < levels.Count; i++)
+        {
+            if (levels[i].Outline is not Polygon2 own) continue;
+            var over = levels.Skip(i + 1).Where(l => !double.IsNaN(l.ElevationMm) && l.ElevationMm > levels[i].ElevationMm)
+                .SelectMany(l => (l.Outline != null ? new[] { l.Outline } : Array.Empty<Polygon2>()).Concat(l.MoreOutlines))
+                .Concat(roofs.Where(r => r.ElevationMm > levels[i].ElevationMm + 1500).Select(r => r.Outline)).ToList();
+            if (over.Count == 0 && i == levels.Count - 1 && roofs.Count == 0) continue;
+            var marks = levels[i].Plan.Texts.Where(t => OpenAirNote.IsMatch((t.Value ?? "").Trim())).Select(t => frame.ToModel(t.Position)).ToList();
+            if (Covered(own, over, marks, levels[i].Walls.Walls) is { } parts)
+            {
+                levels[i].CoveredOutlines = parts;
+                notes.Add($"{levels[i].Name}: {(own.Area - parts.Sum(p => p.Area)) / 1e6:0} m² of the floor has no floor or roof over it (a terrace, an open roof): no ceiling there.");
+            }
+        }
         // item E: elevation drawings split from their sheets, matched to the facade they show, fitted for height
         var elevations = new List<ElevationDrawing>();
         var fronts = new List<ContextFront>();

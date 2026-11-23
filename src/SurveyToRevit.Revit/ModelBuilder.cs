@@ -571,23 +571,26 @@ public sealed class ModelBuilder
                 try
                 {
                     // under a mezzanine only, where the floor is otherwise double height
-                    var outline = sl.CeilingOutline ?? sl.Outline!;
-                    var ceilingLoop = sl.CeilingOutline != null ? Loop(sl.CeilingOutline, level.Elevation) : loop;
-                    var loops = new List<List<CurveLoop>>();
-                    if (ceilingLoop != null) loops.Add(new List<CurveLoop> { ceilingLoop });
+                    // and only where a floor or roof is over it (not over a terrace open to the sky)
+                    var outlines = sl.CeilingOutline != null ? new List<Polygon2> { sl.CeilingOutline }
+                                 : sl.CoveredOutlines ?? new List<Polygon2> { sl.Outline! };
                     void Make(List<CurveLoop> l)
                     {
                         var ceiling = Ceiling.Create(_doc, l, CeilingTypeFor().Id, level.Id);
                         ceiling.get_Parameter(BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM)?.Set(Ft(sl.CeilingHeightMm));
                         Mark(ceiling, sl.Code, "Ceiling");
                     }
-                    try { if (ceilingLoop == null) throw new InvalidOperationException("no outline"); Make(loops[0]); }
-                    catch (Exception)
+                    foreach (var outline in outlines)
                     {
-                        foreach (var part in OutlineRepair.Clean(outline))
-                            if (Loop(part, level.Elevation) is CurveLoop l) Make(new List<CurveLoop> { l });
+                        var ceilingLoop = ReferenceEquals(outline, sl.Outline) ? loop : Loop(outline, level.Elevation);
+                        try { if (ceilingLoop == null) throw new InvalidOperationException("no outline"); Make(new List<CurveLoop> { ceilingLoop }); }
+                        catch (Exception)
+                        {
+                            foreach (var part in OutlineRepair.Clean(outline))
+                                if (Loop(part, level.Elevation) is CurveLoop l) Make(new List<CurveLoop> { l });
+                        }
                     }
-                    done.Add($"ceiling at {sl.CeilingHeightMm:0} mm");
+                    done.Add($"ceiling at {sl.CeilingHeightMm:0} mm" + (sl.CoveredOutlines != null && sl.CeilingOutline == null ? " (not over the open terrace / roof)" : ""));
                 }
                 catch (Exception ex) { done.Add($"no ceiling ({ex.Message})"); }
             });
@@ -1884,6 +1887,9 @@ public sealed class ModelBuilder
         int failed = 0, own = 0;
         foreach (var (room, h) in heights)
         {
+            // a space out on an open terrace (nothing over it) gets no ceiling
+            if (sl.CoveredOutlines != null && room.Location is LocationPoint lp0
+                && !sl.CoveredOutlines.Any(p => FacadeWalls.Contains(p, new Vec2(lp0.Point.X * 304.8, lp0.Point.Y * 304.8)))) continue;
             try
             {
                 var loops = room.GetBoundarySegments(options)
@@ -1914,8 +1920,10 @@ public sealed class ModelBuilder
         // the rest of the floor (spaces Revit could not close as rooms: open-plan areas, halls run into a stair) keeps a
         // ceiling at the floor's usual height: the floor's outline with the rooms' ceilings as holes
         string rest = "";
-        if (sl.Outline != null && Loop(sl.Outline, level.Elevation) is CurveLoop outer)
+        var restParts = sl.CoveredOutlines ?? (sl.Outline != null ? new List<Polygon2> { sl.Outline } : new List<Polygon2>());
+        foreach (var restOutline in restParts)
         {
+            if (Loop(restOutline, level.Elevation) is not CurveLoop outer) continue;
             using var st = new SubTransaction(_doc);
             st.Start();
             try
@@ -1928,6 +1936,7 @@ public sealed class ModelBuilder
                 int cut = 0;
                 foreach (var room in madeRooms)
                 {
+                    if (room.Location is LocationPoint rp && !FacadeWalls.Contains(restOutline, new Vec2(rp.Point.X * 304.8, rp.Point.Y * 304.8))) continue;
                     var outerSegs = room.GetBoundarySegments(options).OrderByDescending(s => s.Sum(sg => sg.GetCurve().Length)).FirstOrDefault();
                     if (outerSegs == null) continue;
                     using var sub = new SubTransaction(_doc);
@@ -1943,9 +1952,9 @@ public sealed class ModelBuilder
                     catch { sub.RollBack(); }
                 }
                 st.Commit();
-                rest = $", the rest of the floor at its usual height ({cut} of {madeRooms.Count} rooms cut out of it)";
+                rest += $", the rest of the floor at its usual height ({cut} rooms cut out of it)";
             }
-            catch (Exception ex) { st.RollBack(); rest = $", the rest of the floor without (Revit refused: {ex.Message})"; }
+            catch (Exception ex) { st.RollBack(); rest += $", part of the rest of the floor without (Revit refused: {ex.Message})"; }
         }
         return $"; ceilings room by room: {made.Count} ({own} at the height surveyed in the room)" + (failed > 0 ? $", {failed} rooms without" : "") + rest;
     }
