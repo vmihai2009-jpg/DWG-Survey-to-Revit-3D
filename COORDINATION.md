@@ -641,6 +641,16 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-23: Survey to Revit 0.33.30-0.33.33, ceilings everywhere, misattached sill notes
+- **0.33.29 built on Mount Row.** Built checks 4 -> 3. 5F slab 241 m2. The diagonal bridges are gone; enclosed spaces 3F 13 -> 10, 5F 18 -> 16.
+- **Misattached sill/head notes (0.33.30).** When a plan's sill/head note is more than 300 mm off a sure elevation's opening of the same width (within 15 %), the note was written for another opening (the 4F stair window carried the landing's note). The elevation's sill and head are both used. Note: the hub fidelity still measures this window against that note.
+- **Rest-of-floor ceilings (0.33.31-0.33.33).** Ceilings room by room used to delete the floor-wide ceiling, which left every space Revit could not close as a room with no ceiling.
+  - Now the rest of the floor keeps a ceiling at the usual height: the floor outline, with each room's ceiling cut as an opening.
+  - A holed `Ceiling.Create` was refused ("loops cannot compose a valid boundary") because the rooms touch the outline at the party walls, so each room is cut with `NewOpening` instead. All rooms were cut on every floor.
+  - Mount Row: missing ceilings 63 -> 1. "Over" rose because notes inside the rest area differ from the usual height (lift 1.99 m on each floor).
+  - 0.33.32 shipped as a version bump only; 0.33.33 has the change.
+- **Revit idle.** On 2026-11-23 Revit did not run queued jobs for a few minutes with no dialog open; it resumed by itself (screen locked?).
+
 ### 2026-11-20: Survey to Revit 0.33.28-0.33.29, entrances from the elevation, neighbour trims, square bridges
 - **Elevation doors.** The elevation reader also reads door-layer groups: doors, entrances, a garage portal. They are used only where the plan has no door on the facade line there, never to change a plan window.
 - **Neighbour openings.** Openings past the facade's ends are the neighbours' and are counted as context. Mount Row: all 55 "no wall" openings were these.
