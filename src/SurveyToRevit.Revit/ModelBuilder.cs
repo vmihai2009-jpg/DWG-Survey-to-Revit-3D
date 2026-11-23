@@ -1898,19 +1898,30 @@ public sealed class ModelBuilder
             st.Start();
             try
             {
-                var loops = new List<CurveLoop> { outer };
-                foreach (var room in madeRooms)
-                    foreach (var segs in room.GetBoundarySegments(options))
-                    {
-                        var l = CurveLoop.Create(segs.Select(sg => sg.GetCurve()).ToList());
-                        if (!l.IsOpen()) loops.Add(l);
-                    }
-                var c = Ceiling.Create(_doc, loops, CeilingTypeFor().Id, level.Id);
+                var c = Ceiling.Create(_doc, new List<CurveLoop> { outer }, CeilingTypeFor().Id, level.Id);
                 c.get_Parameter(BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM)?.Set(Ft(sl.CeilingHeightMm));
                 Mark(c, sl.Code, "Ceiling (rest of the floor, usual height)");
                 _doc.Regenerate();
+                // each room with its own ceiling cut out of it (its outer boundary); one Revit refuses stays covered
+                int cut = 0;
+                foreach (var room in madeRooms)
+                {
+                    var outerSegs = room.GetBoundarySegments(options).OrderByDescending(s => s.Sum(sg => sg.GetCurve().Length)).FirstOrDefault();
+                    if (outerSegs == null) continue;
+                    using var sub = new SubTransaction(_doc);
+                    sub.Start();
+                    try
+                    {
+                        var arr = new CurveArray();
+                        foreach (var sg in outerSegs) arr.Append(sg.GetCurve());
+                        _doc.Create.NewOpening(c, arr, true);
+                        _doc.Regenerate();
+                        sub.Commit(); cut++;
+                    }
+                    catch { sub.RollBack(); }
+                }
                 st.Commit();
-                rest = ", the rest of the floor at its usual height";
+                rest = $", the rest of the floor at its usual height ({cut} of {madeRooms.Count} rooms cut out of it)";
             }
             catch (Exception ex) { st.RollBack(); rest = $", the rest of the floor without (Revit refused: {ex.Message})"; }
         }
