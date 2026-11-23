@@ -188,7 +188,7 @@ public sealed class ModelBuilder
             if (CheckInternalToShared(location, e, n, z, angle))
             {
                 t.Commit();
-                Log.Add($"Shared coordinates set: internal origin = E {f.BasePoint.X / 1000:0.000} N {f.BasePoint.Y / 1000:0.000}, elevation {_datumMm / 1000:0.000} m (survey datum) = project 0, project north {f.RotationDeg:0.00}Â° from true north.");
+                Log.Add($"Shared coordinates set: internal origin = E {f.BasePoint.X / 1000:0.000} N {f.BasePoint.Y / 1000:0.000}, elevation {_datumMm / 1000:0.000} m (survey datum) = project 0, project north {f.RotationDeg:0.00}° from true north.");
                 PointsToOrigin(e, n, z, angle);
                 return;
             }
@@ -232,7 +232,7 @@ public sealed class ModelBuilder
         Log.Add("Base points: " + string.Join("; ", moved) + ".");
     }
 
-    // Survey = base point + rotation(+angle) Ã— internal. Accept either way Revit reports its transform.
+    // Survey = base point + rotation(+angle) × internal. Accept either way Revit reports its transform.
     static bool CheckInternalToShared(ProjectLocation location, double e, double n, double z, double angle)
     {
         var total = location.GetTotalTransform();
@@ -356,7 +356,7 @@ public sealed class ModelBuilder
                 }
                 inst.Pinned = true;
                 t.Commit();
-                Log.Add(turn ? $"Linked {file} into '{view.Name}' (turned {o!.InteriorTurnDeg:0.00}Â° to the project)." : $"Linked {file} into '{view.Name}' using shared coordinates.");
+                Log.Add(turn ? $"Linked {file} into '{view.Name}' (turned {o!.InteriorTurnDeg:0.00}° to the project)." : $"Linked {file} into '{view.Name}' using shared coordinates.");
                 try { CheckLinkPosition(inst, sl); }
                 catch (Exception ex) { Log.Add($"Could not check where {file} landed ({ex.Message}); check it by eye."); }
             }
@@ -547,7 +547,7 @@ public sealed class ModelBuilder
                     {
                         floor = Floor.Create(_doc, new List<CurveLoop> { loop }, FloorTypeFor(o.SlabThicknessMm).Id, level.Id);
                         Mark(floor, sl.Code, "Floor");
-                        done.Add($"floor {sl.Outline!.Area / 1e6:0} mÂ²");
+                        done.Add($"floor {sl.Outline!.Area / 1e6:0} m²");
                     }
                     catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ArgumentException)
                     {
@@ -560,7 +560,7 @@ public sealed class ModelBuilder
                                 Mark(f, sl.Code, "Floor");
                                 floor ??= f; parts++;
                             }
-                        done.Add($"floor {sl.Outline!.Area / 1e6:0} mÂ² (outline crossed itself: redrawn as {parts} clean slab{(parts == 1 ? "" : "s")})");
+                        done.Add($"floor {sl.Outline!.Area / 1e6:0} m² (outline crossed itself: redrawn as {parts} clean slab{(parts == 1 ? "" : "s")})");
                     }
                 });
                 if (floor != null && floor.IsValidObject && o.Stairs && sl.StairVoids.Count > 0)
@@ -642,7 +642,7 @@ public sealed class ModelBuilder
     }
 
     /// <summary>
-    /// Interior Survey: linked models (the exterior) bound rooms, so rooms close against the existing faÃ§ade.
+    /// Interior Survey: linked models (the exterior) bound rooms, so rooms close against the existing façade.
     /// </summary>
     void RoomBoundingLinks()
     {
@@ -653,7 +653,7 @@ public sealed class ModelBuilder
         t.Start();
         foreach (var lt in types) lt.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING).Set(1);
         t.Commit();
-        Log.Add($"Room Bounding turned on for {string.Join(", ", types.Select(x => x.Name))}, so rooms close against the existing faÃ§ade.");
+        Log.Add($"Room Bounding turned on for {string.Join(", ", types.Select(x => x.Name))}, so rooms close against the existing façade.");
     }
 
     /// <summary>
@@ -1363,7 +1363,7 @@ public sealed class ModelBuilder
 
     /// <summary>
     /// Closed loop at the given height; edges too short for Revit are dropped, and edges a hair
-    /// off square (under 1Â°, ends under 30 mm out) are made exactly square, so Revit does not
+    /// off square (under 1°, ends under 30 mm out) are made exactly square, so Revit does not
     /// warn "Line in Sketch is slightly off axis".
     /// </summary>
     static CurveLoop? Loop(Polygon2 poly, double z)
@@ -1520,7 +1520,7 @@ public sealed class ModelBuilder
                 sl.Windows.Where(w => w.FromElevation && !_keptOpenings.Contains(w)).Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward, (Vec2?)null, (Vec2?)null)), "Window ElevationOnly");
             made += m2; failed += f2; fromElevation = m2;
         }
-        // a window set in an inner wall, with the faÃ§ade in front of it: cut through the faÃ§ade too
+        // a window set in an inner wall, with the façade in front of it: cut through the façade too
         foreach (var w in sl.Windows)
             foreach (var (k, at) in w.AlsoCut)
                 if (created.TryGetValue(sl.Walls.Walls[k], out var facade))

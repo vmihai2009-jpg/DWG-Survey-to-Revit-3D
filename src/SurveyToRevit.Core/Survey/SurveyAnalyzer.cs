@@ -1,4 +1,4 @@
-namespace SurveyToRevit.Core.Survey;
+﻿namespace SurveyToRevit.Core.Survey;
 
 /// <summary>
 /// How survey coordinates map to the model. The model's origin sits at
@@ -154,6 +154,40 @@ public static class SurveyAnalyzer
     public const double DefaultTopWallHeightMm = 3000;
     /// <summary>The least height between a floor and the floor above (mm).</summary>
     public const double MinStoreyMm = 2000;
+    /// <summary>A stair whose foot has a spot height this far or more below its floor comes up from the floor below.</summary>
+    public const double StairFromBelowMm = 1500, StairFootReachMm = 1500;
+    public const int MinStairRisers = 6;
+    public const double LowNoteReachMm = 800, RaisedReachMm = 1500;
+    /// <summary>"RAILING 0.90HT", "parapet 1.1m ht", "upstand 450 HT": a low element's height (group 2).</summary>
+    static readonly System.Text.RegularExpressions.Regex LowNote = new(@"\b(railings?|balustrades?|parapets?|upstands?|fences?|screens?|walls?|handrails?)\b\D{0,8}?(\d+(?:\.\d+)?)\s*m?\s*h(?:igh|t)\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>A stair cut where the way from one flight to the next crosses a wall that has a door or window in it.</summary>
+    static IEnumerable<StairCandidate> StairParts(StairCandidate s, SurveyLevel l)
+    {
+        if (s.Flights.Count < 2) { yield return s; yield break; }
+        var hosts = l.Doors.Select(d => d.HostIndex).Concat(l.Windows.Select(w => w.HostIndex)).ToHashSet();
+        var walls = l.Walls.Walls;
+        bool Parted(Vec2 a, Vec2 b) => hosts.Any(h => h >= 0 && h < walls.Count && walls[h].Arc == null && Crosses(new Segment2(a, b), walls[h].Centerline));
+        var part = new List<StairFlight> { s.Flights[0] };
+        for (int k = 1; k < s.Flights.Count; k++)
+        {
+            if (Parted(s.Flights[k - 1].Top, s.Flights[k].Bottom))
+            {
+                yield return new StairCandidate(part, s.DirectionKnown);
+                part = new List<StairFlight>();
+            }
+            part.Add(s.Flights[k]);
+        }
+        yield return new StairCandidate(part, s.DirectionKnown);
+    }
+
+    static bool Crosses(Segment2 p, Segment2 q)
+    {
+        double D(Vec2 a, Vec2 b, Vec2 c) => (b - a).Cross(c - a);
+        double d1 = D(q.A, q.B, p.A), d2 = D(q.A, q.B, p.B), d3 = D(p.A, p.B, q.A), d4 = D(p.A, p.B, q.B);
+        return d1 * d2 < 0 && d3 * d4 < 0;
+    }
 
     /// <summary>Ceiling 2700 mm above the floor, or lower where the storey is low (at least 600 mm below the floor above).</summary>
     public static double DefaultCeilingHeight(double storeyMm) => Math.Round(Math.Min(2700, Math.Max(2100, storeyMm - 600)) / 10) * 10;
@@ -330,6 +364,23 @@ public static class SurveyAnalyzer
             }
             level.Stairs = StairFinder.Find(p.FeatureLines.Where(f => rules.Classify(f.Layer) == LayerRole.Stair).Select(frame.ToModel).ToList(),
                 p.Texts.Select(t => (frame.ToModel(t.Position), t.Value)).ToList());
+            // a stair arriving at this floor from the one below (an outside stair up to a terrace, drawn on this floor's plan):
+            // a spot height at its foot a storey or more below this floor; the floor below has it, it does not climb from here
+            if (est != null && level.Stairs.Count > 0)
+            {
+                var spotsHere = p.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.LevelText)
+                    .Select(t => (P: frame.ToModel(t.Position), Mm: LevelEstimator.ParseMm(t.Value))).Where(x => x.Mm != null).ToList();
+                int stairsBefore = level.Stairs.Count;
+                level.Stairs = level.Stairs.Where(s =>
+                {
+                    if (s.Flights.Count == 0 || s.Flights[0].Risers.Count == 0) return true;
+                    var foot = s.Flights[0].Bottom;
+                    var near = spotsHere.Where(x => x.P.DistanceTo(foot) <= StairFootReachMm).OrderBy(x => x.P.DistanceTo(foot)).FirstOrDefault();
+                    return near.Mm == null || near.Mm!.Value > est.FloorLevelMm - StairFromBelowMm;
+                }).ToList();
+                if (level.Stairs.Count < stairsBefore)
+                    notes.Add($"{name}: {stairsBefore - level.Stairs.Count} stairs left out: a spot height at the foot a storey below this floor (the stair comes up from the floor below, which builds it).");
+            }
             doorInput[level] = openings.Where(o => rules.Classify(o.Layer) == LayerRole.Door).ToList();
             level.RoomNames = p.Texts.Where(t => rules.Classify(t.Layer) == LayerRole.RoomName)
                 .Select(t => (frame.ToModel(t.Position), Name: System.Text.RegularExpressions.Regex.Replace(t.Value, @"\s+", " ").Trim()))
@@ -644,6 +695,59 @@ public static class SurveyAnalyzer
                     levels[i].Walls = levels[i].Walls with { Walls = ws };
                     notes.Add($"{levels[i].Name}: {lowered} walls with spot heights on their top built to them (parapets, terrace and boundary walls), not a storey high.");
                 }
+                // a height written for a railing, balustrade, parapet, upstand, fence or low wall ("RAILING 0.90HT"): the
+                // nearest wall along it (within LowNoteReachMm) is built to that height, not a storey high
+                int noted = 0;
+                foreach (var t in levels[i].Plan.Texts)
+                {
+                    var m = LowNote.Match(t.Value ?? "");
+                    if (!m.Success || !double.TryParse(m.Groups[2].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v)) continue;
+                    double mm = v < 10 ? v * 1000 : v;
+                    if (mm < 300 || mm > levels[i].WallHeightMm - 300) continue;
+                    var at = frame.ToModel(t.Position);
+                    int best = -1; double bd = LowNoteReachMm;
+                    for (int k = 0; k < ws.Count; k++)
+                    {
+                        var w = ws[k];
+                        if (w.Arc != null || w.Curtain || hosts.Contains(k)) continue;
+                        double a = SegmentCleaner.Along(w.Centerline, at), o = Math.Abs(SegmentCleaner.Offset(w.Centerline, at));
+                        if (a < -200 || a > w.Centerline.Length + 200 || o >= bd) continue;
+                        bd = o; best = k;
+                    }
+                    if (best < 0 || ws[best].HeightMm is double h0 && Math.Abs(h0 - mm) < 10) continue;
+                    ws[best] = ws[best] with { HeightMm = Math.Round(mm / 10) * 10 };
+                    noted++;
+                }
+                // the sides of a raised object (a plant housing, a tank or roof-light kerb on a terrace): spots on one side of
+                // the wall all well above the floor (its top), on the other side a spot at floor level: the wall is built
+                // to the raised side's top, not a storey high
+                int raised = 0;
+                for (int k = 0; k < ws.Count; k++)
+                {
+                    var w = ws[k];
+                    if (w.Arc != null || w.Curtain || w.HeightMm != null || hosts.Contains(k) || w.Length < 500) continue;
+                    var c = w.Centerline; var n = c.Direction.Perp();
+                    var near = spots.Select(s => (s.Rel, A: (s.P - c.A).Dot(c.Direction), O: (s.P - c.A).Dot(n)))
+                        .Where(s => s.A >= 0 && s.A <= c.Length && Math.Abs(s.O) > w.TypeThickness / 2 + 50 && Math.Abs(s.O) <= RaisedReachMm).ToList();
+                    var left = near.Where(s => s.O > 0).ToList(); var right = near.Where(s => s.O < 0).ToList();
+                    double top = levels[i].WallHeightMm - 600;
+                    bool Raised(List<(double Rel, double A, double O)> side) => side.Count > 0 && side.All(s => s.Rel >= 600 && s.Rel <= top);
+                    bool Floor(List<(double Rel, double A, double O)> side) => side.Any(s => Math.Abs(s.Rel) <= 300);
+                    var up = Raised(left) && Floor(right) ? left : Raised(right) && Floor(left) ? right : null;
+                    if (up == null) continue;
+                    ws[k] = w with { HeightMm = Math.Round(up.Max(s => s.Rel) / 10) * 10 };
+                    raised++;
+                }
+                if (raised > 0)
+                {
+                    levels[i].Walls = levels[i].Walls with { Walls = ws };
+                    notes.Add($"{levels[i].Name}: {raised} walls round raised objects (spot heights on their top beside a floor-level spot: plant housings, kerbs) built to that top, not a storey high.");
+                }
+                if (noted > 0)
+                {
+                    levels[i].Walls = levels[i].Walls with { Walls = ws };
+                    notes.Add($"{levels[i].Name}: {noted} walls given the height written beside them (railings, balustrades, upstands), not a storey high.");
+                }
             }
             if (next == null) notes.Add(levels[i].WallHeightMm != DefaultTopWallHeightMm
                 ? $"{levels[i].Name}: top level, walls {levels[i].WallHeightMm:0} mm high, up to the lowest roof-plan spot over it (eaves / flat roof)."
@@ -685,6 +789,14 @@ public static class SurveyAnalyzer
         notes.Add($"Survey base point E {frame.BasePoint.X / 1000:0.000} m, N {frame.BasePoint.Y / 1000:0.000} m; " +
                   $"model turned {frame.RotationDeg:0.00}° so the main walls are square (grid north = true north).");
         foreach (var l in levels) l.Details = RoofsAndDetails.Details(l, frame, rules);
+        // flights joined into one stair across a wall with a door or window in it (the steps outside a door taken into
+        // the stair inside) are parted; a part of under MinStairRisers risers is a few steps, not a storey stair
+        foreach (var l in levels)
+        {
+            int steps = 0;
+            l.Stairs = l.Stairs.SelectMany(s => StairParts(s, l)).Where(s => { if (s.Risers >= MinStairRisers) return true; steps++; return false; }).ToList();
+            if (steps > 0) notes.Add($"{l.Name}: {steps} short flights of steps (under {MinStairRisers} risers) parted from a stair by a wall with an opening: steps to a door, not a storey stair; not built as stairs.");
+        }
         for (int i = 1; i < levels.Count; i++)
             levels[i].StairVoids = levels[i - 1].Stairs.Select(st => st.Footprint()).Where(p => p.Vertices.Count >= 3 && p.Area >= 0.5e6).ToList();
         // roofs only where the survey shows them: roof plans, and roof layers on the floor plans
