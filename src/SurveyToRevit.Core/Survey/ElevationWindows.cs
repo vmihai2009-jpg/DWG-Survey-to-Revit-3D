@@ -23,7 +23,7 @@ public sealed record ElevationWindowResult(int Drawn, int HeightsSet, int Widths
 /// </summary>
 public static class ElevationWindows
 {
-    public const double HeadAgreeMm = 100;
+    public const double HeadAgreeMm = 100, SillAgreeMm = 300;
     public const double WidthAgreeMm = 50, MinWidthMm = 300, MinHeightMm = 400, MaxHeightMm = 6000, GroupGapMm = 100;
 
     /// <summary>Window outlines on a matched drawing: its window-layer lines grouped (gaps under ~100 mm), each group's box mapped to the facade and to heights.</summary>
@@ -84,7 +84,16 @@ public static class ElevationWindows
                             // a plan's head note is taken inside, under the lintel or a louvre; the elevation draws the opening
                             // in the wall face, which is what the model shows: its head wins where they differ by more than
                             // HeadAgreeMm (the sill note, agreeing within that, stands)
-                            if (d.Score < ElevationIndex.SureScore || Math.Abs(p.HeadMm - head) <= HeadAgreeMm || head <= p.SillMm + 300) continue;
+                            if (d.Score < ElevationIndex.SureScore || Math.Abs(p.HeadMm - head) <= HeadAgreeMm) continue;
+                            // the sill note far off too (over SillAgreeMm): the note was written for another opening (a landing
+                            // window's note on the stair beside it); the drawn opening gives both
+                            if (Math.Abs(p.SillMm - sill) > SillAgreeMm)
+                            {
+                                list[k] = p with { SillMm = sill, HeadMm = head, HeightsFrom = "elevation " + d.Title + " (the plan's note is another opening's)" };
+                                heights++; changed = true;
+                                continue;
+                            }
+                            if (head <= p.SillMm + 300) continue;
                             list[k] = p with { HeadMm = head, HeightsFrom = "plan sill, head from elevation " + d.Title };
                             heights++; changed = true;
                             continue;
