@@ -918,6 +918,22 @@ public sealed class ModelBuilder
             }
             for (int k = 1; k < runs.Count; k++)
                 try { Autodesk.Revit.DB.Architecture.StairsLanding.CreateAutomaticLanding(_doc, runs[k - 1].Id, runs[k].Id); } catch { /* no landing fits: the runs stand alone */ }
+            // the landings move the later runs' heights (Revit re-solves them from the landing); each run climbs on from
+            // where the one before stopped, so the stair reaches the floor above
+            {
+                int at = 0;
+                for (int k = 0; k < runs.Count; k++)
+                {
+                    int n = stair.Flights[k].Risers.Count;
+                    try
+                    {
+                        runs[k].TopElevation = Ft((at + n) * riserMm);
+                        runs[k].BaseElevation = Ft(at * riserMm);
+                    }
+                    catch { /* Revit keeps its own heights */ }
+                    at += n;
+                }
+            }
             if (_doc.GetElement(id) is Autodesk.Revit.DB.Architecture.Stairs s)
             {
                 try { s.DesiredRisersNumber = risers; } catch { /* Revit keeps its own count */ }
