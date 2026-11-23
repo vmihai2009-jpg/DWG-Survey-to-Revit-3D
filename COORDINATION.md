@@ -641,6 +641,14 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-23: Survey to Revit 0.33.34-0.33.36, stairs (still open)
+- **What happens.** All 14 stairs still warn "top cannot reach". In each two-flight stair the second sketched run starts too low: B1 stair run 1 is 0-1630, run 2 is 724-2354 (riser 181).
+- **Not the landings.** Run 2 stays wrong with the automatic landing left out too.
+- **Setting the heights fails.** Setting `StairsRun.BaseElevation`/`TopElevation` throws: "The stairs run is sketched so the data being set is not applicable."
+- **0.33.36 keeps a landing only when it leaves the next run at its height.** Harmless; no landing was dropped on Mount Row.
+- **Next to try.** Pass the second run's base differently, or sketch each run with its own path, or one run whose sketch includes the landing. `CreateSketchedRun`'s baseElevation seems to be ignored or re-solved from the sketch.
+- **Revit dialog.** "Project Not Saved Recently" blocked the queue again. Mihai said to save when asked, so it is clicked via UI Automation ("Save the project").
+
 ### 2026-11-23: Survey to Revit 0.33.30-0.33.33, ceilings everywhere, misattached sill notes
 - **0.33.29 built on Mount Row.** Built checks 4 -> 3. 5F slab 241 m2. The diagonal bridges are gone; enclosed spaces 3F 13 -> 10, 5F 18 -> 16.
 - **Misattached sill/head notes (0.33.30).** When a plan's sill/head note is more than 300 mm off a sure elevation's opening of the same width (within 15 %), the note was written for another opening (the 4F stair window carried the landing's note). The elevation's sill and head are both used. Note: the hub fidelity still measures this window against that note.
