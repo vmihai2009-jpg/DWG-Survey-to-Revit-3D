@@ -157,7 +157,40 @@ public static class SurveyAnalyzer
     /// <summary>A stair whose foot has a spot height this far or more below its floor comes up from the floor below.</summary>
     public const double StairFromBelowMm = 1500, StairFootReachMm = 1500;
     public const int MinStairRisers = 6;
-    public const double LowNoteReachMm = 800, RaisedReachMm = 1500;
+    public const double LowNoteReachMm = 800, RaisedReachMm = 1500, RailingReachMm = 1500;
+
+    /// <summary>
+    /// A low element named by a note but not read as a wall: the pair of parallel lines (each 1 m or longer, 50-250 mm
+    /// apart, overlapping along most of the shorter) nearest the note within <see cref="RailingReachMm"/>, built as a wall
+    /// between them at the noted height. Null when no such pair lies beside the note.
+    /// </summary>
+    public static WallCandidate? RailingFrom(IReadOnlyList<Segment2> lines, Vec2 note, double heightMm)
+    {
+        var near = lines.Where(l => l.Length >= 1000 && SegmentCleaner.Along(l, note) >= -RailingReachMm && SegmentCleaner.Along(l, note) <= l.Length + RailingReachMm
+                                    && Math.Abs(SegmentCleaner.Offset(l, note)) <= RailingReachMm).ToList();
+        (Segment2 A, Segment2 B, double D)? best = null;
+        for (int a = 0; a < near.Count; a++)
+            for (int b = a + 1; b < near.Count; b++)
+            {
+                var p = near[a]; var q = near[b];
+                if (SegmentCleaner.AngleDiffDeg(p.AngleDeg, q.AngleDeg) > 2) continue;
+                double gap = Math.Abs(SegmentCleaner.Offset(p, q.Mid));
+                if (gap < 50 || gap > 250) continue;
+                double qa = SegmentCleaner.Along(p, q.A), qb = SegmentCleaner.Along(p, q.B);
+                double over = Math.Min(p.Length, Math.Max(qa, qb)) - Math.Max(0, Math.Min(qa, qb));
+                if (over < 0.8 * Math.Min(p.Length, q.Length)) continue;
+                double d = Math.Abs(SegmentCleaner.Offset(p, note));
+                if (best == null || d < best.Value.D) best = (p, q, d);
+            }
+        if (best is not { } r) return null;
+        var p0 = r.A; var dir = p0.Direction; var n = dir.Perp();
+        double off = SegmentCleaner.Offset(p0, r.B.Mid) / 2, t = Math.Abs(2 * off);
+        double b0 = SegmentCleaner.Along(p0, r.B.A), b1 = SegmentCleaner.Along(p0, r.B.B);
+        double lo = Math.Max(0, Math.Min(b0, b1)), hi = Math.Min(p0.Length, Math.Max(b0, b1));
+        var centre = new Segment2(p0.A + dir * lo + n * off, p0.A + dir * hi + n * off, p0.Layer, "railing");
+        double type = Math.Round(t / 10) * 10;
+        return new WallCandidate(centre, t, type, Confidence.Low, "railing", "railing") { HeightMm = Math.Round(heightMm / 10) * 10 };
+    }
     /// <summary>"RAILING 0.90HT", "parapet 1.1m ht", "upstand 450 HT": a low element's height (group 2).</summary>
     static readonly System.Text.RegularExpressions.Regex LowNote = new(@"\b(railings?|balustrades?|parapets?|upstands?|fences?|screens?|walls?|handrails?)\b\D{0,8}?(\d+(?:\.\d+)?)\s*m?\s*h(?:igh|t)\b",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase);
@@ -714,7 +747,15 @@ public static class SurveyAnalyzer
                         if (a < -200 || a > w.Centerline.Length + 200 || o >= bd) continue;
                         bd = o; best = k;
                     }
-                    if (best < 0 || ws[best].HeightMm is double h0 && Math.Abs(h0 - mm) < 10) continue;
+                    if (best < 0)
+                    {
+                        // no wall read there (a railing drawn as two plain lines on an outline layer, nothing hatched
+                        // between them): the nearest pair of long parallel lines 50-250 mm apart beside the note is it
+                        if (RailingFrom(levels[i].Plan.WallLines.Select(frame.ToModel).ToList(), at, mm) is { } rail)
+                        { ws.Add(rail); noted++; }
+                        continue;
+                    }
+                    if (ws[best].HeightMm is double h0 && Math.Abs(h0 - mm) < 10) continue;
                     ws[best] = ws[best] with { HeightMm = Math.Round(mm / 10) * 10 };
                     noted++;
                 }
@@ -745,7 +786,7 @@ public static class SurveyAnalyzer
                 }
                 if (noted > 0)
                 {
-                    levels[i].Walls = levels[i].Walls with { Walls = ws };
+                    levels[i].Walls = levels[i].Walls with { Walls = ws, ThicknessGroups = ws.Select(x => x.TypeThickness).Distinct().OrderBy(x => x).ToList() };
                     notes.Add($"{levels[i].Name}: {noted} walls given the height written beside them (railings, balustrades, upstands), not a storey high.");
                 }
             }

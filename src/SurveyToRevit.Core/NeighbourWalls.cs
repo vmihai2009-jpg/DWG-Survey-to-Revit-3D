@@ -26,6 +26,11 @@ public static class NeighbourWalls
             // joins: their line no longer carries a layer)
             bool fromOutline = !w.Curtain && (outlineLayer(w.Centerline.Layer) || Generated.Contains(w.Centerline.Layer));
             if (fromOutline && Outside(hull, w.Centerline.Mid) > marginMm) { removed++; continue; }
+            // nearer than that, but wholly beyond this building's own linework (its nearest face more than TrimMm out):
+            // the neighbour's roof, flank or yard drawn on the outline layer just past the party wall
+            if (fromOutline && !w.Curtain && w.Arc == null
+                && Math.Min(Outside(hull, w.Centerline.A), Outside(hull, w.Centerline.B)) - w.TypeThickness / 2 > TrimMm
+                && Outside(hull, w.Centerline.Mid) - w.TypeThickness / 2 > TrimMm) { removed++; continue; }
             // a wall paired with an outline-layer face (our party wall's face with the neighbour's outline line beside it)
             // runs on along the neighbour as far as their line does: it stops where this building's own linework ends
             bool outlineFace = !w.Curtain && w.Arc == null && (fromOutline || outlineLayer(w.FaceA ?? "") || outlineLayer(w.FaceB ?? ""));
