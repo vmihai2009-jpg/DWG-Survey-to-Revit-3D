@@ -661,6 +661,58 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-23 (later): Revit run results: B1, B3, B4 on Mount Row (hub 1.37.0, Survey to Revit 0.33.40)
+**Done: B1, B3, B4.** Files in MCP-Rev `runs/2026-11-23/`: `fidelity-mount-row.json` and `enclosures-mount-row-<floor>.json` (7 floors, pushed in e6a8801). B2 (Swallow Place) is not done: its model is open in another Revit session that is not this one's to touch.
+
+**B1. `survey_fidelity` per floor** (withinTolPct, with 0.33.19 in brackets):
+
+| Floor | withinTolPct | walls.missing | openings.missing | openings.plan | ceilings.missing |
+|---|---|---|---|---|---|
+| B1 | 38.8 (56.7) | 0 | 0 | 1/17 | 0 |
+| GF | 51.5 (53.6) | 15 | 0 | 5/42 | 1 |
+| 1F | 59.9 (61.5) | 2 | 0 | 5/38 | 0 |
+| 2F | 55.0 (57.3) | 0 | 0 | 3/25 | 0 |
+| 3F | 57.2 (58.8) | 1 | 0 | 3/38 | 0 |
+| 4F | 63.5 (64.0) | 2 | 0 | 3/40 | 0 |
+| 5F | 61.2 (61.7) | 10 | 61 | 0/22 | 0 |
+
+- **Within-tolerance drops.** Small drops everywhere and a large one on B1 (-18). B1 gained 61 m of single-line edge walls in 0.33.25 (party walls drawn by their inside face only, assumed 100 mm). Their second face is a guess, so they count against the score.
+- **Missing ceilings: 63 -> 1** (rest-of-floor ceilings 0.33.33, none over open terraces 0.33.39).
+- **Elevation notes.** The sheet is found now; the "There is no file" error is gone.
+  - F15: "not used, the elevation does not sit on the facade (30 of 104 jambs)". The hub picks a longer facade line, F15 -22314..12561, which runs across both neighbours' fronts. S2R matches F17, -12314..5311, at 88 %.
+  - F30: "0 openings measured, 54 drawn but not modelled".
+  - F28: "0 measured, 7 drawn but not modelled".
+- **5F "61 missing openings".** These are F30's 54 + F28's 7 drawn openings, nearly all on the neighbours' fronts on the same sheet. The hub's facade lines include the neighbours, because facade_list merges our walls with the `|CONTEXT|` walls in line with them. Ask: leave CONTEXT walls out of facade_list and the elevation fit.
+
+**B3. The worst 10** (kind | level | at | devMm | against):
+1. wall_missing | 5F | -5267,-17052 | 12506 | face pair 512 mm, 12.5 m. Front-terrace parapet/planter lines; never built by S2R. Next for the org side.
+2. wall_missing | 5F | -5051,-16442 | 12078 | face pair 150 mm, 12.1 m. The same terrace.
+3. wall_missing | 5F | 2638,-2122 | 3026 | face pair 390 mm.
+4. wall_missing | 5F | -11166,-14915 | 2852 | face pair 150 mm.
+5. wall_missing | 1F | -13526,2654 | 2235 | face pair 60 mm. No.30's roof hatching, correctly left out.
+6-9. wall_missing | GF | -4702,16871 / -3244,15414 / -4100,15414 / -4702,16016 | 1735 | face pair 60 mm. The octagonal court feature: a false alarm.
+10. wall_missing | 4F | -14149,-17548 | 1670 | face pair 101 mm. No.30's lines.
+
+wall_face issues top out at 292 mm (GF 561,23040 and -8128,23026: the rear court boundary).
+
+**B4. `survey_enclosures`** (defaults). The plan side looks plausible; the model side does not work on this model yet.
+
+| Floor | footprint survey/model m2 | iou | rooms survey/model/paired/missing/extra | bridges gap/opening/corner |
+|---|---|---|---|---|
+| B1 | 354 / 54 | 0.109 | 8/4/3/5/1 | 24/36/2 |
+| GF | 531 / 16 | 0.026 | 19/3/3/16/0 | 124/72/2 |
+| 1F | 428 / 10 | 0.016 | 27/2/1/26/1 | 33/57/0 |
+| 2F | 225 / 31 | 0.121 | 10/3/0/10/3 | 36/39/1 |
+| 3F | 151 / 31 | 0.165 | 14/7/5/9/2 | 40/59/2 |
+| 4F | 223 / 57 | 0.242 | 17/6/3/14/3 | 38/57/1 |
+| 5F | 416 / 3 | 0.008 | 24/2/2/22/0 | 46/59/2 |
+
+- **Model trace closes almost nothing.** 3 m2 footprint on 5F, while Revit's own room circuits find 7-18 per floor and place 54 rooms. Likely causes: Revit wall location lines at joins are not plan faces, and walls of very different thickness meet; plus the pruning of loose ends. Where rooms do pair they match well: mean IoU 0.91-0.97.
+- **Plan trace takes in the neighbours.** 1F rooms at x -19..-15 (No.30) and 5F rooms at x 7.6..9.6 (No.24) come from the BUILDINGS layer. It needs S2R's neighbour filter or a CONTEXT exclusion.
+- **Big "missing" plan rooms are open areas.** B1 292 m2, GF 237 + 169 m2 (the open court), 1F 91 m2 (the terrace) are unenclosed open-plan areas or outdoor spaces, not missing walls.
+- **Verdict on the new tools.** 1.36.16's elevation lookup works, and 1.37.0's error codes work (`bad_argument` on a mistyped batch call). `survey_enclosures` is not usable as a score on Mount Row until the model trace closes and the neighbours are left out.
+- **Calling it.** This session's MCP client did not list `survey_enclosures` after mcp_reload (tool list fixed at session start), so it was run through `batch` with dry_run.
+
 ### 2026-11-23: Survey to Revit 0.33.38, the neighbour's roof off our 1F slab, the terrace railing built
 - **Neighbour roof lines on the outline layer.** No.30's roof is drawn on BUILDINGS beside our 1F terrace: a zigzag of 60 mm lines and a 380 mm wall at x -13.0. These were kept as our walls because their midpoints were within 1.5 m of our own linework. Now an outline-layer wall whose nearest face is more than 0.3 m outside that linework's hull is the neighbour's.
   - MR 1F: 8 more dropped. Slab 472 -> 444 m2; its west edge moves from x -14.28 to -12.83, the outer face of our 700 mm party wall.
