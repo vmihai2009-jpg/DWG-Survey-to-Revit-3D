@@ -876,9 +876,13 @@ public sealed class ModelBuilder
                 catch (Exception ex) { firstError ??= ex.Message; t.RollBack(); }
             }
             Log.Add($"{sl.Name}: {native} stairs" + (blocks > 0 ? $", {blocks} as generic model blocks" + (firstError != null ? $" (Revit refused the stair: {firstError})" : "") : "")
-                    + (unknown > 0 ? $"; {unknown} with no UP note: climbing direction guessed, check" : ""));
+                    + (unknown > 0 ? $"; {unknown} with no UP note: climbing direction guessed, check" : "")
+                    + (_stairHeightError != null ? $"; run heights not set ({_stairHeightError})" : ""));
+            _stairHeightError = null;
         }
     }
+
+    string? _stairHeightError;
 
     bool NativeStair(StairCandidate stair, Level level, Level above, string code, double riseMm)
     {
@@ -930,7 +934,7 @@ public sealed class ModelBuilder
                         runs[k].TopElevation = Ft((at + n) * riserMm);
                         runs[k].BaseElevation = Ft(at * riserMm);
                     }
-                    catch { /* Revit keeps its own heights */ }
+                    catch (Exception ex) { _stairHeightError ??= $"run {k + 1}: {ex.Message}"; }
                     at += n;
                 }
             }
