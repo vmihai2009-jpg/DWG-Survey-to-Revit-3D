@@ -641,6 +641,15 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-23: Survey to Revit 0.33.37, what the 1F terrace really is (Mihai's screenshot of the rear court)
+Mihai flagged an "extra floor and stairs" in the rear court. On the 1F plan this is the GF's flat roof, a terrace at 28.1 AOD with a roof light, plant housings, gullies and a 0.90 railing, plus an outside stair from the GF court (24.60) up to it.
+- **Stairs arriving from below.** A stair whose foot has a spot height 1.5 m or more below its plan's floor comes up from the floor below and is not built again. MR: GF 1 (the B1 stair drawn arriving), 1F 1 (the court stair), 5F 1. SP: 7F 1.
+- **Steps parted from the stair inside.** Flights joined across a wall that has a door or window in it are parted (the steps outside the 1F rear door had been taken into the internal stair, pushing it out through the facade). A part with fewer than 6 risers is steps, not a storey stair, and is not built. MR 1F: 1. SP: B1 2, GF 1, 2F 1.
+- **Raised objects.** A wall with spot heights on one side all 0.6 m+ up and a floor-level spot on the other side is the side of a raised object (plant housing, kerb) and is built to that top. MR: 1F 2 walls, 2F 1. SP: 5F 1.
+- **Height notes.** "RAILING 0.90HT"-style notes (railing, balustrade, parapet, upstand, fence, screen, wall) set the nearest wall within 0.8 m to that height. None applied on MR: the terrace railing at x -9.8 is not read as a wall at all, which is still open.
+- **Text encoding repaired** in SurveyAnalyzer.cs and ModelBuilder.cs. PowerShell edits had double-encoded °, ² and façade, so logs showed "Â°".
+- **Still open.** The 1F slab is the terrace, which is right in extent, but it still runs to x -14.28 (into No.30) because of a 3.3 m wall at x -13.0. The terrace railing is not built.
+
 ### 2026-11-23: Survey to Revit 0.33.34-0.33.36, stairs (still open)
 - **What happens.** All 14 stairs still warn "top cannot reach". In each two-flight stair the second sketched run starts too low: B1 stair run 1 is 0-1630, run 2 is 724-2354 (riser 181).
 - **Not the landings.** Run 2 stays wrong with the automatic landing left out too.
