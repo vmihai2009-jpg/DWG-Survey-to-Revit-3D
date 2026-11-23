@@ -1,4 +1,4 @@
-using Autodesk.Revit.DB;
+﻿using Autodesk.Revit.DB;
 using SurveyToRevit.Core;
 using SurveyToRevit.Core.Site;
 using SurveyToRevit.Core.Survey;
@@ -188,7 +188,7 @@ public sealed class ModelBuilder
             if (CheckInternalToShared(location, e, n, z, angle))
             {
                 t.Commit();
-                Log.Add($"Shared coordinates set: internal origin = E {f.BasePoint.X / 1000:0.000} N {f.BasePoint.Y / 1000:0.000}, elevation {_datumMm / 1000:0.000} m (survey datum) = project 0, project north {f.RotationDeg:0.00}° from true north.");
+                Log.Add($"Shared coordinates set: internal origin = E {f.BasePoint.X / 1000:0.000} N {f.BasePoint.Y / 1000:0.000}, elevation {_datumMm / 1000:0.000} m (survey datum) = project 0, project north {f.RotationDeg:0.00}Â° from true north.");
                 PointsToOrigin(e, n, z, angle);
                 return;
             }
@@ -232,7 +232,7 @@ public sealed class ModelBuilder
         Log.Add("Base points: " + string.Join("; ", moved) + ".");
     }
 
-    // Survey = base point + rotation(+angle) × internal. Accept either way Revit reports its transform.
+    // Survey = base point + rotation(+angle) Ã— internal. Accept either way Revit reports its transform.
     static bool CheckInternalToShared(ProjectLocation location, double e, double n, double z, double angle)
     {
         var total = location.GetTotalTransform();
@@ -356,7 +356,7 @@ public sealed class ModelBuilder
                 }
                 inst.Pinned = true;
                 t.Commit();
-                Log.Add(turn ? $"Linked {file} into '{view.Name}' (turned {o!.InteriorTurnDeg:0.00}° to the project)." : $"Linked {file} into '{view.Name}' using shared coordinates.");
+                Log.Add(turn ? $"Linked {file} into '{view.Name}' (turned {o!.InteriorTurnDeg:0.00}Â° to the project)." : $"Linked {file} into '{view.Name}' using shared coordinates.");
                 try { CheckLinkPosition(inst, sl); }
                 catch (Exception ex) { Log.Add($"Could not check where {file} landed ({ex.Message}); check it by eye."); }
             }
@@ -547,7 +547,7 @@ public sealed class ModelBuilder
                     {
                         floor = Floor.Create(_doc, new List<CurveLoop> { loop }, FloorTypeFor(o.SlabThicknessMm).Id, level.Id);
                         Mark(floor, sl.Code, "Floor");
-                        done.Add($"floor {sl.Outline!.Area / 1e6:0} m²");
+                        done.Add($"floor {sl.Outline!.Area / 1e6:0} mÂ²");
                     }
                     catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ArgumentException)
                     {
@@ -560,7 +560,7 @@ public sealed class ModelBuilder
                                 Mark(f, sl.Code, "Floor");
                                 floor ??= f; parts++;
                             }
-                        done.Add($"floor {sl.Outline!.Area / 1e6:0} m² (outline crossed itself: redrawn as {parts} clean slab{(parts == 1 ? "" : "s")})");
+                        done.Add($"floor {sl.Outline!.Area / 1e6:0} mÂ² (outline crossed itself: redrawn as {parts} clean slab{(parts == 1 ? "" : "s")})");
                     }
                 });
                 if (floor != null && floor.IsValidObject && o.Stairs && sl.StairVoids.Count > 0)
@@ -642,7 +642,7 @@ public sealed class ModelBuilder
     }
 
     /// <summary>
-    /// Interior Survey: linked models (the exterior) bound rooms, so rooms close against the existing façade.
+    /// Interior Survey: linked models (the exterior) bound rooms, so rooms close against the existing faÃ§ade.
     /// </summary>
     void RoomBoundingLinks()
     {
@@ -653,7 +653,7 @@ public sealed class ModelBuilder
         t.Start();
         foreach (var lt in types) lt.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING).Set(1);
         t.Commit();
-        Log.Add($"Room Bounding turned on for {string.Join(", ", types.Select(x => x.Name))}, so rooms close against the existing façade.");
+        Log.Add($"Room Bounding turned on for {string.Join(", ", types.Select(x => x.Name))}, so rooms close against the existing faÃ§ade.");
     }
 
     /// <summary>
@@ -1341,7 +1341,7 @@ public sealed class ModelBuilder
 
     /// <summary>
     /// Closed loop at the given height; edges too short for Revit are dropped, and edges a hair
-    /// off square (under 1°, ends under 30 mm out) are made exactly square, so Revit does not
+    /// off square (under 1Â°, ends under 30 mm out) are made exactly square, so Revit does not
     /// warn "Line in Sketch is slightly off axis".
     /// </summary>
     static CurveLoop? Loop(Polygon2 poly, double z)
@@ -1498,7 +1498,7 @@ public sealed class ModelBuilder
                 sl.Windows.Where(w => w.FromElevation && !_keptOpenings.Contains(w)).Select(w => (w.HostIndex, w.Center, w.WidthMm, w.SillMm, w.HeadMm, w.Outward, (Vec2?)null, (Vec2?)null)), "Window ElevationOnly");
             made += m2; failed += f2; fromElevation = m2;
         }
-        // a window set in an inner wall, with the façade in front of it: cut through the façade too
+        // a window set in an inner wall, with the faÃ§ade in front of it: cut through the faÃ§ade too
         foreach (var w in sl.Windows)
             foreach (var (k, at) in w.AlsoCut)
                 if (created.TryGetValue(sl.Walls.Walls[k], out var facade))
@@ -1858,7 +1858,7 @@ public sealed class ModelBuilder
         });
         if (heights.Values.All(h => h == null)) return "";
         var options = new SpatialElementBoundaryOptions { SpatialElementBoundaryLocation = SpatialElementBoundaryLocation.Finish };
-        var made = new List<ElementId>();
+        var made = new List<ElementId>(); var madeRooms = new List<Autodesk.Revit.DB.Architecture.Room>();
         int failed = 0, own = 0;
         foreach (var (room, h) in heights)
         {
@@ -1873,7 +1873,7 @@ public sealed class ModelBuilder
                 c.get_Parameter(BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM)?.Set(Ft(mm));
                 Mark(c, sl.Code, h != null ? $"Ceiling {mm / 1000:0.00} m (surveyed in the room)" : "Ceiling (floor's usual height)");
                 room.LimitOffset = Ft(mm);
-                made.Add(c.Id);
+                made.Add(c.Id); madeRooms.Add(room);
                 if (h != null) own++;
             }
             catch { failed++; }
@@ -1889,7 +1889,32 @@ public sealed class ModelBuilder
                      && e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() == $"{Tag}|{sl.Code}|Ceiling")
             .Select(e => e.Id).ToList();
         if (floorWide.Count > 0) _doc.Delete(floorWide);
-        return $"; ceilings room by room: {made.Count} ({own} at the height surveyed in the room)" + (failed > 0 ? $", {failed} rooms without" : "");
+        // the rest of the floor (spaces Revit could not close as rooms: open-plan areas, halls run into a stair) keeps a
+        // ceiling at the floor's usual height: the floor's outline with the rooms' ceilings as holes
+        string rest = "";
+        if (sl.Outline != null && Loop(sl.Outline, level.Elevation) is CurveLoop outer)
+        {
+            using var st = new SubTransaction(_doc);
+            st.Start();
+            try
+            {
+                var loops = new List<CurveLoop> { outer };
+                foreach (var room in madeRooms)
+                    foreach (var segs in room.GetBoundarySegments(options))
+                    {
+                        var l = CurveLoop.Create(segs.Select(sg => sg.GetCurve()).ToList());
+                        if (!l.IsOpen()) loops.Add(l);
+                    }
+                var c = Ceiling.Create(_doc, loops, CeilingTypeFor().Id, level.Id);
+                c.get_Parameter(BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM)?.Set(Ft(sl.CeilingHeightMm));
+                Mark(c, sl.Code, "Ceiling (rest of the floor, usual height)");
+                _doc.Regenerate();
+                st.Commit();
+                rest = ", the rest of the floor at its usual height";
+            }
+            catch (Exception ex) { st.RollBack(); rest = $", the rest of the floor without (Revit refused: {ex.Message})"; }
+        }
+        return $"; ceilings room by room: {made.Count} ({own} at the height surveyed in the room)" + (failed > 0 ? $", {failed} rooms without" : "") + rest;
     }
 
     static void SetLength(Element e, double value, BuiltInParameter first, BuiltInParameter second, BuiltInParameter third, string name)
