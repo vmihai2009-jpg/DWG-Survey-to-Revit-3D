@@ -877,7 +877,7 @@ public sealed class ModelBuilder
             }
             Log.Add($"{sl.Name}: {native} stairs" + (blocks > 0 ? $", {blocks} as generic model blocks" + (firstError != null ? $" (Revit refused the stair: {firstError})" : "") : "")
                     + (unknown > 0 ? $"; {unknown} with no UP note: climbing direction guessed, check" : "")
-                    + (_stairHeightError != null ? $"; run heights not set ({_stairHeightError})" : ""));
+                    + (_stairHeightError != null ? $"; {_stairHeightError}" : ""));
             _stairHeightError = null;
         }
     }
@@ -920,22 +920,24 @@ public sealed class ModelBuilder
                 runs.Add(Autodesk.Revit.DB.Architecture.StairsRun.CreateSketchedRun(_doc, id, Ft(done * riserMm), boundaries, riserCurves, path));
                 done += f.Risers.Count;
             }
-            for (int k = 1; k < runs.Count; k++)
-                try { Autodesk.Revit.DB.Architecture.StairsLanding.CreateAutomaticLanding(_doc, runs[k - 1].Id, runs[k].Id); } catch { /* no landing fits: the runs stand alone */ }
-            // the landings move the later runs' heights (Revit re-solves them from the landing); each run climbs on from
-            // where the one before stopped, so the stair reaches the floor above
+            // an automatic landing re-solves the next run's height (it can drop it half a flight, so the stair never reaches
+            // the floor above, and a sketched run's heights cannot be set back): a landing that moves it is not kept
             {
-                int at = 0;
-                for (int k = 0; k < runs.Count; k++)
+                int at = stair.Flights[0].Risers.Count;
+                for (int k = 1; k < runs.Count; k++)
                 {
-                    int n = stair.Flights[k].Risers.Count;
+                    double want = Ft(at * riserMm);
+                    using var sub = new SubTransaction(_doc);
+                    sub.Start();
                     try
                     {
-                        runs[k].TopElevation = Ft((at + n) * riserMm);
-                        runs[k].BaseElevation = Ft(at * riserMm);
+                        Autodesk.Revit.DB.Architecture.StairsLanding.CreateAutomaticLanding(_doc, runs[k - 1].Id, runs[k].Id);
+                        _doc.Regenerate();
+                        if (Math.Abs(runs[k].BaseElevation - want) > Ft(5)) { sub.RollBack(); _stairHeightError ??= "a landing that lowered the next run was left out"; }
+                        else sub.Commit();
                     }
-                    catch (Exception ex) { _stairHeightError ??= $"run {k + 1}: {ex.Message}"; }
-                    at += n;
+                    catch { if (sub.HasStarted() && !sub.HasEnded()) sub.RollBack(); /* no landing fits: the runs stand alone */ }
+                    at += stair.Flights[k].Risers.Count;
                 }
             }
             if (_doc.GetElement(id) is Autodesk.Revit.DB.Architecture.Stairs s)
