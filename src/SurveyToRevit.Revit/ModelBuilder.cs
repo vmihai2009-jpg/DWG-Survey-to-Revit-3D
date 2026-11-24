@@ -170,7 +170,7 @@ public sealed partial class ModelBuilder
         if (o.Sections && _model.Sections.Any(x => x.Cut != null)) BuildSections(levels.Values.Select(v => v.level).ToList());
         if (o.Site != null) BuildSite(o.Site, levels.Values.Select(v => v.level).ToList());
         if (o.Sheets)
-            try { _linkDrawings = o.LinkPlans; BuildSheets(levels); }
+            try { _linkDrawings = o.LinkPlans && SurveyToRevit.Shared.UserSettings.Load().OverlayElevations; BuildSheets(levels); }
             catch (Exception ex) { Log.Add($"Sheets: not made ({ex.Message})."); }
         group.Assimilate();
     }

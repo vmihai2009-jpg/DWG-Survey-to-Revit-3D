@@ -36,6 +36,8 @@ internal sealed class UserSettings
     public int ExistingElevationBase { get; set; } = 270;
     /// <summary>The sheet parameter the project browser groups sheets by (BG: View Type), and each kind's group: {0} its first number.</summary>
     public string SheetGroupParameter { get; set; } = "View Type";
+    /// <summary>Link the survey's elevation DWGs into the elevation views (not yet shown reliably under the BG view template: off).</summary>
+    public bool OverlayElevations { get; set; } = false;
     public string ExistingPlanGroup { get; set; } = "{0} Existing Plans";
     public string ExistingSectionGroup { get; set; } = "{0} Existing Sections";
     public string ExistingElevationGroup { get; set; } = "{0} Existing Elevations";
