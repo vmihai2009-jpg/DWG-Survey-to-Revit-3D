@@ -128,16 +128,20 @@ public sealed partial class ModelBuilder
             // the sheet's x must run the way the match says (an import cannot be mirrored)
             var sheetX = t.OfVector(XYZ.BasisX).Normalize();
             var alongDir = new XYZ(lineDir.X, lineDir.Y, 0) * (e.Mirrored ? -1 : 1);
+            inst.Pinned = false;
             if (sheetX.DotProduct(alongDir) < 0.9)
             {
                 _doc.Delete(id);
                 Log.Add($"Sheets: {view.Name}: {e.Title} not overlaid (the drawing runs the other way in this view).");
                 return;
             }
+            // onto the model in the view's plane, and 300 mm in front of the facade (behind it, the walls hide it)
+            var vd = view.ViewDirection;
             var move = want - now;
-            move -= view.ViewDirection * move.DotProduct(view.ViewDirection); // in the view's plane
-            // a link comes in pinned: unpinned to move it onto the model, pinned again there
-            inst.Pinned = false;
+            move -= vd * move.DotProduct(vd);
+            var facadePt = new XYZ(Ft(pick.A.X), Ft(pick.A.Y), now.Z);
+            move += vd * ((facadePt - now).DotProduct(vd) + Ft(300));
+            // (a link comes in pinned: unpinned to move it, pinned again there)
             ElementTransformUtils.MoveElement(_doc, id, move);
             inst.Pinned = true;
             Log.Add($"Sheets: {view.Name}: survey elevation '{e.Title}' ({e.File}) overlaid on facade {e.Facade}.");
