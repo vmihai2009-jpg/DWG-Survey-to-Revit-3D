@@ -105,7 +105,7 @@ public static class McpTools
     ];
 
     static readonly string[] OptionNames =
-        ["link_plans", "walls", "floors", "ceilings", "windows", "doors", "rooms", "stairs", "details", "roofs", "sections", "sheets", "sheets_only", "unclear_as_generic_models", "keep_matching"];
+        ["link_plans", "walls", "floors", "ceilings", "windows", "doors", "rooms", "stairs", "details", "roofs", "sections", "sheets", "sheets_only", "context", "unclear_as_generic_models", "keep_matching"];
 
     public static string[][] Prompts() =>
     [
@@ -362,6 +362,7 @@ public static class McpTools
         options.Sections = Flag(given, "sections") ?? options.Sections;
         options.Sheets = Flag(given, "sheets") ?? options.Sheets;
         options.SheetsOnly = Flag(given, "sheets_only") ?? false;
+        options.Context = Flag(given, "context") ?? false;
         options.UnclearAsGenericModels = Flag(given, "unclear_as_generic_models") ?? options.UnclearAsGenericModels;
         options.SlabThicknessMm = Num(given, "slab_thickness_mm") ?? options.SlabThicknessMm;
         options.KeepMatching = Flag(given, "keep_matching") ?? options.KeepMatching;

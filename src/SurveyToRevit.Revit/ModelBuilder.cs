@@ -31,6 +31,8 @@ public sealed class BuildOptions
     /// <summary>Elevation views round the building, and every floor plan, elevation and section on a sheet with the project's
     /// title block (an office template's own existing-drawing sheets, filled in, when it has them).</summary>
     public bool Sheets { get; set; } = true;
+    /// <summary>The buildings next door as context blocks (off: only when asked; an earlier build's are removed either way).</summary>
+    public bool Context { get; set; } = false;
     /// <summary>Only the elevation views and the sheets again (a model already built).</summary>
     public bool SheetsOnly { get; set; }
     public double SlabThicknessMm { get; set; } = 300;
@@ -178,7 +180,9 @@ public sealed partial class ModelBuilder
         BuildElements(levels, o);
         if (o.Stairs) BuildStairs(levels);
         if (o.Roofs && _model.Roofs.Count > 0) BuildRoofs(levels.Values.Select(v => v.level).ToList());
-        if (o.Roofs) BuildContext(levels.Values.Select(v => v.level).ToList());
+        // the buildings next door only when asked: read from the elevations' ends and the roof plan, they can land in
+        // front of this building's own facade (SP: a block before Regent Street), and they are not the survey's building
+        if (o.Context) BuildContext(levels.Values.Select(v => v.level).ToList());
         if (o.Sections && _model.Sections.Any(x => x.Cut != null)) BuildSections(levels.Values.Select(v => v.level).ToList());
         if (o.Site != null) BuildSite(o.Site, levels.Values.Select(v => v.level).ToList());
         if (o.Sheets)
