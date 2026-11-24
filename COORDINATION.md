@@ -690,6 +690,12 @@ For the Thursday demo, Mihai asked for one thing: give S2R the DWGs, and it does
   - **Ceilings.** Ceilings stop 100 mm inside the full-height walls' outer faces. Before, they ran over ledges or showed on the facade.
   - **Mezzanines.** Mezzanine sheets get their floor's number with an M (10.200M) and levels 00M_.
   - **Project guard.** `survey_build` takes `project` and refuses to run when another project is active by the time Revit runs it. A queued build nearly ran with the user's SP feasibility model in front.
+- **Office-wide learning (0.33.62; docs/LEARNING.md).**
+  - **Capture.** Every build saves a snapshot of its walls with the reading's evidence. The next build turns what people did (kept, deleted, moved, retyped) into examples in the shared learning folder, kept per surveyor (ISO originator, or the firm on the sheets).
+  - **What is learned.** From the examples S2R proposes surveyor profiles (layers.txt format) and a low-confidence wall ranking. `tuning.json` overrides `Tolerances` office-wide.
+  - **Gate.** `SurveyLab --propose --bench benchmarks/bench.txt [--adopt]` reads every benchmark survey with and without the proposals. It adopts them only if no survey loses floors, sure walls, windows, doors or stairs, or gains checks. `--sweep Name=v1,v2` tries tolerance values. The engine reads adopted files only.
+  - **Tested.** Made-up Plowman Craven corrections on Ss_25-WallSite took SP from 915 to 914 low walls; the gate passed; MR was unchanged.
+  - **Hub idea.** The hub's survey_fidelity / survey_section scores would make a stronger gate than counts; worth adding to `--bench` when the hub can run headless.
 - **Scope box.** The Revit API cannot create or resize a scope box, so every plan gets the same crop box. On the sheets the result is the same.
 - **Slab (0.33.49).** A floor's slab is cut back to its own walls and to the walls of the floor below, since it is also that floor's roof. Before, the MR 1F terrace lost a wedge and the ceiling below showed through: 452 -> 489 m². The 5F slab over the 4F roof: 256 -> 299 m². SP: unchanged.
 - **Stairs (0.33.50).** Numbered flights are chained by continuing numbers, gap 0-6, nearest top to foot. Numbering that restarts is another stair. On the MR 1F plan, outside steps 1-4 up to a door were merged into the stair inside (1-4, 6-10) and stretched to 12 risers, floating outside the building. Now they are separate: the 4 steps are dropped as steps to a door, and the inside stair is built. SP: unchanged.

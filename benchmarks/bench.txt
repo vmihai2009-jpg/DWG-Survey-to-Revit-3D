@@ -1,0 +1,3 @@
+# Survey folders the learning gate reads (SurveyLab --bench benchmarks/bench.txt). Add every survey a reviewer has checked by eye.
+I:\Projects\Work 2025\2579 26-28 Mount Row\05 Info Received\12 Surveys\001-CAD Survey-20260203\29463B 26-28, Mount Row, London W1K 3SQ- Completed Drawings
+I:\Projects\Work 2025\2574 7 Swallow Place & 251-259 Regent Street\05 Info Received\12 Surveys\001-Survey Plans and Areas-20251021\Plowman Craven Survey Drawings
