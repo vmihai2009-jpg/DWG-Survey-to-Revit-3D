@@ -992,12 +992,14 @@ public static class SurveyAnalyzer
         foreach (var lv in levels)
         {
             if (lv.Outline == null) continue;
-            var tall = lv.Walls.Walls.Where(w => w.HeightMm == null && w.FaceA != "railing").ToList();
+            // the walls' faces 100 mm in from their outer side: a ceiling running to the outer face shows on the facade
+            var tall = lv.Walls.Walls.Where(w => w.HeightMm == null && w.FaceA != "railing")
+                .Select(w => w with { TypeThickness = Math.Max(0, w.TypeThickness - 200) }).ToList();
             if (NeighbourWalls.Envelope(tall) is not { } env) continue;
             var parts = lv.CoveredOutlines ?? new List<Polygon2> { lv.Outline };
             var cut = parts.Select(p => NeighbourWalls.Clip(p, env)).Where(p => p != null).Select(p => p!).ToList();
             double before = parts.Sum(p => p.Area), after = cut.Sum(p => p.Area);
-            if (cut.Count == 0 || after > before * 0.99) continue;
+            if (cut.Count == 0 || after > before * 0.999) continue;
             lv.CoveredOutlines = cut;
             notes.Add($"{lv.Name}: ceiling kept inside the floor's walls, {before / 1e6:0} -> {after / 1e6:0} m² (the floor outline runs on over ledges past the facade).");
         }

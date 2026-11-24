@@ -78,7 +78,10 @@ public static class FacadeTops
         {
             var d = e.Direction; var n = new Vec2(-d.Y, d.X);
             var mid = new Vec2((e.A.X + e.B.X) / 2, (e.A.Y + e.B.Y) / 2);
-            if ((centre.X - mid.X) * n.X + (centre.Y - mid.Y) * n.Y < 0) n = new Vec2(-n.X, -n.Y); // n points inside
+            // n points inside: the side a point just off the stretch lies in the floor (the centre misleads on a curved
+            // corner or an indent); the centre only when neither side tells
+            bool inA = FacadeWalls.Contains(below.Outline, mid + n * 300), inB = FacadeWalls.Contains(below.Outline, mid - n * 300);
+            if (inA == inB ? (centre.X - mid.X) * n.X + (centre.Y - mid.Y) * n.Y < 0 : inB) n = new Vec2(-n.X, -n.Y);
             var call = new FacadeTopCall { Id = $"T{++k}", Line = L(e), Level = top.Name };
             // the top storey's walls along this stretch, and how far in
             var along = top.Walls.Walls.Select(w => (w, inset: Inset(w.Centerline, e, d, n))).Where(x => x.inset is double).Select(x => (x.w, inset: x.inset!.Value)).ToList();
