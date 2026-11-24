@@ -108,7 +108,8 @@ public sealed partial class ModelBuilder
             var picks = _model.Elevations
                 .Where(e => e.FacadeLine is { Length: 4 } && e.Score >= ElevationIndex.MinScore && e.Parts.Count > 0 && e.Lines.Count > 0)
                 .Select(e => (E: e, A: new Vec2(e.FacadeLine![0], e.FacadeLine[1]), B: new Vec2(e.FacadeLine[2], e.FacadeLine[3])))
-                .Where(x => Math.Abs((x.B - x.A).Normalized().Dot(outward)) < 0.2 && (((x.A + x.B) * 0.5) - c2).Dot(outward) > 0)
+                // the facade faces this way: its line runs left to right as seen from outside, so outward is its right-hand normal
+                .Where(x => { var d = (x.B - x.A).Normalized(); return new Vec2(d.Y, -d.X).Dot(outward) > 0.8; })
                 .OrderByDescending(x => (((x.A + x.B) * 0.5) - c2).Dot(outward))
                 .GroupBy(x => (x.E.File, string.Join(",", x.E.Box))).Select(g => g.First()).ToList();
             foreach (var pick in picks) DrawElevation(view, pick.E, pick.A, pick.B);
