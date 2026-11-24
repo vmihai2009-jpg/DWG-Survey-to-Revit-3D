@@ -136,7 +136,10 @@ public sealed partial class ModelBuilder
             }
             var move = want - now;
             move -= view.ViewDirection * move.DotProduct(view.ViewDirection); // in the view's plane
+            // a link comes in pinned: unpinned to move it onto the model, pinned again there
+            inst.Pinned = false;
             ElementTransformUtils.MoveElement(_doc, id, move);
+            inst.Pinned = true;
             Log.Add($"Sheets: {view.Name}: survey elevation '{e.Title}' ({e.File}) overlaid on facade {e.Facade}.");
         }
         catch (Exception ex) { Log.Add($"Sheets: {view.Name}: elevation drawing not overlaid ({ex.Message})."); }
