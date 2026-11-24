@@ -1825,8 +1825,15 @@ public sealed class ModelBuilder
         {
             circuits++;
             if (circuit.IsRoomLocated) continue;
-            try { placed.Add(_doc.Create.NewRoom(_doc.Create.NewRoom(_phase), circuit)); }
-            catch (Exception ex) { refused++; firstError ??= ex.Message; }
+            // a room is made unplaced first and then put in the circuit; when Revit refuses the circuit the unplaced room
+            // is taken out again (it was left behind, two orphan rooms a build)
+            var fresh = _doc.Create.NewRoom(_phase);
+            try { placed.Add(_doc.Create.NewRoom(fresh, circuit)); }
+            catch (Exception ex)
+            {
+                refused++; firstError ??= ex.Message;
+                try { if (fresh.IsValidObject) _doc.Delete(fresh.Id); } catch { /* left for Revit's purge */ }
+            }
         }
         // a new room has no shape until the model regenerates; without this every label looks outside every room
         _doc.Regenerate();
