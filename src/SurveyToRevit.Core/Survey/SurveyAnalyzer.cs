@@ -43,6 +43,8 @@ public sealed record SurveyLevel(
     public Polygon2? Outline { get; set; } = Outline;
     /// <summary>Further floor parts with slabs and ceilings of their own (Interior Survey: a floor the existing model splits in two).</summary>
     public IReadOnlyList<Polygon2> MoreOutlines { get; set; } = Array.Empty<Polygon2>();
+    /// <summary>The outline as drawn, before it was cut back to this floor's walls (null when it was not cut).</summary>
+    public Polygon2? DrawnOutline { get; set; }
     /// <summary>Walls (walls made to hold doors in empty openings are added after the doors are read).</summary>
     public WallDetectionResult Walls { get; set; } = Walls;
     /// <summary>Wall height: up to the next level, or the default for the top level.</summary>
@@ -409,6 +411,7 @@ public static class SurveyAnalyzer
                 notes.Add($"{name}: floor outline cut back to this building's walls, {before.Area / 1e6:0} -> {clipped.Area / 1e6:0} m² (the rest is next door).");
             }
             var level = new SurveyLevel(p.Name.LevelCode!, name, order, est?.FloorLevelMm ?? double.NaN, est, p, plan.Walls, plan.Outline, plan.Unclear);
+            if (!ReferenceEquals(plan.Outline, raster.Outline)) level.DrawnOutline = raster.Outline;
             level.IsRoom = raster.IsRoom;
             level.IsMaterial = raster.IsMaterial;
             if (raster.Leftover != null)
@@ -577,8 +580,23 @@ public static class SurveyAnalyzer
             lv.Walls = lv.Walls with { Walls = all };
             notes.Add($"{lv.Name}: {closed} outside corners left open by up to 1.5 m (a facade stopping short of the wall it meets) closed.");
         }
+        // a floor's slab is also the roof of the floor below: where the drawn outline runs on over the floor below (a
+        // terrace on its roof), cutting it back to this floor's own walls left a wedge of that roof open. Cut it back to
+        // both floors' walls instead
+        for (int i = 1; i < levels.Count; i++)
+        {
+            var lv = levels[i];
+            if (lv.DrawnOutline is not Polygon2 drawn || lv.Outline is not Polygon2 cut) continue;
+            var below = levels.Take(i).LastOrDefault(l => !double.IsNaN(l.ElevationMm) && !double.IsNaN(lv.ElevationMm) && l.ElevationMm < lv.ElevationMm - 1500);
+            if (below == null || NeighbourWalls.Envelope(lv.Walls.Walls.Concat(below.Walls.Walls)) is not { } both) continue;
+            if (NeighbourWalls.Clip(drawn, both) is Polygon2 wider && wider.Area > cut.Area * 1.02)
+            {
+                notes.Add($"{lv.Name}: slab kept over the roof of {below.Name} too, {cut.Area / 1e6:0} -> {wider.Area / 1e6:0} m².");
+                lv.Outline = wider;
+            }
+        }
         // which outside walls line up with the façade on the floors below and above (the building's face)
-        var stacked = FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList());
+        var stacked =FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList());
         // floors with a mezzanine over part of them (see below): outside it they are double height
         Polygon2? MezzanineOver(int i) => Mezzanine(levels, i);
         for (int i = 0; i < levels.Count; i++)
