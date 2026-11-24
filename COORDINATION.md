@@ -661,6 +661,14 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-24: Survey to Revit 0.33.41-0.33.43, a clean rebuild of Mount Row, and stairs that climb
+Mihai: start fresh, everything built by S2R only. MRTest held 136 orphan unplaced rooms from earlier builds; nothing else that S2R had not made.
+- **0.33.41, rooms.** `CreateRooms` made an unplaced room and then placed it. When Revit refused the circuit, the unplaced room stayed, two orphans a build. It is now deleted again. After a fresh build: 52 rooms, 0 unplaced.
+- **0.33.42, numbered treads.** The surveyor numbers treads up through the building (MR 4F: 52-54, 55-58, 59-65). When at least two flights carry numbers on half their treads or more, each flight climbs the way its numbers rise and the flights follow in number order (`StairFinder.ByTreadNumbers`). Before this, an UP note on every flight started the 4F stair at 55 and ran 59-65 backwards. Otherwise unchanged (UP note / free end).
+- **0.33.43, stair run heights.** Each sketched run is now drawn at the height it starts from, and the riser count is set before the runs. Revit had re-solved every later run about half a flight low (B1: run 2 at 724 instead of 1630), so no stair reached the floor above.
+  - MR results: "Stair top end cannot reach" 12 -> 0, "not continuously connected" 12 -> 4, new "landing depth less than run width" 9.
+  - Run heights now chain to the storey: B1 0-1630-3260; GF 0-747-1307-3360.
+
 ### 2026-11-23 (later): Revit run results: B1, B3, B4 on Mount Row (hub 1.37.0, Survey to Revit 0.33.40)
 **Done: B1, B3, B4.** Files in MCP-Rev `runs/2026-11-23/`: `fidelity-mount-row.json` and `enclosures-mount-row-<floor>.json` (7 floors, pushed in e6a8801). B2 (Swallow Place) is not done: its model is open in another Revit session that is not this one's to touch.
 
