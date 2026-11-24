@@ -104,72 +104,67 @@ public sealed partial class ModelBuilder
         try
         {
             var outward = new Vec2(dir.X, dir.Y); var c2 = new Vec2(Mm(centre.X), Mm(centre.Y));
-            var pick = _model.Elevations
-                .Where(e => e.FacadeLine is { Length: 4 } && e.Score >= ElevationIndex.MinScore && e.Parts.Count > 0)
+            // every survey elevation of this side (square to it, on it), each drawing once (the nearest facade it matched)
+            var picks = _model.Elevations
+                .Where(e => e.FacadeLine is { Length: 4 } && e.Score >= ElevationIndex.MinScore && e.Parts.Count > 0 && e.Lines.Count > 0)
                 .Select(e => (E: e, A: new Vec2(e.FacadeLine![0], e.FacadeLine[1]), B: new Vec2(e.FacadeLine[2], e.FacadeLine[3])))
-                // square to this side, and on it
                 .Where(x => Math.Abs((x.B - x.A).Normalized().Dot(outward)) < 0.2 && (((x.A + x.B) * 0.5) - c2).Dot(outward) > 0)
-                .OrderByDescending(x => (((x.A + x.B) * 0.5) - c2).Dot(outward)).FirstOrDefault();
-            if (pick.E == null) return;
-            var e = pick.E;
-            var folder = System.IO.Path.GetDirectoryName(_model.Levels.FirstOrDefault()?.Plan.Path ?? "") ?? "";
-            var path = new[] { e.File, e.File + ".dwg", System.IO.Path.Combine(folder, e.File), System.IO.Path.Combine(folder, e.File + ".dwg") }.FirstOrDefault(File.Exists);
-            if (path == null) { Log.Add($"Sheets: {view.Name}: the elevation drawing {e.File} was not found to link."); return; }
-
-            var options = new DWGImportOptions { ThisViewOnly = true, Placement = ImportPlacement.Origin, Unit = ImportUnit.Millimeter, ColorMode = ImportColorMode.Preserved };
-            if (!_doc.Link(path, options, view, out ElementId id) || _doc.GetElement(id) is not ImportInstance inst) { Log.Add($"Sheets: {view.Name}: {e.File} could not be linked."); return; }
-            _doc.Regenerate();
-            var t = inst.GetTotalTransform();
-            // where a sheet point lands now, and where the match says it belongs
-            double sx = (e.Box[0] + e.Box[2]) / 2, sy = (e.Box[1] + e.Box[3]) / 2;
-            var part = e.Parts.FirstOrDefault(p => sx >= p.X0 && sx <= p.X1) ?? e.Parts[0];
-            var lineDir = (pick.B - pick.A).Normalized();
-            double along = e.ShiftMm + (e.Mirrored ? -1 : 1) * e.Scale * sx;
-            var at2 = pick.A + lineDir * along;
-            var want = new XYZ(Ft(at2.X), Ft(at2.Y), Z(part.A * sy + part.B));
-            var now = t.OfPoint(new XYZ(Ft(sx), Ft(sy), 0));
-            // (a link comes in pinned: unpinned to place it, pinned again there)
-            inst.Pinned = false;
-            // the sheet's x must run the way the match says; Revit can lay the drawing in the view the other way round
-            // (looking north, say): then it is mirrored across the view's upright plane through that point
-            var sheetX = t.OfVector(XYZ.BasisX).Normalize();
-            var alongDir = new XYZ(lineDir.X, lineDir.Y, 0) * (e.Mirrored ? -1 : 1);
-            bool flipped = false;
-            if (sheetX.DotProduct(alongDir) < 0.9)
-            {
-                try
-                {
-                    var plane = Plane.CreateByNormalAndOrigin(view.RightDirection, now);
-                    ElementTransformUtils.MirrorElements(_doc, new List<ElementId> { id }, plane, false);
-                    _doc.Regenerate();
-                    t = inst.GetTotalTransform();
-                    now = t.OfPoint(new XYZ(Ft(sx), Ft(sy), 0));
-                    flipped = t.OfVector(XYZ.BasisX).Normalize().DotProduct(alongDir) > 0.9;
-                }
-                catch (Exception ex) { Log.Add($"Sheets: {view.Name}: mirroring the drawing failed ({ex.Message})."); }
-                if (!flipped)
-                {
-                    _doc.Delete(id);
-                    Log.Add($"Sheets: {view.Name}: {e.Title} not overlaid (the drawing runs the other way in this view).");
-                    return;
-                }
-            }
-            // onto the model in the view's plane, and 300 mm in front of the facade (behind it, the walls hide it)
-            var vd = view.ViewDirection;
-            var move = want - now;
-            move -= vd * move.DotProduct(vd);
-            var facadePt = new XYZ(Ft(pick.A.X), Ft(pick.A.Y), now.Z);
-            move += vd * ((facadePt - now).DotProduct(vd) + Ft(300));
-            ElementTransformUtils.MoveElement(_doc, id, move);
-            _doc.Regenerate();
-            if (!inst.IsValidObject) { Log.Add($"Sheets: {view.Name}: Revit removed the drawing once placed."); return; }
-            inst.Pinned = true;
-            var at = inst.GetTotalTransform().OfPoint(new XYZ(Ft(sx), Ft(sy), 0));
-            Log.Add($"Sheets: {view.Name}: survey elevation '{e.Title}' overlaid on facade {e.Facade}{(flipped ? " (mirrored to read the right way)" : "")}; " +
-                    $"its middle at ({Mm(at.X):0}, {Mm(at.Y):0}, {Mm(at.Z):0}) mm, wanted ({Mm(want.X):0}, {Mm(want.Y):0}, {Mm(want.Z):0}); imports hidden in the view: {view.AreImportCategoriesHidden}.");
-            _overlays.Add((view, id));
+                .OrderByDescending(x => (((x.A + x.B) * 0.5) - c2).Dot(outward))
+                .GroupBy(x => (x.E.File, string.Join(",", x.E.Box))).Select(g => g.First()).ToList();
+            foreach (var pick in picks) DrawElevation(view, pick.E, pick.A, pick.B);
         }
-        catch (Exception ex) { Log.Add($"Sheets: {view.Name}: elevation drawing not overlaid ({ex.Message})."); }
+        catch (Exception ex) { Log.Add($"Sheets: {view.Name}: survey elevation not drawn ({ex.Message})."); }
+    }
+
+    /// <summary>
+    /// The survey elevation's own lines drawn in the view as detail lines (line style "Survey (S2R)"), where the elevation
+    /// index's match puts them: distance along the facade from the sheet's x, survey height from its y. Native and exact;
+    /// a linked DWG in an elevation view does not land where Revit reports it, so it is not used.
+    /// </summary>
+    void DrawElevation(ViewSection view, ElevationDrawing e, Vec2 a, Vec2 b)
+    {
+        var dir = (b - a).Normalized();
+        var vd = view.ViewDirection; var origin = view.Origin;
+        XYZ At(Vec2 p)
+        {
+            var part = e.Parts.FirstOrDefault(q => p.X >= q.X0 && p.X <= q.X1) ?? e.Parts.OrderBy(q => Math.Min(Math.Abs(p.X - q.X0), Math.Abs(p.X - q.X1))).First();
+            var on = a + dir * (e.ShiftMm + (e.Mirrored ? -1 : 1) * e.Scale * p.X);
+            var w = new XYZ(Ft(on.X), Ft(on.Y), Z(part.A * p.Y + part.B));
+            return w - vd * (w - origin).DotProduct(vd); // onto the view's plane
+        }
+        var style = SurveyLineStyle();
+        int drawn = 0;
+        foreach (var s in e.Lines)
+        {
+            try
+            {
+                var p = At(s.A); var q = At(s.B);
+                if (p.DistanceTo(q) < _doc.Application.ShortCurveTolerance) continue;
+                var dc = _doc.Create.NewDetailCurve(view, Line.CreateBound(p, q));
+                if (style != null) dc.LineStyle = style;
+                drawn++;
+            }
+            catch { /* a line Revit will not take */ }
+        }
+        Log.Add($"Sheets: {view.Name}: survey elevation '{e.Title}' drawn on facade {e.Facade} ({drawn} lines).");
+    }
+
+    /// <summary>The line style the survey's linework is drawn in ("Survey (S2R)", made if missing: thin, dark red).</summary>
+    GraphicsStyle? SurveyLineStyle()
+    {
+        try
+        {
+            var lines = Category.GetCategory(_doc, BuiltInCategory.OST_Lines);
+            var sub = lines.SubCategories.Cast<Category>().FirstOrDefault(c => c.Name == "Survey (S2R)");
+            if (sub == null)
+            {
+                sub = _doc.Settings.Categories.NewSubcategory(lines, "Survey (S2R)");
+                sub.LineColor = new Color(160, 30, 30);
+                sub.SetLineWeight(1, GraphicsStyleType.Projection);
+            }
+            return sub.GetGraphicsStyle(GraphicsStyleType.Projection);
+        }
+        catch { return null; }
     }
 
     static string Bare(string levelName) => OfficeLevelName.Match(levelName) is { Success: true } m ? m.Groups[2].Value : levelName;
