@@ -15,6 +15,77 @@ public sealed partial class ModelBuilder
     const string MansardCode = "MANSARD";
 
     /// <summary>
+    /// The mansard as one footprint roof on the outline of the floor below (the facade line): each edge along a mansard
+    /// stretch slopes at that stretch's pitch, short edges between two sloping ones (the chords of a curved corner) at
+    /// theirs, the rest do not slope; cut off at the kerb, where the flat roof takes over. Null when Revit refuses it
+    /// (the caller then builds a strip per stretch).
+    /// </summary>
+    string? MansardRing(List<FacadeTopCall> calls, List<Level> levels, RoofType type)
+    {
+        var (_, below) = FacadeTops.TopStoreys(_model.Levels);
+        if (below?.Outline is not Polygon2 outline) return null;
+        var sure = calls.Where(c => c.Confidence == "High").DefaultIfEmpty(calls[0]).ToList();
+        double Median(IEnumerable<double> xs) { var s = xs.OrderBy(x => x).ToList(); return s[s.Count / 2]; }
+        double eavesZ = sure.Min(c => c.Eaves![1]), kerbZ = Median(sure.Select(c => c.Kerb![1]));
+        using var sub = new SubTransaction(_doc);
+        sub.Start();
+        try
+        {
+            double baseZ = Z(eavesZ);
+            var level = levels.Where(l => l.Elevation <= baseZ + Ft(10)).OrderByDescending(l => l.Elevation).FirstOrDefault() ?? levels.OrderBy(l => l.Elevation).First();
+            var loop = Loop(outline, level.Elevation) ?? throw new InvalidOperationException("outline too small");
+            var curves = new CurveArray();
+            foreach (var cv in loop) curves.Append(cv);
+            var footprint = new ModelCurveArray();
+            var roof = _doc.Create.NewFootPrintRoof(curves, level, type, out footprint);
+            roof.get_Parameter(BuiltInParameter.ROOF_LEVEL_OFFSET_PARAM)?.Set(baseZ - level.Elevation);
+
+            // each edge: the mansard stretch it lies on (midpoint within 300 mm of the stretch, running along it)
+            var edges = footprint.Cast<ModelCurve>().Select(mc =>
+            {
+                var a = mc.GeometryCurve.GetEndPoint(0); var b = mc.GeometryCurve.GetEndPoint(1);
+                var seg = new Segment2(new Vec2(Mm(a.X), Mm(a.Y)), new Vec2(Mm(b.X), Mm(b.Y)));
+                var call = calls.FirstOrDefault(c =>
+                {
+                    var s = new Segment2(new Vec2(c.Line[0], c.Line[1]), new Vec2(c.Line[2], c.Line[3]));
+                    double along = (seg.Mid - s.A).Dot(s.Direction);
+                    return along >= -300 && along <= s.Length + 300 && Math.Abs((seg.Mid - s.A).Cross(s.Direction)) <= 300
+                           && Math.Abs(seg.Direction.Dot(s.Direction)) > 0.9;
+                });
+                double? slope = call == null ? null : (call.Kerb![1] - call.Eaves![1]) / Math.Max(100, call.Eaves[0] - call.Kerb[0]);
+                return (mc, seg, slope);
+            }).ToList();
+            // short edges between two sloping ones: the chords of a curve, or a small step in the facade
+            for (int i = 0; i < edges.Count; i++)
+            {
+                if (edges[i].slope != null || edges[i].seg.Length > FacadeTops.MinStretchMm) continue;
+                var touching = edges.Where((e, j) => j != i && e.slope != null && (e.seg.A.DistanceTo(edges[i].seg.A) < 20 || e.seg.A.DistanceTo(edges[i].seg.B) < 20
+                                                     || e.seg.B.DistanceTo(edges[i].seg.A) < 20 || e.seg.B.DistanceTo(edges[i].seg.B) < 20)).ToList();
+                if (touching.Count == 2) edges[i] = (edges[i].mc, edges[i].seg, touching.Average(e => e.slope!.Value));
+            }
+            int sloped = 0;
+            foreach (var (mc, _, slope) in edges)
+            {
+                roof.set_DefinesSlope(mc, slope != null);
+                if (slope != null) { roof.set_SlopeAngle(mc, slope.Value); sloped++; }
+            }
+            // cut off at the kerb: the flat roof over the top storey takes over from there
+            roof.get_Parameter(BuiltInParameter.ROOF_UPTO_LEVEL_PARAM)?.Set(level.Id);
+            roof.get_Parameter(BuiltInParameter.ROOF_UPTO_LEVEL_OFFSET_PARAM)?.Set(Z(kerbZ) - level.Elevation);
+            _doc.Regenerate();
+            Mark(roof, MansardCode, $"Mansard round {below.Name}: {sloped} of {edges.Count} edges sloping, from {eavesZ / 1000:0.00} m cut off at {kerbZ / 1000:0.00} m");
+            sub.Commit();
+            return $"Mansard: one roof round {below.Name}'s outline, {sloped} of {edges.Count} edges sloping (the stretches' pitches), from {eavesZ / 1000:0.00} m, cut off at the kerb {kerbZ / 1000:0.00} m.";
+        }
+        catch (Exception ex)
+        {
+            sub.RollBack();
+            Log.Add($"Mansard: one roof round the floor refused ({ex.Message}); built as strips instead.");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// The height a flat roof over the top storey is built at when a section shows the mansard round it reaching higher:
     /// the mansard's kerb, when the roof plan's own spot heights reach it too (the roof's height was taken low in its
     /// range); otherwise the roof's own.
@@ -44,6 +115,8 @@ public sealed partial class ModelBuilder
         // thin: on a 70° slope a 300 mm roof is 0.9 m thick upright, and its top edge stands up like a board
         var type = RoofTypeFor(100);
         if (type == null) { t.RollBack(); Log.Add("Mansard: the project has no roof type."); return; }
+        // one roof round the whole floor: clean hips at every corner, curved ones included; strips only if Revit refuses it
+        if (MansardRing(calls, levels, type) is string ring) { t.Commit(); Log.Add(ring); return; }
         int made = 0; string? firstError = null;
         foreach (var c in calls)
         {
