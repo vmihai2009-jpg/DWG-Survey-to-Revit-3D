@@ -53,6 +53,7 @@ public static class McpTools
                    "\"level_overrides\":{\"type\":\"array\",\"description\":\"Corrections to what the survey reading found\",\"items\":{\"type\":\"object\",\"properties\":{\"level\":{\"type\":\"string\"},\"elevation_m\":{\"type\":\"number\",\"description\":\"Floor level above survey datum, metres\"},\"ceiling_mm\":{\"type\":\"number\"}},\"required\":[\"level\"]}}," +
                    "\"options\":{\"type\":\"object\",\"description\":\"What to build; all true by default except unclear_as_generic_models\",\"properties\":{" +
                        string.Join(",", OptionNames.Select(n => $"\"{n}\":{{\"type\":\"boolean\"}}")) + ",\"slab_thickness_mm\":{\"type\":\"number\"}}}," +
+                   "\"project\":{\"type\":\"string\",\"description\":\"The project to build in (its title): refused when another project is active when the build runs\"}," +
                    "\"confirm\":{\"type\":\"boolean\",\"description\":\"true to build; otherwise a preview\"}"), "write,long"],
         ["survey_new_project",
             "Start a new project for a survey from the office project template (the Barr Gazetas one unless set otherwise): the whole template (title blocks, sheets, view templates, families, parameters, levels) comes with it. Saves it where asked and opens it as the active project; the project open now is left open as it is. Then survey_analyze and survey_build. Without confirm it only checks and says what it would do.",
@@ -316,6 +317,10 @@ public static class McpTools
 
     static JsonObject Build(Document doc, JsonElement a)
     {
+        // a build waits for Revit to be idle: by then another project can be in front. With "project", it only runs there
+        if (Str(a, "project") is string wanted && !string.Equals(doc.Title, wanted, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(Path.GetFileNameWithoutExtension(doc.PathName), wanted, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"The active project is '{doc.Title}', not '{wanted}': nothing was built. Bring '{wanted}' to the front and ask again.");
         SurveyPipeline.Guard(doc);
         var (dwgs, site) = SurveyPipeline.Split(FilesOf(a));
         if (dwgs.Count == 0) throw new ArgumentException("No survey DWGs among those files.");
