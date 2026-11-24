@@ -28,6 +28,9 @@ public sealed class BuildOptions
     public bool Roofs { get; set; } = true;
     /// <summary>Section views along the cut lines of the survey sections.</summary>
     public bool Sections { get; set; } = true;
+    /// <summary>Elevation views round the building, and every floor plan, elevation and section on a sheet with the project's
+    /// title block (an office template's own existing-drawing sheets, filled in, when it has them).</summary>
+    public bool Sheets { get; set; } = true;
     public double SlabThicknessMm { get; set; } = 300;
     /// <summary>Surroundings from LiDAR (ground and neighbouring blocks); null for none.</summary>
     public SiteContext? Site { get; set; }
@@ -73,7 +76,7 @@ public sealed class BuildOptions
 /// Everything generated is on the Existing phase (it is a survey of what is there)
 /// and tagged in Comments so a re-run replaces only it.
 /// </summary>
-public sealed class ModelBuilder
+public sealed partial class ModelBuilder
 {
     public const string Tag = "SurveyToRevit";
     readonly Document _doc;
@@ -166,6 +169,9 @@ public sealed class ModelBuilder
         if (o.Roofs) BuildContext(levels.Values.Select(v => v.level).ToList());
         if (o.Sections && _model.Sections.Any(x => x.Cut != null)) BuildSections(levels.Values.Select(v => v.level).ToList());
         if (o.Site != null) BuildSite(o.Site, levels.Values.Select(v => v.level).ToList());
+        if (o.Sheets)
+            try { BuildSheets(levels); }
+            catch (Exception ex) { Log.Add($"Sheets: not made ({ex.Message})."); }
         group.Assimilate();
     }
 
@@ -265,9 +271,18 @@ public sealed class ModelBuilder
         var existing = new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().ToList();
         var planType = new FilteredElementCollector(_doc).OfClass(typeof(ViewFamilyType)).Cast<ViewFamilyType>()
             .First(v => v.ViewFamily == ViewFamily.FloorPlan);
+        // an office template names its levels "00_Ground Floor", "01_First Floor": the survey's Ground Floor is that level
+        // (moved to the survey's height), and floors the template has no level for are named the same way
+        bool officeNames = existing.Any(l => OfficeLevelName.IsMatch(l.Name));
+        string Bare(string n) => OfficeLevelName.Match(n) is { Success: true } m ? m.Groups[2].Value : n;
+        var prefix = SurveyToRevit.Shared.UserSettings.Load().ExistingViewPrefix ?? "";
+        // the template's existing-survey plan (prefix + level name): the pattern for the plans of the levels it has none for
+        var pattern = prefix.Length == 0 ? null : new FilteredElementCollector(_doc).OfClass(typeof(ViewPlan)).Cast<ViewPlan>()
+            .FirstOrDefault(v => !v.IsTemplate && v.ViewType == ViewType.FloorPlan && v.GenLevel != null && v.Name == prefix + v.GenLevel.Name);
         foreach (var sl in _model.Levels.Where(l => l.Include && !double.IsNaN(l.ElevationMm)))
         {
-            var level = existing.FirstOrDefault(l => l.Name == sl.Name);
+            var level = existing.FirstOrDefault(l => l.Name == sl.Name)
+                        ?? (interior ? null : existing.FirstOrDefault(l => OfficeLevelName.IsMatch(l.Name) && Bare(l.Name).Equals(sl.Name, StringComparison.OrdinalIgnoreCase)));
             if (interior)
             {
                 // the existing model's own level at this height (the floors were put on them before building); never moved
@@ -286,21 +301,76 @@ public sealed class ModelBuilder
             else if (level == null)
             {
                 level = Level.Create(_doc, Z(sl.ElevationMm));
-                level.Name = sl.Name;
-                Log.Add($"Level created: {sl.Name} at {(sl.ElevationMm - _datumMm) / 1000:0.000} m ({sl.ElevationMm / 1000:0.000} m above survey datum)");
+                var name = officeNames ? $"{OfficeLevelCode(sl)}_{sl.Name}" : sl.Name;
+                try { level.Name = name; } catch { name = level.Name; }
+                existing.Add(level);
+                Log.Add($"Level created: {name} at {(sl.ElevationMm - _datumMm) / 1000:0.000} m ({sl.ElevationMm / 1000:0.000} m above survey datum)");
             }
             else if (Math.Abs(level.Elevation - Z(sl.ElevationMm)) > 1e-6)
             {
                 Log.Add($"Level moved: {sl.Name} from {UnitConversion.FeetToMm(level.Elevation) / 1000:0.000} to {(sl.ElevationMm - _datumMm) / 1000:0.000} m ({sl.ElevationMm / 1000:0.000} m above survey datum)");
                 level.Elevation = Z(sl.ElevationMm);
             }
-            var view = new FilteredElementCollector(_doc).OfClass(typeof(ViewPlan)).Cast<ViewPlan>()
-                .FirstOrDefault(v => !v.IsTemplate && v.ViewType == ViewType.FloorPlan && v.GenLevel?.Id == level.Id);
-            view ??= ViewPlan.Create(_doc, planType.Id, level.Id);
+            var plans = new FilteredElementCollector(_doc).OfClass(typeof(ViewPlan)).Cast<ViewPlan>()
+                .Where(v => !v.IsTemplate && v.ViewType == ViewType.FloorPlan && v.GenLevel?.Id == level.Id).ToList();
+            ViewPlan? view;
+            if (pattern != null)
+                // an office template: the level's existing-survey plan, made like the template's own when it has none
+                view = plans.FirstOrDefault(v => v.Name == prefix + level.Name) ?? PlanLike(pattern, level, prefix + level.Name);
+            else
+                view = plans.FirstOrDefault() ?? ViewPlan.Create(_doc, planType.Id, level.Id);
             result[sl] = (level, view);
         }
         t.Commit();
         return result;
+    }
+
+    /// <summary>"00_Ground Floor", "B1_Basement", "01M_First Floor Mezzanine": an office template's level names.</summary>
+    static readonly System.Text.RegularExpressions.Regex OfficeLevelName = new(@"^([A-Za-z]?\d{1,3}[A-Za-z]?)_(.+)$");
+
+    /// <summary>The code an office-style level name starts with: 00 for the Ground Floor, 01, 02... up, B1, B2... down.</summary>
+    static string OfficeLevelCode(SurveyLevel sl)
+    {
+        var (order, _) = DrawingName.DescribeLevel(sl.Code);
+        if (order == double.MaxValue || order != Math.Floor(order)) return sl.Code.ToUpperInvariant();
+        int n = (int)order;
+        return n >= 0 ? n.ToString("00") : "B" + (-n);
+    }
+
+    /// <summary>A plan of the level set up like the pattern (its type, view template, scale, phase and the office's own view parameters).</summary>
+    ViewPlan PlanLike(ViewPlan pattern, Level level, string name)
+    {
+        var plan = ViewPlan.Create(_doc, pattern.GetTypeId(), level.Id);
+        try { plan.Name = name; } catch { /* taken: keep Revit's */ }
+        CopyViewSettings(_doc, pattern, plan);
+        Log.Add($"Plan made: {plan.Name}, set up like {pattern.Name}.");
+        return plan;
+    }
+
+    /// <summary>The settings one view shares with another of its kind: view template, scale, detail level, phase and
+    /// phase filter, discipline, and the office's own text parameters (package code, view purpose...).</summary>
+    internal static void CopyViewSettings(Document doc, View from, View to)
+    {
+        try { if (from.ViewTemplateId != ElementId.InvalidElementId) to.ViewTemplateId = from.ViewTemplateId; } catch { }
+        try { to.Scale = from.Scale; } catch { }
+        try { to.DetailLevel = from.DetailLevel; } catch { }
+        foreach (var bip in new[] { BuiltInParameter.VIEW_PHASE, BuiltInParameter.VIEW_PHASE_FILTER, BuiltInParameter.VIEW_DISCIPLINE })
+            try
+            {
+                var p = from.get_Parameter(bip); var q = to.get_Parameter(bip);
+                if (p == null || q == null || q.IsReadOnly) continue;
+                if (p.StorageType == StorageType.ElementId) q.Set(p.AsElementId()); else if (p.StorageType == StorageType.Integer) q.Set(p.AsInteger());
+            }
+            catch { }
+        foreach (Parameter p in from.Parameters)
+            try
+            {
+                if (p.IsReadOnly || p.StorageType != StorageType.String || p.Definition is not { } d) continue;
+                if (p.Definition is InternalDefinition { BuiltInParameter: not BuiltInParameter.INVALID }) continue;
+                var q = to.LookupParameter(d.Name);
+                if (q != null && !q.IsReadOnly && q.StorageType == StorageType.String) q.Set(p.AsString() ?? "");
+            }
+            catch { }
     }
 
     void LinkPlans(Dictionary<SurveyLevel, (Level level, ViewPlan? view)> levels, BuildOptions? o = null)

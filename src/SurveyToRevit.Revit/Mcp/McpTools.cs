@@ -54,6 +54,12 @@ public static class McpTools
                    "\"options\":{\"type\":\"object\",\"description\":\"What to build; all true by default except unclear_as_generic_models\",\"properties\":{" +
                        string.Join(",", OptionNames.Select(n => $"\"{n}\":{{\"type\":\"boolean\"}}")) + ",\"slab_thickness_mm\":{\"type\":\"number\"}}}," +
                    "\"confirm\":{\"type\":\"boolean\",\"description\":\"true to build; otherwise a preview\"}"), "write,long"],
+        ["survey_new_project",
+            "Start a new project for a survey from the office project template (the Barr Gazetas one unless set otherwise): the whole template (title blocks, sheets, view templates, families, parameters, levels) comes with it. Saves it where asked and opens it as the active project; the project open now is left open as it is. Then survey_analyze and survey_build. Without confirm it only checks and says what it would do.",
+            Schema("\"path\":{\"type\":\"string\",\"description\":\"Where to save the new project (.rvt)\"}," +
+                   "\"template\":{\"type\":\"string\",\"description\":\"Another .rte to start from (default: the office template)\"}," +
+                   "\"overwrite\":{\"type\":\"boolean\",\"description\":\"Replace a file already at path\"}," +
+                   "\"confirm\":{\"type\":\"boolean\",\"description\":\"true to make it\"}", "path"), "write,long"],
         ["survey_overlay",
             "Overlay Survey with no windows: set up the project from the survey and build nothing: shared coordinates, a level per floor, each plan linked into its floor plan, section views, other drawings in drafting views. One undo step. Without confirm it only says what it would do.",
             Schema(Files + ",\"confirm\":{\"type\":\"boolean\",\"description\":\"true to do it; otherwise a preview\"}"), "write,long"],
@@ -99,7 +105,7 @@ public static class McpTools
     ];
 
     static readonly string[] OptionNames =
-        ["link_plans", "walls", "floors", "ceilings", "windows", "doors", "rooms", "stairs", "details", "roofs", "sections", "unclear_as_generic_models", "keep_matching"];
+        ["link_plans", "walls", "floors", "ceilings", "windows", "doors", "rooms", "stairs", "details", "roofs", "sections", "sheets", "unclear_as_generic_models", "keep_matching"];
 
     public static string[][] Prompts() =>
     [
@@ -147,6 +153,7 @@ public static class McpTools
             "survey_layer_rules" => LayerRulesTool(a),
             "survey_build" => Build(Doc(app), a),
             "survey_overlay" => Overlay(Doc(app), a),
+            "survey_new_project" => NewProject(app, a),
             "survey_generated" => GeneratedTool(Doc(app), a),
             "survey_review" => ReviewTool(Doc(app), a),
             "survey_review_context" => ReviewContext(app, a),
@@ -339,7 +346,7 @@ public static class McpTools
         {
             options.OnlyLevels = only.Select(l => l.Code).ToHashSet();
             // a floor rebuilt on its own: what spans floors or was set up by the first build is left alone unless asked for
-            options.LinkPlans = false; options.Stairs = false; options.Roofs = false; options.Sections = false;
+            options.LinkPlans = false; options.Stairs = false; options.Roofs = false; options.Sections = false; options.Sheets = false;
         }
         var given = a.TryGetProperty("options", out var opt) && opt.ValueKind == JsonValueKind.Object ? opt : default;
         options.LinkPlans = Flag(given, "link_plans") ?? options.LinkPlans;
@@ -353,6 +360,7 @@ public static class McpTools
         options.Details = Flag(given, "details") ?? options.Details;
         options.Roofs = Flag(given, "roofs") ?? options.Roofs;
         options.Sections = Flag(given, "sections") ?? options.Sections;
+        options.Sheets = Flag(given, "sheets") ?? options.Sheets;
         options.UnclearAsGenericModels = Flag(given, "unclear_as_generic_models") ?? options.UnclearAsGenericModels;
         options.SlabThicknessMm = Num(given, "slab_thickness_mm") ?? options.SlabThicknessMm;
         options.KeepMatching = Flag(given, "keep_matching") ?? options.KeepMatching;
@@ -407,8 +415,53 @@ public static class McpTools
     {
         ["link_plans"] = o.LinkPlans, ["walls"] = o.Walls, ["floors"] = o.Floors, ["ceilings"] = o.Ceilings, ["windows"] = o.Windows,
         ["doors"] = o.Doors, ["rooms"] = o.Rooms, ["stairs"] = o.Stairs, ["details"] = o.Details, ["roofs"] = o.Roofs,
-        ["sections"] = o.Sections, ["unclear_as_generic_models"] = o.UnclearAsGenericModels, ["slab_thickness_mm"] = o.SlabThicknessMm, ["keep_matching"] = o.KeepMatching,
+        ["sections"] = o.Sections, ["sheets"] = o.Sheets, ["unclear_as_generic_models"] = o.UnclearAsGenericModels, ["slab_thickness_mm"] = o.SlabThicknessMm, ["keep_matching"] = o.KeepMatching,
     };
+
+    static JsonObject NewProject(UIApplication? app, JsonElement a)
+    {
+        if (app == null) throw new InvalidOperationException("Revit is needed to make a project.");
+        var path = Str(a, "path") ?? throw new ArgumentException("\"path\" is needed: where to save the new project (.rvt).");
+        if (!path.EndsWith(".rvt", StringComparison.OrdinalIgnoreCase)) path += ".rvt";
+        path = Path.GetFullPath(path);
+        var template = Str(a, "template") ?? UserSettings.Load().Template;
+        if (!File.Exists(template)) throw new ArgumentException($"There is no template {template}. Give another with \"template\".");
+        bool exists = File.Exists(path);
+        if (exists && Flag(a, "overwrite") != true) throw new ArgumentException($"{path} is there already: choose another path, or overwrite: true.");
+        if (app.Application.Documents.Cast<Document>().Any(d => string.Equals(d.PathName, path, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"{path} is open in Revit: choose another path.");
+        if (Flag(a, "confirm") != true)
+            return new JsonObject
+            {
+                ["preview"] = true, ["template"] = template, ["path"] = path, ["replaces"] = exists,
+                ["next"] = "Nothing was made. Call again with confirm: true.",
+            };
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var doc = app.Application.NewProjectDocument(template);
+        doc.SaveAs(path, new SaveAsOptions { OverwriteExistingFile = true });
+        var o = new JsonObject
+        {
+            ["template"] = template, ["path"] = path,
+            ["levels"] = new JsonArray(new FilteredElementCollector(doc).OfClass(typeof(Level)).Cast<Level>().OrderBy(l => l.Elevation).Select(l => (JsonNode)l.Name).ToArray()),
+            ["sheets"] = new FilteredElementCollector(doc).OfClass(typeof(ViewSheet)).GetElementCount(),
+            ["titleBlocks"] = new JsonArray(new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
+                .Select(s => (JsonNode)$"{s.Family.Name}: {s.Name}").ToArray()),
+        };
+        doc.Close(false);
+        try
+        {
+            var ui = app.OpenAndActivateDocument(path);
+            o["active"] = ui.Document.Title;
+            o["next"] = "The new project is open and active: survey_analyze, then survey_build (it fills the template's levels, plans and sheets).";
+        }
+        catch (Exception ex)
+        {
+            o["active"] = null;
+            o["next"] = $"Saved, but Revit would not open it from here ({ex.Message}): open {path} in Revit, then survey_build.";
+        }
+        return o;
+    }
 
     static JsonObject Overlay(Document doc, JsonElement a)
     {

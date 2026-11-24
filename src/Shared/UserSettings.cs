@@ -24,6 +24,14 @@ internal sealed class UserSettings
     public int SiteRadiusM { get; set; } = 150;
     /// <summary>The folder the survey picker opened last time.</summary>
     public string? LastSurveyFolder { get; set; }
+    /// <summary>The office project template a new survey project starts from (survey_new_project); empty means the Barr Gazetas one.</summary>
+    public string? ProjectTemplate { get; set; }
+    /// <summary>How the office template names a level's existing-survey plan: this prefix and the level's name (BG: package 01_Existing).</summary>
+    public string ExistingViewPrefix { get; set; } = "01_";
+
+    [JsonIgnore]
+    public string Template => string.IsNullOrWhiteSpace(ProjectTemplate) ? DefaultTemplate : ProjectTemplate!;
+    public const string DefaultTemplate = @"I:\BG Technical Library\8.0 BG Revit Library\02_Project Template\BGA_Revit Project Template_2025.rte";
 
     [JsonExtensionData] public Dictionary<string, JsonElement>? Other { get; set; }
 
