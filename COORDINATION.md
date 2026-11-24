@@ -661,6 +661,28 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-24 (later): Survey to Revit 0.33.44-0.33.51, office template, BG sheets, elevation overlays, slab and stair fixes
+For the Thursday demo, Mihai asked for one thing: give S2R the DWGs, and it does the rest with no assistant. It loads the BG template, makes the existing drawings and puts them on BG sheets. Everything below runs from the ribbon's Build from Survey. The MCP tool `survey_new_project` does the same first step.
+- **New project from the office template (0.33.44, 0.33.50).**
+  - `OfficeProject` takes the whole template: title blocks, its 57 sheets, view templates, phases and parameters. The default is `BGA_Revit Project Template_2025.rte`; `ProjectTemplate` in settings.json overrides it.
+  - When the open project has no "Existing (View Name) ..." sheet, Build from Survey offers to start a new project, saves it, builds into it, and saves again.
+- **Levels and views (0.33.44).**
+  - Template levels named "00_Ground Floor" are reused and moved to the surveyed height. Missing floors are added in the same style: B1_Basement, 03_..., 05_....
+  - Each floor's plan is the template's existing plan, named `01_` + level name. Plans for the added levels are made like the template's own.
+- **Sheets (0.33.44-0.33.51; `ModelBuilder.Sheets.cs`, build option `sheets`, on by default).**
+  - Four elevation views go round the building, cropped to it: `01_ZZ_North` and so on.
+  - Every plan, elevation and section gets a sheet made like the template's "Existing (View Name) Plan/Elevation/Section" sheet: its title block, its parameters, and Sheet Level set.
+  - Numbering: plans 10.200 + floor, basements counting down (B1 = 10.199); sections 10.250+; elevations 10.270+.
+  - The browser groups by the sheet parameter "View Type": "10.200 Existing Plans", "10.250 Existing Sections", "10.270 Existing Elevations". All numbers and names are in settings.json.
+  - Views get the BG existing view templates (`*BGA_01_FP_Existing`, `*BGA_01_SE_Existing`) and the Existing phase, at 1:100 (or smaller if the building needs it).
+  - Each drawing is centred on the building's centre through the view's model-to-projection transform, so plans line up sheet to sheet, and so do elevations. Title on Sheet = sheet name.
+- **DWGs on the sheets (0.33.50-0.33.51).**
+  - Plans: the survey plan is linked into each 01_ plan (option link_plans).
+  - Elevations: the survey elevation the elevation index matched to the nearest facade on that side is linked into the elevation view and moved onto the model by that match. The link is unpinned to move it and pinned again; 0.33.50 stopped on "Can't move pinned element".
+- **Scope box.** The Revit API cannot create or resize a scope box, so every plan gets the same crop box. On the sheets the result is the same.
+- **Slab (0.33.49).** A floor's slab is cut back to its own walls and to the walls of the floor below, since it is also that floor's roof. Before, the MR 1F terrace lost a wedge and the ceiling below showed through: 452 -> 489 m². The 5F slab over the 4F roof: 256 -> 299 m². SP: unchanged.
+- **Stairs (0.33.50).** Numbered flights are chained by continuing numbers, gap 0-6, nearest top to foot. Numbering that restarts is another stair. On the MR 1F plan, outside steps 1-4 up to a door were merged into the stair inside (1-4, 6-10) and stretched to 12 risers, floating outside the building. Now they are separate: the 4 steps are dropped as steps to a door, and the inside stair is built. SP: unchanged.
+
 ### 2026-11-24: Survey to Revit 0.33.41-0.33.43, a clean rebuild of Mount Row, and stairs that climb
 Mihai: start fresh, everything built by S2R only. MRTest held 136 orphan unplaced rooms from earlier builds; nothing else that S2R had not made.
 - **0.33.41, rooms.** `CreateRooms` made an unplaced room and then placed it. When Revit refused the circuit, the unplaced room stayed, two orphans a build. It is now deleted again. After a fresh build: 52 rooms, 0 unplaced.
