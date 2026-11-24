@@ -437,6 +437,7 @@ public static class McpTools
                 ["next"] = "Nothing was made. Call again with confirm: true.",
             };
 
+        // (the same as the ribbon's Build from Survey offers: OfficeProject)
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var doc = app.Application.NewProjectDocument(template);
         doc.SaveAs(path, new SaveAsOptions { OverwriteExistingFile = true });

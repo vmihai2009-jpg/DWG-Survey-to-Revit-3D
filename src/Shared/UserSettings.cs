@@ -28,10 +28,17 @@ internal sealed class UserSettings
     public string? ProjectTemplate { get; set; }
     /// <summary>How the office template names a level's existing-survey plan: this prefix and the level's name (BG: package 01_Existing).</summary>
     public string ExistingViewPrefix { get; set; } = "01_";
-    /// <summary>Sheet numbers of the existing drawings: {0} is the level code (00, 01, B1) for plans, the count (0, 1...) for elevations and sections.</summary>
-    public string ExistingPlanSheet { get; set; } = "10.2{0}";
-    public string ExistingElevationSheet { get; set; } = "10.27{0}";
-    public string ExistingSectionSheet { get; set; } = "10.25{0}";
+    /// <summary>Sheet numbers of the existing drawings: "{prefix}{number}", plans numbered from PlanBase (the Ground Floor;
+    /// floors up count on, basements count down: B1 = 199), elevations and sections from theirs.</summary>
+    public string ExistingSheetPrefix { get; set; } = "10.";
+    public int ExistingPlanBase { get; set; } = 200;
+    public int ExistingSectionBase { get; set; } = 250;
+    public int ExistingElevationBase { get; set; } = 270;
+    /// <summary>The sheet parameter the project browser groups sheets by (BG: View Type), and each kind's group: {0} its first number.</summary>
+    public string SheetGroupParameter { get; set; } = "View Type";
+    public string ExistingPlanGroup { get; set; } = "{0} Existing Plans";
+    public string ExistingSectionGroup { get; set; } = "{0} Existing Sections";
+    public string ExistingElevationGroup { get; set; } = "{0} Existing Elevations";
 
     [JsonIgnore]
     public string Template => string.IsNullOrWhiteSpace(ProjectTemplate) ? DefaultTemplate : ProjectTemplate!;

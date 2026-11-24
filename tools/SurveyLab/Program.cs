@@ -33,6 +33,10 @@ if (Environment.GetEnvironmentVariable("TEXTS") != null)
     foreach (var l in model.Levels.Take(1))
         foreach (var g in l.Plan.Texts.GroupBy(t => t.Layer))
             Console.Error.WriteLine($"{g.Key}: {g.Count()} e.g. {string.Join(" | ", g.Select(t => t.Value.Replace("\n", "/")).Distinct().Take(12))}");
+if (Environment.GetEnvironmentVariable("STAIRS") is string stairLevel)
+    foreach (var l in model.Levels.Where(l => l.Code == stairLevel))
+        foreach (var s in l.Stairs)
+            Console.Error.WriteLine($"stair {s.Risers} risers: " + string.Join(" / ", s.Flights.Select(fl => $"{fl.Risers.Count}r ({fl.Bottom.X:0},{fl.Bottom.Y:0})->({fl.Top.X:0},{fl.Top.Y:0})")));
 var sb = new StringBuilder();
 sb.AppendLine(SurveyReport.Build(model));
 File.WriteAllText(Path.Combine(outDir, "report.txt"), sb.ToString());

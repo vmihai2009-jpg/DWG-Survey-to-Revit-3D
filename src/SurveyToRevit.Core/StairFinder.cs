@@ -136,7 +136,8 @@ public static class StairFinder
                     if (group.Any(g => Ends(g).Any(e => Ends(f).Any(o => o.DistanceTo(e) <= joinFlights))))
                     { group.Add(f); left.Remove(f); grew = true; }
             }
-            stairs.Add(ByTreadNumbers(group, texts) ?? Order(group, ups, joinFlights));
+            if (ByTreadNumbers(group, texts) is { } numbered) stairs.AddRange(numbered);
+            else stairs.Add(Order(group, ups, joinFlights));
         }
         return stairs;
     }
@@ -148,11 +149,11 @@ public static class StairFinder
     /// the way its numbers rise, and the flights follow one another in number order. Null when fewer than two flights,
     /// or fewer than half the treads, carry a number, or a flight's numbers don't run one way.
     /// </summary>
-    static StairCandidate? ByTreadNumbers(List<StairFlight> group, IReadOnlyList<(Vec2 Position, string Value)> texts)
+    static List<StairCandidate>? ByTreadNumbers(List<StairFlight> group, IReadOnlyList<(Vec2 Position, string Value)> texts)
     {
         var nums = texts.Where(t => TreadNumber.IsMatch(t.Value ?? "")).Select(t => (P: t.Position, N: int.Parse(t.Value.Trim()))).ToList();
         if (nums.Count < 3) return null;
-        var read = new List<(StairFlight F, int Min)>();
+        var read = new List<(StairFlight F, int Min, int Max)>();
         int treads = 0, numbered = 0;
         foreach (var f in group)
         {
@@ -174,10 +175,28 @@ public static class StairFinder
             int up = 0, down = 0;
             for (int i = 1; i < seq.Count; i++) { if (seq[i].N > seq[i - 1].N) up++; else if (seq[i].N < seq[i - 1].N) down++; }
             if (up > 0 && down > 0) return null;
-            read.Add((down > 0 ? Reverse(f) : f, seq.Min(s => s.N)));
+            read.Add((down > 0 ? Reverse(f) : f, seq.Min(s => s.N), seq.Max(s => s.N)));
         }
         if (read.Count < 2 || numbered * 2 < treads) return null;
-        return new StairCandidate(read.OrderBy(r => r.Min).Select(r => r.F).ToList(), true);
+        // the numbers start again from 1 (or run back over ones already used): another stair that happens to end near this
+        // one (a few steps up to a door, then the stair inside), so each run of numbers is a stair of its own
+        // each flight carries on the run whose numbers it continues (a number shared at the landing counts; a gap of a
+        // few for unnumbered treads too), the nearest one when two could
+        var chains = new List<(List<StairFlight> F, int Last)>();
+        foreach (var r in read.OrderBy(r => r.Min).ThenBy(r => r.Max))
+        {
+            int best = -1; double bestD = double.MaxValue;
+            for (int c = 0; c < chains.Count; c++)
+            {
+                int gap = r.Min - chains[c].Last;
+                if (gap < 0 || gap > 6) continue;
+                double d = chains[c].F[^1].Top.DistanceTo(r.F.Bottom);
+                if (d < bestD) { bestD = d; best = c; }
+            }
+            if (best < 0) chains.Add((new List<StairFlight> { r.F }, r.Max));
+            else { chains[best].F.Add(r.F); chains[best] = (chains[best].F, Math.Max(chains[best].Last, r.Max)); }
+        }
+        return chains.Select(c => new StairCandidate(c.F, true)).ToList();
     }
 
     static IEnumerable<Vec2> Ends(StairFlight f) => new[] { f.Bottom, f.Top };

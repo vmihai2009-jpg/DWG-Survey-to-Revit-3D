@@ -35,6 +35,36 @@ public class BuildFromSurveyCommand : IExternalCommand
         var dwgs = files.Where(f => !SiteContextBuilder.IsSiteFile(f)).ToList();
         if (dwgs.Count == 0) { message = "Select the survey DWGs too: the surroundings are placed from the survey's coordinates."; return Result.Failed; }
 
+        bool madeNew = false;
+        // a project that is not from the office template: offer a new one from it (title blocks, sheets, view templates)
+        if (!OfficeProject.IsFromTemplate(doc) && OfficeProject.TemplateAvailable)
+        {
+            var ask = new TaskDialog("Survey to Revit")
+            {
+                MainInstruction = "This project is not from the office template",
+                MainContent = $"A new project from {Path.GetFileName(OfficeProject.Template)} gets the office's title blocks, sheets, view templates and phases; the build then fills in the existing plans, elevations and sheets.",
+                CommonButtons = TaskDialogCommonButtons.Cancel,
+            };
+            ask.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Start a new project from the office template (recommended)");
+            ask.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Build in this project");
+            var choice = ask.Show();
+            if (choice == TaskDialogResult.Cancel) return Result.Cancelled;
+            if (choice == TaskDialogResult.CommandLink1)
+            {
+                using var save = new System.Windows.Forms.SaveFileDialog
+                {
+                    Title = "Save the new survey project",
+                    Filter = "Revit project (*.rvt)|*.rvt",
+                    FileName = OfficeProject.SuggestedName(dwgs[0]),
+                    InitialDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SurveyToRevit"),
+                    OverwritePrompt = true,
+                };
+                if (save.ShowDialog() != DialogResult.OK) return Result.Cancelled;
+                try { doc = OfficeProject.Create(data.Application, save.FileName).Document; madeNew = true; }
+                catch (Exception ex) { message = "The new project could not be made: " + ex.Message; return Result.Failed; }
+            }
+        }
+
         SurveyModel model;
         try { model = SurveyAnalyzer.Analyze(dwgs); }
         catch (Exception ex) { message = "Could not analyse the drawings: " + ex.Message; return Result.Failed; }
@@ -71,7 +101,13 @@ public class BuildFromSurveyCommand : IExternalCommand
         if (!model.Levels.Any(l => l.Include)) return Result.Cancelled;
 
         var builder = new ModelBuilder(doc, model);
-        try { builder.Run(options); }
+        try
+        {
+            builder.Run(options);
+            // a project this command made itself is saved with its build
+            if (madeNew)
+                try { doc.Save(); } catch { /* the user saves it */ }
+        }
         catch (Exception ex)
         {
             var errorPath = SaveText("error", ex + "\n\nLOG\n" + string.Join("\n", builder.Log));

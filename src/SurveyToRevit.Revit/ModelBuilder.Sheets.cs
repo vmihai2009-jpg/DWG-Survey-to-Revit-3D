@@ -1,4 +1,5 @@
 using Autodesk.Revit.DB;
+using SurveyToRevit.Core;
 using SurveyToRevit.Core.Survey;
 
 namespace SurveyToRevit.Revit;
@@ -41,20 +42,30 @@ public sealed partial class ModelBuilder
 
         // numbered in the office's existing-drawing series (BG: 10.200 Ground Floor plan, 10.202 Second Floor, 10.270 the
         // first elevation); every plan at the same place on its sheet, so the floors line up when flicked through
-        string Num(string format, string code) { try { return string.Format(format, code); } catch { return code; } }
+        string Num(int n) => settings.ExistingSheetPrefix + n.ToString("000");
+        string Group(string format, int first) { try { return string.Format(format, Num(first)); } catch { return format; } }
         var made = new List<string>();
         var ground = plans.Count > 0 ? plans[0].level.Elevation : box.Min.Z;
         var centre = new XYZ((box.Min.X + box.Max.X) / 2, (box.Min.Y + box.Max.Y) / 2, ground);
+        var used = new HashSet<int>();
         foreach (var (sl, level, view) in plans)
-            if (OnSheet("Plan", Bare(level.Name), Num(settings.ExistingPlanSheet, PlanCode(sl, level)), view, PlanCode(sl, level), new XYZ(centre.X, centre.Y, level.Elevation)) is string s) made.Add(s);
+        {
+            // the Ground Floor is the base number, floors up count on, basements count down (B1 = 199)
+            var code = PlanCode(sl, level);
+            int floor = code.StartsWith("B", StringComparison.OrdinalIgnoreCase) && int.TryParse(code[1..], out var b) ? -b
+                      : int.TryParse(code, out var f) ? f : 50 + used.Count;
+            int n = settings.ExistingPlanBase + floor;
+            while (!used.Add(n)) n++;
+            if (OnSheet("Plan", Bare(level.Name), Num(n), Group(settings.ExistingPlanGroup, settings.ExistingPlanBase), view, code, new XYZ(centre.X, centre.Y, level.Elevation)) is string s) made.Add(s);
+        }
         int k = 0;
         // the middle of the elevations' crop (1 m below the lowest floor to 2 m over the top)
         var mid = new XYZ(centre.X, centre.Y, (box.Min.Z - Ft(1000) + box.Max.Z + Ft(2000)) / 2);
         foreach (var (side, view) in elevations)
-            if (OnSheet("Elevation", side, Num(settings.ExistingElevationSheet, (k++).ToString()), view, "ZZ", mid) is string s) made.Add(s);
+            if (OnSheet("Elevation", side, Num(settings.ExistingElevationBase + k++), Group(settings.ExistingElevationGroup, settings.ExistingElevationBase), view, "ZZ", mid) is string s) made.Add(s);
         k = 0;
         foreach (var view in sections)
-            if (OnSheet("Section", view.Name["Survey Section ".Length..], Num(settings.ExistingSectionSheet, (k++).ToString()), view, "ZZ", null) is string s) made.Add(s);
+            if (OnSheet("Section", view.Name["Survey Section ".Length..], Num(settings.ExistingSectionBase + k++), Group(settings.ExistingSectionGroup, settings.ExistingSectionBase), view, "ZZ", null) is string s) made.Add(s);
         t.Commit();
         Log.Add(made.Count > 0 ? $"Sheets: {string.Join("; ", made)}." : "Sheets: none made.");
     }
@@ -75,6 +86,60 @@ public sealed partial class ModelBuilder
     {
         if (template != null) try { view.ViewTemplateId = template.Id; } catch (Exception ex) { Log.Add($"Sheets: template {template.Name} not applied to {view.Name} ({ex.Message})."); }
         if (_phase != null) try { if (view.get_Parameter(BuiltInParameter.VIEW_PHASE) is { IsReadOnly: false } p) p.Set(_phase.Id); } catch { }
+    }
+
+    bool _linkDrawings;
+
+    /// <summary>
+    /// The survey's own elevation of this side, linked into the elevation view and moved onto the model: the drawing the
+    /// elevation index matched to the facade nearest the viewer on this side, placed by that match (distance along the
+    /// facade from the sheet's x, survey height from the sheet's y). Left out when no drawing shows this side, or its
+    /// sheet would have to be mirrored to fit.
+    /// </summary>
+    void OverlayElevation(ViewSection view, XYZ dir, XYZ centre)
+    {
+        try
+        {
+            var outward = new Vec2(dir.X, dir.Y); var c2 = new Vec2(Mm(centre.X), Mm(centre.Y));
+            var pick = _model.Elevations
+                .Where(e => e.FacadeLine is { Length: 4 } && e.Score >= ElevationIndex.MinScore && e.Parts.Count > 0)
+                .Select(e => (E: e, A: new Vec2(e.FacadeLine![0], e.FacadeLine[1]), B: new Vec2(e.FacadeLine[2], e.FacadeLine[3])))
+                // square to this side, and on it
+                .Where(x => Math.Abs((x.B - x.A).Normalized().Dot(outward)) < 0.2 && (((x.A + x.B) * 0.5) - c2).Dot(outward) > 0)
+                .OrderByDescending(x => (((x.A + x.B) * 0.5) - c2).Dot(outward)).FirstOrDefault();
+            if (pick.E == null) return;
+            var e = pick.E;
+            var folder = System.IO.Path.GetDirectoryName(_model.Levels.FirstOrDefault()?.Plan.Path ?? "") ?? "";
+            var path = new[] { e.File, e.File + ".dwg", System.IO.Path.Combine(folder, e.File), System.IO.Path.Combine(folder, e.File + ".dwg") }.FirstOrDefault(File.Exists);
+            if (path == null) { Log.Add($"Sheets: {view.Name}: the elevation drawing {e.File} was not found to link."); return; }
+
+            var options = new DWGImportOptions { ThisViewOnly = true, Placement = ImportPlacement.Origin, Unit = ImportUnit.Millimeter, ColorMode = ImportColorMode.Preserved };
+            if (!_doc.Link(path, options, view, out ElementId id) || _doc.GetElement(id) is not ImportInstance inst) { Log.Add($"Sheets: {view.Name}: {e.File} could not be linked."); return; }
+            _doc.Regenerate();
+            var t = inst.GetTotalTransform();
+            // where a sheet point lands now, and where the match says it belongs
+            double sx = (e.Box[0] + e.Box[2]) / 2, sy = (e.Box[1] + e.Box[3]) / 2;
+            var part = e.Parts.FirstOrDefault(p => sx >= p.X0 && sx <= p.X1) ?? e.Parts[0];
+            var lineDir = (pick.B - pick.A).Normalized();
+            double along = e.ShiftMm + (e.Mirrored ? -1 : 1) * e.Scale * sx;
+            var at2 = pick.A + lineDir * along;
+            var want = new XYZ(Ft(at2.X), Ft(at2.Y), Z(part.A * sy + part.B));
+            var now = t.OfPoint(new XYZ(Ft(sx), Ft(sy), 0));
+            // the sheet's x must run the way the match says (an import cannot be mirrored)
+            var sheetX = t.OfVector(XYZ.BasisX).Normalize();
+            var alongDir = new XYZ(lineDir.X, lineDir.Y, 0) * (e.Mirrored ? -1 : 1);
+            if (sheetX.DotProduct(alongDir) < 0.9)
+            {
+                _doc.Delete(id);
+                Log.Add($"Sheets: {view.Name}: {e.Title} not overlaid (the drawing runs the other way in this view).");
+                return;
+            }
+            var move = want - now;
+            move -= view.ViewDirection * move.DotProduct(view.ViewDirection); // in the view's plane
+            ElementTransformUtils.MoveElement(_doc, id, move);
+            Log.Add($"Sheets: {view.Name}: survey elevation '{e.Title}' ({e.File}) overlaid on facade {e.Facade}.");
+        }
+        catch (Exception ex) { Log.Add($"Sheets: {view.Name}: elevation drawing not overlaid ({ex.Message})."); }
     }
 
     static string Bare(string levelName) => OfficeLevelName.Match(levelName) is { Success: true } m ? m.Groups[2].Value : levelName;
@@ -183,6 +248,7 @@ public sealed partial class ModelBuilder
                     view.get_Parameter(BuiltInParameter.VIEWER_BOUND_OFFSET_FAR)?.Set(2 * reach + Ft(4000));
                 }
                 catch { }
+                if (_linkDrawings) OverlayElevation(view, dir, c);
                 result.Add((side, view));
             }
             catch (Exception ex) { Log.Add($"Sheets: {side} elevation not made ({ex.Message})."); }
@@ -196,7 +262,7 @@ public sealed partial class ModelBuilder
     /// its number; the first fills that sheet itself. Otherwise a plain sheet "Survey Plan - ..." on the project's title
     /// block. A sheet of the same name from an earlier build is emptied and used again. Returns "number name", or null.
     /// </summary>
-    string? OnSheet(string kind, string label, string number, View view, string levelCode, XYZ? alignOn)
+    string? OnSheet(string kind, string label, string number, string group, View view, string levelCode, XYZ? alignOn)
     {
         try
         {
@@ -219,6 +285,9 @@ public sealed partial class ModelBuilder
                 try { sheet.SheetNumber = number; } catch { }
             if (sheet.Name != name) try { sheet.Name = name; } catch { }
             if (sheet.LookupParameter("Sheet Level") is { IsReadOnly: false, StorageType: StorageType.String } lp) lp.Set(levelCode);
+            // the project browser's folder for this kind ("10.200 Existing Plans")
+            if (SurveyToRevit.Shared.UserSettings.Load().SheetGroupParameter is { Length: > 0 } gp
+                && sheet.LookupParameter(gp) is { IsReadOnly: false, StorageType: StorageType.String } g) g.Set(group);
 
             // this sheet emptied of what an earlier build put there (a view someone put on another sheet stays there)
             foreach (var old in new FilteredElementCollector(_doc).OfClass(typeof(Viewport)).Cast<Viewport>().Where(v => v.SheetId == sheet.Id).ToList())
