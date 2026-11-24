@@ -1283,7 +1283,7 @@ public sealed partial class ModelBuilder
         {
             // a pitched roof stands on its eaves: the base is there and every edge slopes up to the ridge
             bool pitched = r.EavesMm is double ev && r.ElevationMm - ev >= 150;
-            double top = Z(pitched ? r.EavesMm!.Value : r.ElevationMm);
+            double top = Z(pitched ? r.EavesMm!.Value : RoofTopMm(r));
             var level = levels.Where(l => l.Elevation <= top - thick).OrderByDescending(l => l.Elevation).FirstOrDefault() ?? levels.OrderBy(l => l.Elevation).First();
             try
             {

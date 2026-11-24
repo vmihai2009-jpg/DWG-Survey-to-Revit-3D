@@ -14,6 +14,24 @@ public sealed partial class ModelBuilder
 {
     const string MansardCode = "MANSARD";
 
+    /// <summary>
+    /// The height a flat roof over the top storey is built at when a section shows the mansard round it reaching higher:
+    /// the mansard's kerb, when the roof plan's own spot heights reach it too (the roof's height was taken low in its
+    /// range); otherwise the roof's own.
+    /// </summary>
+    double RoofTopMm(RoofCandidate r)
+    {
+        if (r.EavesMm != null || r.Heights is not { Count: > 0 } hs) return r.ElevationMm;
+        var shown = _model.FacadeTops.Where(c => c.Class == "Mansard" && c.Confidence == "High" && c.Kerb is { Length: 2 }).ToList();
+        if (shown.Count == 0) return r.ElevationMm;
+        var topStorey = _model.Levels.FirstOrDefault(l => l.Name == shown[0].Level)?.Outline;
+        if (topStorey == null) return r.ElevationMm;
+        var mid = new Vec2(r.Outline.Vertices.Average(v => v.X), r.Outline.Vertices.Average(v => v.Y));
+        if (!FacadeWalls.Contains(topStorey, mid)) return r.ElevationMm;
+        double kerb = shown.Max(c => c.Kerb![1]);
+        return r.ElevationMm < kerb - 500 && hs.Max(h => h.Mm) >= kerb ? kerb : r.ElevationMm;
+    }
+
     void BuildMansards(List<Level> levels)
     {
         var calls = _model.FacadeTops.Where(c => c.Class == "Mansard" && c.Confidence != "Low" && c.Eaves is { Length: 2 }
@@ -23,7 +41,8 @@ public sealed partial class ModelBuilder
         t.Start();
         DeleteGenerated(MansardCode);
         if (calls.Count == 0) { t.Commit(); return; }
-        var type = RoofTypeFor(300);
+        // thin: on a 70° slope a 300 mm roof is 0.9 m thick upright, and its top edge stands up like a board
+        var type = RoofTypeFor(100);
         if (type == null) { t.RollBack(); Log.Add("Mansard: the project has no roof type."); return; }
         int made = 0; string? firstError = null;
         foreach (var c in calls)
