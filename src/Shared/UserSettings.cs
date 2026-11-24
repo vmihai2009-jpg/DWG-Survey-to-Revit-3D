@@ -28,6 +28,10 @@ internal sealed class UserSettings
     public string? ProjectTemplate { get; set; }
     /// <summary>How the office template names a level's existing-survey plan: this prefix and the level's name (BG: package 01_Existing).</summary>
     public string ExistingViewPrefix { get; set; } = "01_";
+    /// <summary>Sheet numbers of the existing drawings: {0} is the level code (00, 01, B1) for plans, the count (0, 1...) for elevations and sections.</summary>
+    public string ExistingPlanSheet { get; set; } = "10.2{0}";
+    public string ExistingElevationSheet { get; set; } = "10.27{0}";
+    public string ExistingSectionSheet { get; set; } = "10.25{0}";
 
     [JsonIgnore]
     public string Template => string.IsNullOrWhiteSpace(ProjectTemplate) ? DefaultTemplate : ProjectTemplate!;

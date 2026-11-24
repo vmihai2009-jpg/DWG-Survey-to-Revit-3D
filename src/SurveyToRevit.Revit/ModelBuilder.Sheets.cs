@@ -20,32 +20,62 @@ public sealed partial class ModelBuilder
         // the building: our own walls (the neighbours' context left out)
         var box = OurExtent();
         if (box == null) { Log.Add("Sheets: nothing built to put on sheets."); return; }
-        var prefix = SurveyToRevit.Shared.UserSettings.Load().ExistingViewPrefix ?? "";
+        var settings = SurveyToRevit.Shared.UserSettings.Load();
+        var prefix = settings.ExistingViewPrefix ?? "";
         bool office = levels.Values.Any(v => v.view != null && prefix.Length > 0 && v.view.Name.StartsWith(prefix, StringComparison.Ordinal));
 
         using var t = new Transaction(_doc, "Survey sheets");
         t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
         t.Start();
         var plans = levels.OrderBy(kv => kv.Value.level.Elevation).Where(kv => kv.Value.view != null).Select(kv => (kv.Key, kv.Value.level, view: kv.Value.view!)).ToList();
-        foreach (var (_, _, view) in plans) CropPlan(view, box);
+        // the office's existing-drawing view templates (BG: *BGA_01_FP_Existing, *BGA_01_SE_Existing), on our views
+        var planTemplate = ExistingTemplate(ViewType.FloorPlan);
+        var sectionTemplate = ExistingTemplate(ViewType.Section) ?? ExistingTemplate(ViewType.Elevation);
+        foreach (var (_, _, view) in plans) { Existing(view, planTemplate); CropPlan(view, box); }
         var elevations = plans.Count > 0 ? Elevations(box, plans[0].view, office ? prefix : null) : new List<(string, View)>();
         var sections = new FilteredElementCollector(_doc).OfClass(typeof(ViewSection)).Cast<ViewSection>()
             .Where(v => !v.IsTemplate && v.ViewType == ViewType.Section && v.Name.StartsWith("Survey Section ", StringComparison.Ordinal)).OrderBy(v => v.Name).ToList();
+        foreach (var (_, view) in elevations) Existing(view, sectionTemplate);
+        foreach (var view in sections) Existing(view, sectionTemplate);
         _doc.Regenerate();
 
+        // numbered in the office's existing-drawing series (BG: 10.200 Ground Floor plan, 10.202 Second Floor, 10.270 the
+        // first elevation); every plan at the same place on its sheet, so the floors line up when flicked through
+        string Num(string format, string code) { try { return string.Format(format, code); } catch { return code; } }
         var made = new List<string>();
-        int k = 0;
+        var ground = plans.Count > 0 ? plans[0].level.Elevation : box.Min.Z;
+        var centre = new XYZ((box.Min.X + box.Max.X) / 2, (box.Min.Y + box.Max.Y) / 2, ground);
         foreach (var (sl, level, view) in plans)
-            if (OnSheet("Plan", Bare(level.Name), k++, view, sl.Code) is string s) made.Add(s);
-        k = 0;
+            if (OnSheet("Plan", Bare(level.Name), Num(settings.ExistingPlanSheet, PlanCode(sl, level)), view, PlanCode(sl, level), new XYZ(centre.X, centre.Y, level.Elevation)) is string s) made.Add(s);
+        int k = 0;
         foreach (var (side, view) in elevations)
-            if (OnSheet("Elevation", side, k++, view, "ZZ") is string s) made.Add(s);
+            if (OnSheet("Elevation", side, Num(settings.ExistingElevationSheet, (k++).ToString()), view, "ZZ", centre) is string s) made.Add(s);
         k = 0;
         foreach (var view in sections)
-            if (OnSheet("Section", view.Name["Survey Section ".Length..], k++, view, "ZZ") is string s) made.Add(s);
+            if (OnSheet("Section", view.Name["Survey Section ".Length..], Num(settings.ExistingSectionSheet, (k++).ToString()), view, "ZZ", null) is string s) made.Add(s);
         t.Commit();
         Log.Add(made.Count > 0 ? $"Sheets: {string.Join("; ", made)}." : "Sheets: none made.");
     }
+
+    /// <summary>The level's code for drawing numbers: the office level name's own ("02" of "02_Second Floor"), else from the survey.</summary>
+    static string PlanCode(SurveyLevel sl, Level level) =>
+        OfficeLevelName.Match(level.Name) is { Success: true } m ? m.Groups[1].Value.ToUpperInvariant() : OfficeLevelCode(sl);
+
+    /// <summary>A view template for existing drawings of this kind: named for "Existing", plan ones preferring "FP", section ones "SE".</summary>
+    View? ExistingTemplate(ViewType type) =>
+        new FilteredElementCollector(_doc).OfClass(typeof(View)).Cast<View>()
+            .Where(v => v.IsTemplate && v.ViewType == type && v.Name.Contains("Existing", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(v => v.Name.Contains(type == ViewType.FloorPlan ? "_FP_" : "_SE_", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .FirstOrDefault();
+
+    /// <summary>An existing drawing: the survey's phase, and the office's existing view template when there is one.</summary>
+    void Existing(View view, View? template)
+    {
+        if (template != null) try { view.ViewTemplateId = template.Id; } catch (Exception ex) { Log.Add($"Sheets: template {template.Name} not applied to {view.Name} ({ex.Message})."); }
+        if (_phase != null) try { if (view.get_Parameter(BuiltInParameter.VIEW_PHASE) is { IsReadOnly: false } p) p.Set(_phase.Id); } catch { }
+    }
+
+    readonly Dictionary<string, XYZ> _anchors = new();
 
     static string Bare(string levelName) => OfficeLevelName.Match(levelName) is { Success: true } m ? m.Groups[2].Value : levelName;
 
@@ -166,7 +196,7 @@ public sealed partial class ModelBuilder
     /// its number; the first fills that sheet itself. Otherwise a plain sheet "Survey Plan - ..." on the project's title
     /// block. A sheet of the same name from an earlier build is emptied and used again. Returns "number name", or null.
     /// </summary>
-    string? OnSheet(string kind, string label, int k, View view, string levelCode)
+    string? OnSheet(string kind, string label, string number, View view, string levelCode, XYZ? alignOn)
     {
         try
         {
@@ -174,11 +204,7 @@ public sealed partial class ModelBuilder
             var placeholder = sheets.FirstOrDefault(s => s.Name.Contains("(View Name)", StringComparison.OrdinalIgnoreCase)
                                                          && s.Name.StartsWith("Existing", StringComparison.OrdinalIgnoreCase)
                                                          && s.Name.EndsWith(kind, StringComparison.OrdinalIgnoreCase));
-            string name = placeholder != null ? placeholder.Name.Replace("(View Name)", label, StringComparison.OrdinalIgnoreCase) : $"Survey {kind} - {label}";
-            // numbered on from the template's sheet (which stays as it is, for the office's own use)
-            string number = placeholder != null && long.TryParse(placeholder.SheetNumber, out var n0)
-                ? (n0 + k + 1).ToString(new string('0', placeholder.SheetNumber.Length))
-                : $"S2R-{kind[0]}{k + 1:00}";
+            string name = placeholder != null ? placeholder.Name.Replace("(View Name)", label, StringComparison.OrdinalIgnoreCase) : $"Existing {label} {kind}";
 
             // a rebuild fills the same sheet again
             var sheet = sheets.FirstOrDefault(s => s.Name == name);
@@ -195,8 +221,8 @@ public sealed partial class ModelBuilder
             if (sheet.LookupParameter("Sheet Level") is { IsReadOnly: false, StorageType: StorageType.String } lp) lp.Set(levelCode);
 
             // this sheet emptied of what an earlier build put there (a view someone put on another sheet stays there)
-            foreach (var vp in new FilteredElementCollector(_doc).OfClass(typeof(Viewport)).Cast<Viewport>().Where(v => v.SheetId == sheet.Id).ToList())
-                _doc.Delete(vp.Id);
+            foreach (var old in new FilteredElementCollector(_doc).OfClass(typeof(Viewport)).Cast<Viewport>().Where(v => v.SheetId == sheet.Id).ToList())
+                _doc.Delete(old.Id);
             _doc.Regenerate();
             if (!Viewport.CanAddViewToSheet(_doc, sheet.Id, view.Id)) { Log.Add($"Sheets: {view.Name} cannot go on {sheet.SheetNumber} (it is on another sheet)."); return null; }
 
@@ -206,8 +232,19 @@ public sealed partial class ModelBuilder
             x0 += Ft(25); y0 += Ft(25); y1 -= Ft(25);
             x1 -= (x1 - x0) > Ft(700) ? Ft(200) : Ft(25);
             FitScale(view, Mm(x1 - x0), Mm(y1 - y0));
-            Viewport.Create(_doc, sheet.Id, view.Id, new XYZ((x0 + x1) / 2, (y0 + y1) / 2, 0));
-            return $"{sheet.SheetNumber} {sheet.Name}";
+            var vp = Viewport.Create(_doc, sheet.Id, view.Id, new XYZ((x0 + x1) / 2, (y0 + y1) / 2, 0));
+            // the same point of the building at the same place on every sheet of this kind (the first one sets it)
+            if (alignOn != null)
+                try
+                {
+                    _doc.Regenerate();
+                    var at = vp.GetProjectionToSheetTransform().OfPoint(alignOn);
+                    at = new XYZ(at.X, at.Y, 0);
+                    if (!_anchors.TryGetValue(kind, out var anchor)) _anchors[kind] = at;
+                    else vp.SetBoxCenter(vp.GetBoxCenter() + (anchor - at));
+                }
+                catch (Exception ex) { Log.Add($"Sheets: {view.Name} not lined up with the other {kind.ToLowerInvariant()}s ({ex.Message})."); }
+            return $"{sheet.SheetNumber} - {sheet.Name}";
         }
         catch (Exception ex) { Log.Add($"Sheets: {view.Name} not put on a sheet ({ex.Message})."); return null; }
     }
