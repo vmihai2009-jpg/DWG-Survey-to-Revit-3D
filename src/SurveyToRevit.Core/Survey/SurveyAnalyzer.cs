@@ -987,6 +987,20 @@ public static class SurveyAnalyzer
                 notes.Add($"{levels[i].Name}: {(own.Area - parts.Sum(p => p.Area)) / 1e6:0} m² of the floor has no floor or roof over it (a terrace, an open roof): no ceiling there.");
             }
         }
+        // a ceiling stops at the floor's full-height walls: the floor outline can run on over ledges, balconies and
+        // cornices past the facade (SP's curved corner), where a ceiling would stick out of the building
+        foreach (var lv in levels)
+        {
+            if (lv.Outline == null) continue;
+            var tall = lv.Walls.Walls.Where(w => w.HeightMm == null && w.FaceA != "railing").ToList();
+            if (NeighbourWalls.Envelope(tall) is not { } env) continue;
+            var parts = lv.CoveredOutlines ?? new List<Polygon2> { lv.Outline };
+            var cut = parts.Select(p => NeighbourWalls.Clip(p, env)).Where(p => p != null).Select(p => p!).ToList();
+            double before = parts.Sum(p => p.Area), after = cut.Sum(p => p.Area);
+            if (cut.Count == 0 || after > before * 0.99) continue;
+            lv.CoveredOutlines = cut;
+            notes.Add($"{lv.Name}: ceiling kept inside the floor's walls, {before / 1e6:0} -> {after / 1e6:0} m² (the floor outline runs on over ledges past the facade).");
+        }
         // item E: elevation drawings split from their sheets, matched to the facade they show, fitted for height
         var elevations = new List<ElevationDrawing>();
         var fronts = new List<ContextFront>();

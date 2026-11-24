@@ -180,6 +180,7 @@ public sealed partial class ModelBuilder
         BuildElements(levels, o);
         if (o.Stairs) BuildStairs(levels);
         if (o.Roofs && _model.Roofs.Count > 0) BuildRoofs(levels.Values.Select(v => v.level).ToList());
+        if (o.Roofs && o.OnlyLevels == null) BuildMansards(levels.Values.Select(v => v.level).ToList());
         // the buildings next door only when asked: read from the elevations' ends and the roof plan, they can land in
         // front of this building's own facade (SP: a block before Regent Street), and they are not the survey's building
         if (o.Context) BuildContext(levels.Values.Select(v => v.level).ToList());
@@ -348,9 +349,11 @@ public sealed partial class ModelBuilder
     static string OfficeLevelCode(SurveyLevel sl)
     {
         var (order, _) = DrawingName.DescribeLevel(sl.Code);
-        if (order == double.MaxValue || order != Math.Floor(order)) return sl.Code.ToUpperInvariant();
-        int n = (int)order;
-        return n >= 0 ? n.ToString("00") : "B" + (-n);
+        if (order == double.MaxValue) return sl.Code.ToUpperInvariant();
+        // a mezzanine: the floor it sits on, and M (00M = Ground Floor Mezzanine)
+        bool mezz = order != Math.Floor(order);
+        int n = (int)Math.Floor(order);
+        return (n >= 0 ? n.ToString("00") : "B" + (-n)) + (mezz ? "M" : "");
     }
 
     /// <summary>A plan of the level set up like the pattern (its type, view template, scale, phase and the office's own view parameters).</summary>

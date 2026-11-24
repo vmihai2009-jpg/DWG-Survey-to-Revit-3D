@@ -52,11 +52,16 @@ public sealed partial class ModelBuilder
         {
             // the Ground Floor is the base number, floors up count on, basements count down (B1 = 199)
             var code = PlanCode(sl, level);
-            int floor = code.StartsWith("B", StringComparison.OrdinalIgnoreCase) && int.TryParse(code[1..], out var b) ? -b
-                      : int.TryParse(code, out var f) ? f : 50 + used.Count;
+            // a mezzanine takes its floor's number and M (10.200M)
+            bool mezz = code.EndsWith("M", StringComparison.OrdinalIgnoreCase);
+            var bare = mezz ? code[..^1] : code;
+            int floor = bare.StartsWith("B", StringComparison.OrdinalIgnoreCase) && int.TryParse(bare[1..], out var b) ? -b
+                      : int.TryParse(bare, out var f) ? f : 50 + used.Count;
             int n = settings.ExistingPlanBase + floor;
-            while (!used.Add(n)) n++;
-            if (OnSheet("Plan", Bare(level.Name), Num(n), Group(settings.ExistingPlanGroup, settings.ExistingPlanBase), view, code, new XYZ(centre.X, centre.Y, level.Elevation)) is string s) made.Add(s);
+            string number;
+            if (mezz) number = Num(n) + "M";
+            else { while (!used.Add(n)) n++; number = Num(n); }
+            if (OnSheet("Plan", Bare(level.Name), number,Group(settings.ExistingPlanGroup, settings.ExistingPlanBase), view, code, new XYZ(centre.X, centre.Y, level.Elevation)) is string s) made.Add(s);
         }
         int k = 0;
         // the middle of the elevations' crop (1 m below the lowest floor to 2 m over the top)

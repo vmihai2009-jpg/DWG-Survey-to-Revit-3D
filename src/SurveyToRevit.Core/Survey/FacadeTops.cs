@@ -28,6 +28,8 @@ public sealed class FacadeTopCall
     public double[]? Eaves { get; set; }
     public double[]? Kerb { get; set; }
     public double? SlopeDeg { get; set; }
+    /// <summary>The stretch's inward normal (x, y): out in Eaves/Kerb is measured the other way.</summary>
+    public double[]? Inward { get; set; }
     /// <summary>Mansard: the plan's cut through the slope left out of the walls (lines x1, y1, x2, y2).</summary>
     public List<double[]> SkinLinesLeftOut { get; set; } = new();
     public List<double[]> DormerFrontsKept { get; set; } = new();
@@ -39,11 +41,15 @@ public static class FacadeTops
 
     static double[] L(Segment2 s) => new[] { Math.Round(s.A.X), Math.Round(s.A.Y), Math.Round(s.B.X), Math.Round(s.B.Y) };
 
-    /// <summary>The storey a facade's top sits on: the highest floor with an outline and walls, and the one below it.</summary>
+    /// <summary>The storey a facade's top sits on: the highest floor with an outline and walls that covers a good part
+    /// (40 %) of the floor below (a stair or lift overrun on the roof is not the top storey), and the one below it.</summary>
     public static (SurveyLevel? Top, SurveyLevel? Below) TopStoreys(IReadOnlyList<SurveyLevel> levels)
     {
         var withWalls = levels.Where(l => l.Outline != null && l.Walls.Walls.Count > 0 && !double.IsNaN(l.ElevationMm)).OrderBy(l => l.ElevationMm).ToList();
-        return withWalls.Count < 2 ? (withWalls.LastOrDefault(), null) : (withWalls[^1], withWalls[^2]);
+        if (withWalls.Count < 2) return (withWalls.LastOrDefault(), null);
+        for (int i = withWalls.Count - 1; i >= 1; i--)
+            if (withWalls[i].Outline!.Area >= 0.4 * withWalls[i - 1].Outline!.Area) return (withWalls[i], withWalls[i - 1]);
+        return (withWalls[^1], withWalls[^2]);
     }
 
     /// <summary>The outer face lines of the storey below the top (its outline's edges, long enough to be a facade).</summary>
@@ -119,8 +125,20 @@ public static class FacadeTops
                 call.Rejected = "Mansard (only a section, the roof plan or the elevation may say so); built as walls, as before";
                 call.Settle = "a section crossing it: a face sloping 45° or more is a mansard (then its plan lines are the roof's skin, not walls); a photo";
             }
+            call.Inward = new[] { Math.Round(n.X, 6), Math.Round(n.Y, 6) };
             calls.Add(call);
         }
+        // a mansard a section shows runs on round the building: other stretches whose top storey is thin windowless lines
+        // set back (the plan's cut through the slope) are the same mansard, with its slope
+        var shown = calls.Where(c => c.Class == "Mansard" && c.Confidence == "High" && c.Eaves != null && c.Kerb != null).ToList();
+        if (shown.Count > 0)
+            foreach (var c in calls.Where(c => c.Class == "Unknown" && c.SetbackMm > FlushMm && c.TopWallThicknessMm < ThickWallMm))
+            {
+                var like = shown[0];
+                c.Class = "Mansard"; c.Confidence = "Medium"; c.SlopeDeg = like.SlopeDeg; c.Eaves = like.Eaves; c.Kerb = like.Kerb;
+                c.Evidence = $"thin windowless lines {c.SetbackMm:0} mm back, as along {like.Id}, where a section shows the mansard ({like.Evidence})";
+                c.Rejected = "Unknown"; c.Settle = "a section crossing it, or a photo";
+            }
         return calls;
     }
 
@@ -174,7 +192,12 @@ public static class FacadeTops
         int i0 = pts.FindLastIndex(q => q.Out >= -FlushMm);
         var eaves = i0 >= 0 ? pts[i0] : pts[0];
         var rest = pts.Skip(Math.Max(0, i0)).ToList();
-        var kerb = rest.OrderByDescending(q => q.Z).First();
+        // the top of a steep face set back from the facade (a mansard's kerb): the highest point still steep from the
+        // eaves. The roof's highest point lies further in, over a flat top, and would read as a shallow pitch
+        var steep = rest.Where(q => q.Z - eaves.Z >= MinRiseMm && eaves.Out - q.Out > FlushMm
+                                    && Math.Atan2(q.Z - eaves.Z, eaves.Out - q.Out) * 180 / Math.PI is var s && s >= MansardDeg && s < 88)
+                        .OrderByDescending(q => q.Z).FirstOrDefault();
+        var kerb = steep != default ? steep : rest.OrderByDescending(q => q.Z).First();
         double rise = kerb.Z - eaves.Z, run = eaves.Out - kerb.Out;
         double[] E = { Math.Round(eaves.Out), Math.Round(eaves.Z) }, K = { Math.Round(kerb.Out), Math.Round(kerb.Z) };
         if (rise < MinRiseMm) return (null, $"rises only {rise:0} mm above the facade", null, null, null);
