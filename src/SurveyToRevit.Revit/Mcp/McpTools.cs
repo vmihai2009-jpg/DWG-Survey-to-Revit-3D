@@ -144,6 +144,7 @@ public static class McpTools
 
     public static string Call(UIApplication? app, string name, string argsJson)
     {
+        LearningCapture.Init();
         using var parsed = JsonDocument.Parse(string.IsNullOrWhiteSpace(argsJson) ? "{}" : argsJson);
         var a = parsed.RootElement;
         JsonNode result = name switch

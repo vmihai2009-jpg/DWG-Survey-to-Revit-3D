@@ -124,10 +124,20 @@ public sealed partial class ModelBuilder
     {
         Log.Add(_phase == null ? "WARNING: the project has no phases; elements are on Revit's default phase."
                                : $"All elements are created in the '{_phase.Name}' phase.");
+        // learning point 1: what people did to the last build's walls, before this build replaces them
+        if (!o.SheetsOnly && !o.OverlayOnly)
+        {
+            int learned = LearningCapture.Capture(_doc);
+            if (learned > 0) Log.Add($"Learning: {learned} examples of what was done to the last build's walls saved to the office's learning folder.");
+        }
         using var group = new TransactionGroup(_doc, "Build from survey");
         group.Start();
         // a build that fails part-way leaves nothing behind: everything done so far is undone before the error goes on
-        try { RunSteps(o, group); }
+        try
+        {
+            RunSteps(o, group);
+            if (!o.SheetsOnly && !o.OverlayOnly && o.Walls) LearningCapture.Snapshot(_doc, _model);
+        }
         catch
         {
             try { if (group.GetStatus() == TransactionStatus.Started) group.RollBack(); } catch { /* the original error matters more */ }

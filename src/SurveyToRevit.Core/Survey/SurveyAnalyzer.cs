@@ -88,6 +88,8 @@ public sealed record SkippedDrawing(string FileName, string Reason);
 
 public sealed class SurveyModel
 {
+    /// <summary>Who drew the survey (the firm on the sheets, or the ISO 19650 originator): the office's learning is kept per surveyor.</summary>
+    public string Surveyor { get; set; } = "unknown";
     public required SurveyFrame Frame { get; init; }
     public required IReadOnlyList<SurveyLevel> Levels { get; init; }
     public required IReadOnlyList<SkippedDrawing> Skipped { get; init; }
@@ -270,17 +272,33 @@ public static class SurveyAnalyzer
 
     public static SurveyModel Analyze(IEnumerable<string> paths, Tolerances? tol = null, LayerRules? rules = null, SurveyFrame? frame = null)
     {
-        tol ??= Tolerances.Default;
-        rules ??= LayerRules.Default;
         var skipped = new List<SkippedDrawing>();
         var notes = new List<string>();
         paths = paths.ToList();
+        // the office's adopted tuning (learning point 3), unless the caller gives its own
+        if (tol == null)
+        {
+            tol = Learning.Adopted.Tolerances();
+            if (!ReferenceEquals(tol, Tolerances.Default)) notes.Add("Tolerances: the office's adopted tuning.json is used.");
+        }
+        rules ??= LayerRules.Default;
         // the office's own layer names, in a layers.txt next to the drawings
         if (rules.OverrideFile == null && paths.Select(p => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(p) ?? "", LayerRules.OverrideFileName)).FirstOrDefault(File.Exists) is string layerFile)
         {
             rules = rules.WithOverrides(layerFile, notes);
             notes.Add($"Layer names from {layerFile} ({rules.Overrides.Count} rules) are used before the built-in ones.");
         }
+        // the surveyor's adopted profile (learning point 2): after the survey's own layers.txt, so that one wins
+        var surveyorFromNames = Learning.SurveyorId.From(paths, Array.Empty<string>());
+        try
+        {
+            if (Learning.Adopted.ProfilePath(surveyorFromNames) is string profile && File.Exists(profile))
+            {
+                rules = rules.WithOverrides(profile, notes);
+                notes.Add($"Layer rules learned for surveyor {surveyorFromNames} ({profile}) are used after the survey's own.");
+            }
+        }
+        catch { /* learning never stops a reading */ }
         // calls made outside the engine (the MCP side, a person) that rebuilds keep: survey-decisions.json beside layers.txt
         var decisions = SurveyDecisions.Find(paths.Select(p => System.IO.Path.GetDirectoryName(p) ?? ""), notes);
         var outcomes = new List<DecisionOutcome>();
@@ -572,6 +590,21 @@ public static class SurveyAnalyzer
                 notes.Add($"{lv.Name}: {g.Count()} thin windowless edge walls on a line the floor below/above repeats ({g.Sum(x => x.Old.Length) / 1000:0.0} m) read as party walls drawn by their inside face: thickened outward to 215 mm.");
             }
         }
+        // who drew it: the file names' originator, else the firm on the sheets (the id the office's learning is kept by)
+        var surveyor = surveyorFromNames != "unknown" ? surveyorFromNames : Learning.SurveyorId.From(Array.Empty<string>(), levels.SelectMany(l => l.Plan.Texts.Select(t => t.Value ?? "")));
+        // learning point 4: low-confidence walls of a kind people nearly always delete (this surveyor, layer, thickness)
+        try
+        {
+            if (Learning.Adopted.Model() is { } wallModel)
+                foreach (var lv in levels)
+                {
+                    var keep = lv.Walls.Walls.Where(w => !wallModel.ShouldDrop(surveyor, w)).ToList();
+                    if (keep.Count == lv.Walls.Walls.Count) continue;
+                    notes.Add($"{lv.Name}: {lv.Walls.Walls.Count - keep.Count} low-confidence walls left out: of a kind the office's corrections for surveyor {surveyor} nearly always delete (adopted wall ranking).");
+                    lv.Walls = lv.Walls with { Walls = keep };
+                }
+        }
+        catch { /* learning never stops a reading */ }
         // outside corners left open (a facade stopping short of the party wall it meets): run on to the corner
         foreach (var lv in levels)
         {
@@ -1049,7 +1082,7 @@ public static class SurveyAnalyzer
         }
         // self-checks: places to look at, listed for the review list and the report
         var checks = ModelChecks.Run(levels, frame, rules, FacadeStack.Shares(levels.Select(l => (l.Walls.Walls, l.Outline)).ToList()));
-        return new SurveyModel { Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Context = context, ContextFronts = fronts, ContextPlan = contextPlan, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops, SectionIndex = sectionIndex, Elevations = elevations };
+        return new SurveyModel { Surveyor = surveyor, Frame = frame, Levels = levels, Skipped = skipped, Notes = notes, Rules = rules, Roofs = roofs, Context = context, ContextFronts = fronts, ContextPlan = contextPlan, Sections = sections, Checks = checks, Decisions = outcomes, DecisionsFile = decisions, FacadeTops = tops, SectionIndex = sectionIndex, Elevations = elevations };
     }
 
     /// <summary>Inside the box the walls span (their middle 98%, so one stray wall cannot stretch it), grown by a margin.</summary>

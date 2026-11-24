@@ -4,6 +4,9 @@ using SurveyToRevit.Core;
 using SurveyToRevit.Core.Survey;
 
 // Usage: SurveyLab <folder-or-dwg>... [--out <dir>]
+//        SurveyLab --learning DIR --propose | --bench FILE [--adopt | --sweep Name=v1,v2]   (the learning gate, LearnCli.cs)
+CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
+if (LearnCli.Handles(args)) { LearnCli.Run(args); return; }
 var outDir = "surveylab-out";
 var inputs = new List<string>();
 for (int i = 0; i < args.Length; i++)

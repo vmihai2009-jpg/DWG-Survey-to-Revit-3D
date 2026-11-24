@@ -39,4 +39,7 @@ Surveys used: 26-28 Mount Row (MR, 7 floors, mews) and 7 Swallow Place / 251-259
 
 ## Self-learning
 
-Corrections that cannot be generic rules go in `survey-decisions.json` next to the DWGs: walls, not-walls, facade tops, levels. Every later build of that survey applies them, and the reading reports them. A correction that is generic belongs in the code, with a line in the tables above.
+There are three layers:
+- **Per survey:** `survey-decisions.json` next to the DWGs (walls, not-walls, facade tops, levels). Every later build of that survey applies it.
+- **Office-wide, learned from data:** corrections captured on every project, surveyor profiles, wall ranking and tuning. They are gated by a benchmark and adopted by a person: see `docs/LEARNING.md`.
+- **Generic rules:** in the code, with a line in the tables above.

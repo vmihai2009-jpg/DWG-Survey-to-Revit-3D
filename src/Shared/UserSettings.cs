@@ -38,6 +38,8 @@ internal sealed class UserSettings
     public string SheetGroupParameter { get; set; } = "View Type";
     /// <summary>Draw the survey's elevations (their own lines, as detail lines) in the elevation views, on the model.</summary>
     public bool OverlayElevations { get; set; } = true;
+    /// <summary>The office's shared learning folder (corrections, surveyor profiles, wall ranking, tuning); empty switches learning off.</summary>
+    public string? LearningFolder { get; set; } = @"I:\BG Technical Library\S2R\learning";
     public string ExistingPlanGroup { get; set; } = "{0} Existing Plans";
     public string ExistingSectionGroup { get; set; } = "{0} Existing Sections";
     public string ExistingElevationGroup { get; set; } = "{0} Existing Elevations";

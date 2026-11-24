@@ -21,6 +21,7 @@ public class BuildFromSurveyCommand : IExternalCommand
     {
         var doc = data.Application.ActiveUIDocument?.Document;
         if (doc == null || doc.IsFamilyDocument) { message = "Open a project first."; return Result.Failed; }
+        LearningCapture.Init();
 
         IReadOnlyList<string> files;
         using (var start = new StartDialog(doc.Title))
