@@ -136,9 +136,48 @@ public static class StairFinder
                     if (group.Any(g => Ends(g).Any(e => Ends(f).Any(o => o.DistanceTo(e) <= joinFlights))))
                     { group.Add(f); left.Remove(f); grew = true; }
             }
-            stairs.Add(Order(group, ups, joinFlights));
+            stairs.Add(ByTreadNumbers(group, texts) ?? Order(group, ups, joinFlights));
         }
         return stairs;
+    }
+
+    static readonly Regex TreadNumber = new(@"^\s*\d{1,3}\s*$");
+
+    /// <summary>
+    /// A stair whose treads are numbered on the plan (surveyors number them up through the building): each flight climbs
+    /// the way its numbers rise, and the flights follow one another in number order. Null when fewer than two flights,
+    /// or fewer than half the treads, carry a number, or a flight's numbers don't run one way.
+    /// </summary>
+    static StairCandidate? ByTreadNumbers(List<StairFlight> group, IReadOnlyList<(Vec2 Position, string Value)> texts)
+    {
+        var nums = texts.Where(t => TreadNumber.IsMatch(t.Value ?? "")).Select(t => (P: t.Position, N: int.Parse(t.Value.Trim()))).ToList();
+        if (nums.Count < 3) return null;
+        var read = new List<(StairFlight F, int Min)>();
+        int treads = 0, numbered = 0;
+        foreach (var f in group)
+        {
+            // the number on each tread: between a riser and the next, within the flight's width
+            var seq = new List<(int K, int N)>();
+            for (int k = 0; k < f.Risers.Count; k++)
+            {
+                var a = f.Risers[k];
+                var step = k + 1 < f.Risers.Count ? f.Risers[k + 1].Mid - a.Mid : (k > 0 ? a.Mid - f.Risers[k - 1].Mid : default);
+                if (step.Length < 1) continue;
+                treads++;
+                var u = step.Normalized(); var w = a.Direction;
+                var hit = nums.Where(x => { double along = (x.P - a.Mid).Dot(u), across = Math.Abs((x.P - a.Mid).Dot(w));
+                                            return along > -50 && along < step.Length + 50 && across <= a.Length / 2 + 200; })
+                              .OrderBy(x => Math.Abs((x.P - a.Mid).Dot(u) - step.Length / 2)).Select(x => (int?)x.N).FirstOrDefault();
+                if (hit is int n) { seq.Add((k, n)); numbered++; }
+            }
+            if (seq.Count < 2) return null;
+            int up = 0, down = 0;
+            for (int i = 1; i < seq.Count; i++) { if (seq[i].N > seq[i - 1].N) up++; else if (seq[i].N < seq[i - 1].N) down++; }
+            if (up > 0 && down > 0) return null;
+            read.Add((down > 0 ? Reverse(f) : f, seq.Min(s => s.N)));
+        }
+        if (read.Count < 2 || numbered * 2 < treads) return null;
+        return new StairCandidate(read.OrderBy(r => r.Min).Select(r => r.F).ToList(), true);
     }
 
     static IEnumerable<Vec2> Ends(StairFlight f) => new[] { f.Bottom, f.Top };
