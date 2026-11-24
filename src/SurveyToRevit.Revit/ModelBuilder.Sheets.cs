@@ -230,7 +230,7 @@ public sealed partial class ModelBuilder
             double x0 = 0, y0 = 0, x1 = Ft(841), y1 = Ft(594);
             if (TitleBlockOn(sheet)?.get_BoundingBox(sheet) is { } bb) { x0 = bb.Min.X; y0 = bb.Min.Y; x1 = bb.Max.X; y1 = bb.Max.Y; }
             x0 += Ft(25); y0 += Ft(25); y1 -= Ft(25);
-            x1 -= (x1 - x0) > Ft(700) ? Ft(200) : Ft(25);
+            x1 -= (x1 - x0) > Ft(700) ? Ft(130) : Ft(25); // the title strip down the right (BG A1: about 110 mm)
             FitScale(view, Mm(x1 - x0), Mm(y1 - y0));
             var middle = new XYZ((x0 + x1) / 2, (y0 + y1) / 2, 0);
             var vp = Viewport.Create(_doc, sheet.Id, view.Id, middle);
