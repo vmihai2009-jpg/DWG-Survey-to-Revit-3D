@@ -683,6 +683,13 @@ For the Thursday demo, Mihai asked for one thing: give S2R the DWGs, and it does
   - MR: South F17 has 10,383 lines and North has F38 + F12 (9,822 + 1,118). Both sit on the model by eye.
   - Setting `OverlayElevations` (on). Build option `sheets_only` remakes only the views and sheets of a built model (about 40 s).
   - Hub ask: `elevation_overlay` has the same placement problem.
+- **Swallow Place in a new BG project (0.33.57-0.33.60).**
+  - **Context off.** The neighbouring buildings ("context") are now built only when asked (build option `context`). On SP, Elevation 8 is matched mirrored to F55, and its "left/right of F55" blocks, 20 m deep, landed one in front of the Regent Street facade.
+  - **Mansard.** `FacadeTops.TopStoreys` now takes the highest floor covering 40% of the one below, so SP's 49 m² 7F overrun is not the top storey; the top storey is 6F. The mansard kerb is the top of the steep face, not the roof's highest point: SP section A/B ends now read Mansard 59.5-70.4°. A section-shown mansard is carried round to the other stretches with thin, windowless, set-back top walls (Medium).
+  - **Mansard built.** `ModelBuilder.Mansard.cs` builds a native footprint-roof strip per stretch, eaves to kerb, with only the eaves edge sloping. Tagged MANSARD. SP: 15 strips. A stretch's inside is found by a point just off it lying in the floor, not by the centre.
+  - **Ceilings.** Ceilings stop 100 mm inside the full-height walls' outer faces. Before, they ran over ledges or showed on the facade.
+  - **Mezzanines.** Mezzanine sheets get their floor's number with an M (10.200M) and levels 00M_.
+  - **Project guard.** `survey_build` takes `project` and refuses to run when another project is active by the time Revit runs it. A queued build nearly ran with the user's SP feasibility model in front.
 - **Scope box.** The Revit API cannot create or resize a scope box, so every plan gets the same crop box. On the sheets the result is the same.
 - **Slab (0.33.49).** A floor's slab is cut back to its own walls and to the walls of the floor below, since it is also that floor's roof. Before, the MR 1F terrace lost a wedge and the ceiling below showed through: 452 -> 489 m². The 5F slab over the 4F roof: 256 -> 299 m². SP: unchanged.
 - **Stairs (0.33.50).** Numbered flights are chained by continuing numbers, gap 0-6, nearest top to foot. Numbering that restarts is another stair. On the MR 1F plan, outside steps 1-4 up to a door were merged into the stair inside (1-4, 6-10) and stretched to 12 risers, floating outside the building. Now they are separate: the 4 steps are dropped as steps to a door, and the inside stair is built. SP: unchanged.
