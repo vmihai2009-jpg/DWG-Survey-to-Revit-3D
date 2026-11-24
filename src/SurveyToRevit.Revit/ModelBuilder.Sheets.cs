@@ -48,8 +48,10 @@ public sealed partial class ModelBuilder
         foreach (var (sl, level, view) in plans)
             if (OnSheet("Plan", Bare(level.Name), Num(settings.ExistingPlanSheet, PlanCode(sl, level)), view, PlanCode(sl, level), new XYZ(centre.X, centre.Y, level.Elevation)) is string s) made.Add(s);
         int k = 0;
+        // the middle of the elevations' crop (1 m below the lowest floor to 2 m over the top)
+        var mid = new XYZ(centre.X, centre.Y, (box.Min.Z - Ft(1000) + box.Max.Z + Ft(2000)) / 2);
         foreach (var (side, view) in elevations)
-            if (OnSheet("Elevation", side, Num(settings.ExistingElevationSheet, (k++).ToString()), view, "ZZ", centre) is string s) made.Add(s);
+            if (OnSheet("Elevation", side, Num(settings.ExistingElevationSheet, (k++).ToString()), view, "ZZ", mid) is string s) made.Add(s);
         k = 0;
         foreach (var view in sections)
             if (OnSheet("Section", view.Name["Survey Section ".Length..], Num(settings.ExistingSectionSheet, (k++).ToString()), view, "ZZ", null) is string s) made.Add(s);
@@ -74,8 +76,6 @@ public sealed partial class ModelBuilder
         if (template != null) try { view.ViewTemplateId = template.Id; } catch (Exception ex) { Log.Add($"Sheets: template {template.Name} not applied to {view.Name} ({ex.Message})."); }
         if (_phase != null) try { if (view.get_Parameter(BuiltInParameter.VIEW_PHASE) is { IsReadOnly: false } p) p.Set(_phase.Id); } catch { }
     }
-
-    readonly Dictionary<string, XYZ> _anchors = new();
 
     static string Bare(string levelName) => OfficeLevelName.Match(levelName) is { Success: true } m ? m.Groups[2].Value : levelName;
 
@@ -232,18 +232,19 @@ public sealed partial class ModelBuilder
             x0 += Ft(25); y0 += Ft(25); y1 -= Ft(25);
             x1 -= (x1 - x0) > Ft(700) ? Ft(200) : Ft(25);
             FitScale(view, Mm(x1 - x0), Mm(y1 - y0));
-            var vp = Viewport.Create(_doc, sheet.Id, view.Id, new XYZ((x0 + x1) / 2, (y0 + y1) / 2, 0));
-            // the same point of the building at the same place on every sheet of this kind (the first one sets it)
+            var middle = new XYZ((x0 + x1) / 2, (y0 + y1) / 2, 0);
+            var vp = Viewport.Create(_doc, sheet.Id, view.Id, middle);
+            // the building's centre in the middle of the drawing area, whatever annotation (level heads, elevation marks)
+            // runs past the crop: the same point on every sheet of a kind, so the floors line up when flicked through
             if (alignOn != null)
                 try
                 {
                     _doc.Regenerate();
                     var at = vp.GetProjectionToSheetTransform().OfPoint(alignOn);
-                    at = new XYZ(at.X, at.Y, 0);
-                    if (!_anchors.TryGetValue(kind, out var anchor)) _anchors[kind] = at;
-                    else vp.SetBoxCenter(vp.GetBoxCenter() + (anchor - at));
+                    vp.SetBoxCenter(vp.GetBoxCenter() + (middle - new XYZ(at.X, at.Y, 0)));
                 }
-                catch (Exception ex) { Log.Add($"Sheets: {view.Name} not lined up with the other {kind.ToLowerInvariant()}s ({ex.Message})."); }
+                catch (Exception ex) { Log.Add($"Sheets: {view.Name} not centred on its sheet ({ex.Message})."); }
+            try { if (view.get_Parameter(BuiltInParameter.VIEW_DESCRIPTION) is { IsReadOnly: false } title) title.Set(name); } catch { }
             return $"{sheet.SheetNumber} - {sheet.Name}";
         }
         catch (Exception ex) { Log.Add($"Sheets: {view.Name} not put on a sheet ({ex.Message})."); return null; }
@@ -256,7 +257,8 @@ public sealed partial class ModelBuilder
         {
             var crop = view.CropBox;
             double w = Mm(crop.Max.X - crop.Min.X), h = Mm(crop.Max.Y - crop.Min.Y);
-            int scale = new[] { 50, 100, 200, 250, 500, 1000 }.FirstOrDefault(s => w / s <= widthMm && h / s <= heightMm);
+            // survey GAs: 1:100 unless the building needs smaller
+            int scale = new[] { 100, 200, 250, 500, 1000 }.FirstOrDefault(s => w / s <= widthMm && h / s <= heightMm);
             view.Scale = scale == 0 ? 1000 : scale;
         }
         catch { /* the view template owns the scale */ }
