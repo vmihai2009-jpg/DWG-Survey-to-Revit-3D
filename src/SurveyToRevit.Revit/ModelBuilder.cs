@@ -908,10 +908,15 @@ public sealed class ModelBuilder
             t.SetFailureHandlingOptions(t.GetFailureHandlingOptions().SetFailuresPreprocessor(new WarningSwallower()));
             t.Start();
             var runs = new List<Autodesk.Revit.DB.Architecture.StairsRun>();
+            // the riser count first: set after the runs it made Revit re-solve their heights (later runs started low)
+            if (_doc.GetElement(id) is Autodesk.Revit.DB.Architecture.Stairs s0)
+                try { s0.DesiredRisersNumber = risers; } catch { /* Revit keeps its own count */ }
             int done = 0;
             foreach (var f in stair.Flights)
             {
-                XYZ P(Vec2 v) => new(Ft(v.X), Ft(v.Y), 0);
+                // each run sketched at the height it starts from
+                double z = level.Elevation + Ft(done * riserMm);
+                XYZ P(Vec2 v) => new(Ft(v.X), Ft(v.Y), z);
                 var left = f.Risers.Select(r => P(r.A)).ToList();
                 var right = f.Risers.Select(r => P(r.B)).ToList();
                 var boundaries = new List<Curve>();
