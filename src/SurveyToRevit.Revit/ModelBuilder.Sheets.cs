@@ -240,8 +240,13 @@ public sealed partial class ModelBuilder
                 try
                 {
                     _doc.Regenerate();
-                    var at = vp.GetProjectionToSheetTransform().OfPoint(alignOn);
-                    vp.SetBoxCenter(vp.GetBoxCenter() + (middle - new XYZ(at.X, at.Y, 0)));
+                    // model -> the view's projection space -> the sheet
+                    var toProjection = view.GetModelToProjectionTransforms().First().GetModelToProjectionTransform();
+                    var at = vp.GetProjectionToSheetTransform().OfPoint(toProjection.OfPoint(alignOn));
+                    var shift = middle - new XYZ(at.X, at.Y, 0);
+                    // never off the sheet: a shift larger than the sheet means the sums went wrong; leave it centred as placed
+                    if (shift.GetLength() < Ft(400)) vp.SetBoxCenter(vp.GetBoxCenter() + shift);
+                    else Log.Add($"Sheets: {view.Name} left as placed (centring gave {Mm(shift.GetLength()):0} mm).");
                 }
                 catch (Exception ex) { Log.Add($"Sheets: {view.Name} not centred on its sheet ({ex.Message})."); }
             try { if (view.get_Parameter(BuiltInParameter.VIEW_DESCRIPTION) is { IsReadOnly: false } title) title.Set(name); } catch { }
