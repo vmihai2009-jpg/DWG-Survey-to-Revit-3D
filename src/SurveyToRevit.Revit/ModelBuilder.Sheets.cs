@@ -68,6 +68,8 @@ public sealed partial class ModelBuilder
             if (OnSheet("Section", view.Name["Survey Section ".Length..], Num(settings.ExistingSectionBase + k++), Group(settings.ExistingSectionGroup, settings.ExistingSectionBase), view, "ZZ", null) is string s) made.Add(s);
         t.Commit();
         Log.Add(made.Count > 0 ? $"Sheets: {string.Join("; ", made)}." : "Sheets: none made.");
+        foreach (var (v, id) in _overlays)
+            Log.Add($"Sheets: {v.Name}: its survey drawing {(_doc.GetElement(id) is ImportInstance ? "is there" : "was removed by Revit")} after the sheets were made; imports hidden in the view: {(v.IsValidObject ? v.AreImportCategoriesHidden.ToString() : "view gone")}.");
     }
 
     /// <summary>The level's code for drawing numbers: the office level name's own ("02" of "02_Second Floor"), else from the survey.</summary>
@@ -89,6 +91,7 @@ public sealed partial class ModelBuilder
     }
 
     bool _linkDrawings;
+    readonly List<(View View, ElementId Id)> _overlays = new();
 
     /// <summary>
     /// The survey's own elevation of this side, linked into the elevation view and moved onto the model: the drawing the
@@ -125,15 +128,31 @@ public sealed partial class ModelBuilder
             var at2 = pick.A + lineDir * along;
             var want = new XYZ(Ft(at2.X), Ft(at2.Y), Z(part.A * sy + part.B));
             var now = t.OfPoint(new XYZ(Ft(sx), Ft(sy), 0));
-            // the sheet's x must run the way the match says (an import cannot be mirrored)
+            // (a link comes in pinned: unpinned to place it, pinned again there)
+            inst.Pinned = false;
+            // the sheet's x must run the way the match says; Revit can lay the drawing in the view the other way round
+            // (looking north, say): then it is mirrored across the view's upright plane through that point
             var sheetX = t.OfVector(XYZ.BasisX).Normalize();
             var alongDir = new XYZ(lineDir.X, lineDir.Y, 0) * (e.Mirrored ? -1 : 1);
-            inst.Pinned = false;
+            bool flipped = false;
             if (sheetX.DotProduct(alongDir) < 0.9)
             {
-                _doc.Delete(id);
-                Log.Add($"Sheets: {view.Name}: {e.Title} not overlaid (the drawing runs the other way in this view).");
-                return;
+                try
+                {
+                    var plane = Plane.CreateByNormalAndOrigin(view.RightDirection, now);
+                    ElementTransformUtils.MirrorElements(_doc, new List<ElementId> { id }, plane, false);
+                    _doc.Regenerate();
+                    t = inst.GetTotalTransform();
+                    now = t.OfPoint(new XYZ(Ft(sx), Ft(sy), 0));
+                    flipped = t.OfVector(XYZ.BasisX).Normalize().DotProduct(alongDir) > 0.9;
+                }
+                catch (Exception ex) { Log.Add($"Sheets: {view.Name}: mirroring the drawing failed ({ex.Message})."); }
+                if (!flipped)
+                {
+                    _doc.Delete(id);
+                    Log.Add($"Sheets: {view.Name}: {e.Title} not overlaid (the drawing runs the other way in this view).");
+                    return;
+                }
             }
             // onto the model in the view's plane, and 300 mm in front of the facade (behind it, the walls hide it)
             var vd = view.ViewDirection;
@@ -141,10 +160,14 @@ public sealed partial class ModelBuilder
             move -= vd * move.DotProduct(vd);
             var facadePt = new XYZ(Ft(pick.A.X), Ft(pick.A.Y), now.Z);
             move += vd * ((facadePt - now).DotProduct(vd) + Ft(300));
-            // (a link comes in pinned: unpinned to move it, pinned again there)
             ElementTransformUtils.MoveElement(_doc, id, move);
+            _doc.Regenerate();
+            if (!inst.IsValidObject) { Log.Add($"Sheets: {view.Name}: Revit removed the drawing once placed."); return; }
             inst.Pinned = true;
-            Log.Add($"Sheets: {view.Name}: survey elevation '{e.Title}' ({e.File}) overlaid on facade {e.Facade}.");
+            var at = inst.GetTotalTransform().OfPoint(new XYZ(Ft(sx), Ft(sy), 0));
+            Log.Add($"Sheets: {view.Name}: survey elevation '{e.Title}' overlaid on facade {e.Facade}{(flipped ? " (mirrored to read the right way)" : "")}; " +
+                    $"its middle at ({Mm(at.X):0}, {Mm(at.Y):0}, {Mm(at.Z):0}) mm, wanted ({Mm(want.X):0}, {Mm(want.Y):0}, {Mm(want.Z):0}); imports hidden in the view: {view.AreImportCategoriesHidden}.");
+            _overlays.Add((view, id));
         }
         catch (Exception ex) { Log.Add($"Sheets: {view.Name}: elevation drawing not overlaid ({ex.Message})."); }
     }

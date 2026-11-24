@@ -31,6 +31,8 @@ public sealed class BuildOptions
     /// <summary>Elevation views round the building, and every floor plan, elevation and section on a sheet with the project's
     /// title block (an office template's own existing-drawing sheets, filled in, when it has them).</summary>
     public bool Sheets { get; set; } = true;
+    /// <summary>Only the elevation views and the sheets again (a model already built).</summary>
+    public bool SheetsOnly { get; set; }
     public double SlabThicknessMm { get; set; } = 300;
     /// <summary>Surroundings from LiDAR (ground and neighbouring blocks); null for none.</summary>
     public SiteContext? Site { get; set; }
@@ -133,6 +135,16 @@ public sealed partial class ModelBuilder
 
     void RunSteps(BuildOptions o, TransactionGroup group)
     {
+        if (o.SheetsOnly)
+        {
+            // the drawings and sheets again for a model already built: nothing else is touched
+            _datumMm = GroundFloorMm();
+            var lv = SetUpLevels();
+            _linkDrawings = o.LinkPlans && SurveyToRevit.Shared.UserSettings.Load().OverlayElevations;
+            BuildSheets(lv);
+            group.Assimilate();
+            return;
+        }
         if (o.Interior)
         {
             // the exterior model already here owns the coordinates, base points and levels
