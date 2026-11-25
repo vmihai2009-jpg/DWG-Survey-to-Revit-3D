@@ -82,6 +82,9 @@ public sealed class ElevationDecision : DecisionBase
     public double[] XRange { get; set; } = Array.Empty<double>();
     public string Facade { get; set; } = "";
     public bool Mirrored { get; set; }
+    /// <summary>The facade the drawing shows as a line in model mm (x1, y1, x2, y2). Facade ids are the MCP side's, so the
+    /// line is what the engine obeys (it finds its own front on it); without it the decision still waits.</summary>
+    public double[] FacadeLine { get; set; } = Array.Empty<double>();
 }
 
 public sealed class LevelDecision : DecisionBase
@@ -177,7 +180,7 @@ public static class DecisionRules
     {
         var res = new List<DecisionOutcome>();
         foreach (var x in d.FacadeTop.Where(x => x.Line is not { Length: 4 })) res.Add(new("facadeTop", $"{x.Facade} {x.Class}", "waiting", "read; give it a \"line\" (x1, y1, x2, y2) along the facade so the engine can find the stretch (facade ids are the MCP side's)"));
-        foreach (var x in d.Elevations) res.Add(new("elevations", $"{x.Sheet} -> {x.Facade}", "waiting", "read; used once elevations are read (item E)"));
+        foreach (var x in d.Elevations.Where(x => x.FacadeLine is not { Length: 4 })) res.Add(new("elevations", $"{x.Sheet} -> {x.Facade}", "waiting", "read; give it a \"facadeLine\" (x1, y1, x2, y2) so the engine can find the front (facade ids are the MCP side's)"));
         foreach (var x in d.Windows) res.Add(new("windows", $"{x.Facade} u {x.U:0}", "waiting", "read; used once elevation windows are read (item F)"));
         if (d.Keep.Count > 0) res.Add(new("keep", $"{d.Keep.Count} elements", "waiting", "read; rebuilds keep them once item U lands"));
         return res;

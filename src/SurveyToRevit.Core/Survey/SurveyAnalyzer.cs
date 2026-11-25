@@ -1048,6 +1048,8 @@ public static class SurveyAnalyzer
                 catch (Exception ex) { notes.Add($"{sheet.Name.FileName}: elevation sheet could not be read ({ex.Message})."); }
             }
             elevations = ElevationIndex.Build(found, levels, frame);
+            if (decisions != null && decisions.Elevations.Count > 0)
+                foreach (var o in ElevationIndex.ApplyDecisions(elevations, decisions, levels)) { outcomes.Add(o); notes.Add($"Elevation decision {o.What}: {o.State}, {o.Detail}."); }
             notes.Add($"Elevations: {elevations.Count} drawings on {elevationSheets.Count} sheets, {elevations.Count(e => e.Facade != null)} matched to a facade.");
             foreach (var e in elevations) notes.Add((e.Facade == null ? "CHECK " : "") + e.Note + ".");
             // item F: the matched drawings' windows set the sills and heads, and add the windows the plan missed

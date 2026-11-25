@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "_note": "7 Swallow Place / 251-259 Regent Street (Plowman Craven survey). Copy beside the survey DWGs as survey-decisions.json. Elevation drawings assigned to facades by the hub's elevation_index on the BUILT model (2026-11-25, SwallowPlace_Demo): S2R's own first reading found only 3 of the 9 drawn elevations. Facade ids are the hub's; the engine obeys facadeLine (model mm). Elevation 1 (x 40937..52716, 9 of 26 jambs on F61) and 2 and 9 are left out: too weak to call.",
+  "elevations": [
+    { "sheet": "000002-PCL-M02-ZZZ-M2-G-02000", "xRange": [65353, 102179],  "facade": "F24", "mirrored": false, "facadeLine": [15280, -25085, 15242, 13924], "by": "claude", "evidence": "Elevation 3, Regent Street front: 64 of 112 jambs matched", "date": "2026-11-25" },
+    { "sheet": "000002-PCL-M02-ZZZ-M2-G-02000", "xRange": [114462, 127328], "facade": "F45", "mirrored": true,  "facadeLine": [315, -26594, 13545, -26581],  "by": "claude", "evidence": "Elevation 4, south front: 37 of 73 jambs matched, drawn the other way round", "date": "2026-11-25" },
+    { "sheet": "000002-PCL-M02-ZZZ-M2-G-02000", "xRange": [136050, 149222], "facade": "F33", "mirrored": false, "facadeLine": [5714, -21505, 5765, -9775],   "by": "claude", "evidence": "Elevation 5: 16 of 32 jambs matched", "date": "2026-11-25" },
+    { "sheet": "000002-PCL-M02-ZZZ-M2-G-02000", "xRange": [157626, 174117], "facade": "F72", "mirrored": false, "facadeLine": [-9308, 24773, -8027, 6260],   "by": "claude", "evidence": "Elevation 6, west return: 31 of 65 jambs matched", "date": "2026-11-25" },
+    { "sheet": "000002-PCL-M02-ZZZ-M2-G-02000", "xRange": [187464, 193769], "facade": "F13", "mirrored": false, "facadeLine": [7340, 20212, 4805, 24577],    "by": "claude", "evidence": "Elevation 7, north-east corner: 17 of 33 jambs matched", "date": "2026-11-25" },
+    { "sheet": "000002-PCL-M02-ZZZ-M2-G-02000", "xRange": [203887, 231138], "facade": "F66", "mirrored": true,  "facadeLine": [-1982, 9990, -1979, -24750],  "by": "claude", "evidence": "Elevation 8, west front: 43 of 121 jambs matched, drawn the other way round", "date": "2026-11-25" }
+  ]
+}

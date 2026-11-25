@@ -47,6 +47,9 @@ public sealed class ElevationDrawing
 public static class ElevationIndex
 {
     public const double MinScore = 0.7, ColumnTolMm = 150, ColumnMergeMm = 100, FacadeReachMm = 800;
+    /// <summary>The looser second pass (a classical front whose windows do not stack like the plan's): at least this share AND
+    /// this many columns lined up, and the facade clearly better than the next one (its count at most this fraction).</summary>
+    public const double RelaxedScore = 0.3, RelaxedMinMatched = 6, RelaxedMargin = 0.75;
     /// <summary>A match sure enough to add what only the elevation shows (windows the plan lacks, the neighbours' fronts).</summary>
     public const double SureScore = 0.85;
     static readonly Regex TitleWords = new(@"\b(ELEVATIONS?|ELEV\.|FA[CÇ]ADES?)\b", RegexOptions.IgnoreCase);
@@ -347,17 +350,75 @@ public static class ElevationIndex
             p.D.Facade = p.Id; p.D.FacadeLine = new[] { Math.Round(l.A.X), Math.Round(l.A.Y), Math.Round(l.B.X), Math.Round(l.B.Y) };
             p.D.Mirrored = p.M.Mirrored; p.D.Scale = p.M.Scale; p.D.ShiftMm = p.M.Shift; p.D.Score = Math.Round(p.M.Score, 2); p.D.ModelColumns = p.ModelCols;
         }
+        // second pass, the drawings still unmatched. Lesson (Swallow Place, 2026-11-25): 7 of 9 elevations of a classical
+        // building lined up at only 35-52% (shopfronts, mezzanines, blocked bays make the model's columns differ from the
+        // elevation's) yet with 9-64 columns on the right facade, and the 70% rule left 6 of them unread. Take the best facade
+        // when enough columns line up in absolute terms and it clearly beats the next one; flagged as looser so it is checked.
+        var relaxed = new HashSet<ElevationDrawing>();
+        var loose = pairs.Where(p => !usedD.Contains(p.D)).GroupBy(p => p.D).Select(g =>
+        {
+            double N((ElevationDrawing D, string Id, Segment2 Line, string[] Members, int ModelCols, (double Score, bool Mirrored, double Scale, double Shift) M) p) => p.M.Score * Math.Min(p.ModelCols, p.D.Columns.Count);
+            var ranked = g.OrderByDescending(N).ToList();
+            double second = ranked.Where(p => p.Id != ranked[0].Id && !p.Members.Contains(ranked[0].Id)).Select(N).DefaultIfEmpty(0).Max();
+            return (Best: ranked[0], N: N(ranked[0]), Second: second);
+        }).Where(x => x.Best.M.Score >= RelaxedScore && x.N >= RelaxedMinMatched && x.Second <= RelaxedMargin * x.N).OrderByDescending(x => x.N);
+        foreach (var x in loose)
+        {
+            var p = x.Best;
+            if (usedD.Contains(p.D) || p.Members.Any(usedF.Contains)) continue;
+            usedD.Add(p.D); foreach (var m in p.Members) usedF.Add(m); relaxed.Add(p.D);
+            var l = p.Line;
+            p.D.Facade = p.Id; p.D.FacadeLine = new[] { Math.Round(l.A.X), Math.Round(l.A.Y), Math.Round(l.B.X), Math.Round(l.B.Y) };
+            p.D.Mirrored = p.M.Mirrored; p.D.Scale = p.M.Scale; p.D.ShiftMm = p.M.Shift; p.D.Score = Math.Round(p.M.Score, 2); p.D.ModelColumns = p.ModelCols;
+        }
         foreach (var (d, _) in found)
         {
             var bestTry = pairs.Where(p => p.D == d).OrderByDescending(p => p.M.Score).FirstOrDefault();
             if (d.Facade == null) d.Score = Math.Round(bestTry.M.Score, 2);
-            d.Note = d.Facade != null ? $"{d.Title}: facade {d.Facade} ({string.Join(",", d.FacadeLine!.Select(v => v.ToString("0")))}, {d.ModelColumns} columns), {d.Score:P0} of window columns line up" + (d.Mirrored ? ", drawn the other way round" : "")
+            d.Note = d.Facade != null ? $"{d.Title}: facade {d.Facade} ({string.Join(",", d.FacadeLine!.Select(v => v.ToString("0")))}, {d.ModelColumns} columns), {d.Score:P0} of window columns line up" + (relaxed.Contains(d) ? " (a looser match: enough columns line up and no other facade comes close; check it)" : "") + (d.Mirrored ? ", drawn the other way round" : "")
                 : d.Columns.Count < 2 ? $"{d.Title}: fewer than 2 window columns drawn on a window layer: facade not found (a decision with the facade line settles it)"
                 : $"{d.Title}: best facade {bestTry.Id} lines up only {bestTry.M.Score:P0} (under {MinScore:P0}): left unmatched";
             if (d.Parts.Count == 0) d.Note += "; no height fit (fewer than 2 level marks agree)";
             else if (d.Parts.Count > 1) d.Note += $"; two height fits (a part at x {d.Parts[1].X0:0} on has its own)";
         }
         return found.Select(f => f.Drawing).ToList();
+    }
+
+    /// <summary>
+    /// survey-decisions.json "elevations": a drawing (sheet file name part, x range on the sheet) assigned to a facade given as
+    /// a line in model mm. Lesson (Swallow Place, 2026-11-25): the hub's elevation_index, matching the BUILT walls' windows, read
+    /// 7 elevations where the first reading read 3; its result is kept as decisions so the next build of that survey starts
+    /// right. The drawing is refitted to the line's own window columns; one that does not line up is reported, not forced.
+    /// </summary>
+    public static List<DecisionOutcome> ApplyDecisions(IReadOnlyList<ElevationDrawing> drawings, SurveyDecisions d, IReadOnlyList<SurveyLevel> levels)
+    {
+        var res = new List<DecisionOutcome>();
+        var windows = levels.SelectMany(l => l.Windows).ToList();
+        var fronts = Fronts(Facades(levels));
+        foreach (var x in d.Elevations.Where(x => x.FacadeLine is { Length: 4 }))
+        {
+            string what = $"{x.Sheet} {(x.XRange.Length == 2 ? $"x {x.XRange[0]:0}..{x.XRange[1]:0} " : "")}-> {(string.IsNullOrEmpty(x.Facade) ? "line" : x.Facade)}";
+            var cand = drawings.Where(g => g.Box.Length == 4
+                && (string.IsNullOrEmpty(x.Sheet) || g.File.Contains(x.Sheet, StringComparison.OrdinalIgnoreCase))
+                && (x.XRange.Length != 2 || ((g.Box[0] + g.Box[2]) / 2 >= x.XRange[0] && (g.Box[0] + g.Box[2]) / 2 <= x.XRange[1]))).ToList();
+            if (cand.Count == 0) { res.Add(new("elevations", what, "stale", "no drawing on that sheet at that x range")); continue; }
+            var drawing = cand.OrderByDescending(g => g.Columns.Count).First();
+            var line = new Segment2(new Vec2(x.FacadeLine[0], x.FacadeLine[1]), new Vec2(x.FacadeLine[2], x.FacadeLine[3]), "decision", "decision");
+            var m = Match(drawing.Columns, ModelColumns(line, windows));
+            if (m.Score <= 0) { res.Add(new("elevations", what, "stale", $"{drawing.Title}: its window columns do not line up with that line's (fewer than 2 drawn, or none match): not forced")); continue; }
+            var mid = new Vec2((line.A.X + line.B.X) / 2, (line.A.Y + line.B.Y) / 2);
+            var front = fronts.Where(f => Math.Abs(f.Line.Direction.X * line.Direction.X + f.Line.Direction.Y * line.Direction.Y) > 0.99)
+                .Select(f => (f, Dist: Math.Abs((mid.X - f.Line.A.X) * -f.Line.Direction.Y + (mid.Y - f.Line.A.Y) * f.Line.Direction.X)))
+                .Where(t => t.Dist < 1500).OrderBy(t => t.Dist).Select(t => ((string Id, Segment2 Line, string[] Members)?)t.f).FirstOrDefault();
+            string id = front?.Id ?? (string.IsNullOrEmpty(x.Facade) ? "D" + (drawings.ToList().IndexOf(drawing) + 1) : x.Facade);
+            foreach (var other in drawings.Where(o => o != drawing && o.Facade == id)) { other.Facade = null; other.FacadeLine = null; other.Note = $"{other.Title}: its facade was given to {drawing.Title} by a decision"; }
+            drawing.Facade = id; drawing.FacadeLine = new[] { Math.Round(line.A.X), Math.Round(line.A.Y), Math.Round(line.B.X), Math.Round(line.B.Y) };
+            drawing.Mirrored = m.Mirrored; drawing.Scale = m.Scale; drawing.ShiftMm = m.Shift; drawing.Score = Math.Round(m.Score, 2);
+            drawing.ModelColumns = ModelColumns(line, windows).Count;
+            drawing.Note = $"{drawing.Title}: facade {id} by decision, {drawing.Score:P0} of window columns line up" + (drawing.Mirrored ? ", drawn the other way round" : "");
+            res.Add(new("elevations", what, "applied", $"{drawing.Title} -> {id}{(m.Mirrored != x.Mirrored ? $" (the columns say mirrored = {m.Mirrored}, the decision {x.Mirrored}: the columns win)" : "")}"));
+        }
+        return res;
     }
 
     static readonly JsonSerializerOptions Json = Freeze(new JsonSerializerOptions

@@ -46,6 +46,48 @@ public class ElevationIndexTests
         Assert.Equal(31000, res.Parts[1].B, 0);
     }
 
+    // a classical front: 10 irregular window columns, only 7 of them drawn where the plan has them (the rest differ) among 14 drawn
+    static List<SurveyLevel> ClassicalBuilding()
+    {
+        var box = new Polygon2(new[] { new Vec2(0, 0), new Vec2(40000, 0), new Vec2(40000, 12000), new Vec2(0, 12000) });
+        var front = new[] { 2000.0, 4300, 7900, 11000, 14600, 18100, 21500, 25800, 30200, 36000 }; var rear = new[] { 4000.0, 10000, 16000 };
+        WindowCandidate[] Floor() => front.Select(x => Win(x, 150)).Concat(rear.Select(x => Win(x, 11850))).ToArray();
+        return new List<SurveyLevel> { L("00", 30000, box, Floor()) };
+    }
+
+    [Fact]
+    public void A_classical_front_with_only_some_columns_lining_up_is_matched_by_the_looser_second_pass()
+    {
+        var drawn = new List<double> { 2000, 4300, 7900, 11000, 14600, 18100, 21500, 3000, 6100, 9300, 12700, 16000, 19800, 23300 };
+        var d = new ElevationDrawing { File = "E.dwg", Title = "ELEVATION 3", Box = new double[] { 0, 0, 40000, 20000 }, Columns = drawn };
+        var res = ElevationIndex.Build(new[] { (d, new List<(double, double, double)>()) }, ClassicalBuilding()).Single();
+        Assert.Equal("F1", res.Facade);
+        Assert.InRange(res.Score, 0.3, 0.69);
+        Assert.Contains("looser", res.Note);
+    }
+
+    [Fact]
+    public void A_few_matching_columns_are_not_taken_even_loosely()
+    {
+        var d = new ElevationDrawing { File = "E.dwg", Title = "ELEVATION 3", Box = new double[] { 0, 0, 40000, 20000 }, Columns = new List<double> { 2000, 4300, 7900, 1500, 6000, 9000, 12000, 17000 } };
+        var res = ElevationIndex.Build(new[] { (d, new List<(double, double, double)>()) }, ClassicalBuilding()).Single();
+        Assert.Null(res.Facade);
+    }
+
+    [Fact]
+    public void An_elevation_decision_with_a_facade_line_assigns_an_unmatched_drawing()
+    {
+        var d = new ElevationDrawing { File = "000002-ELEV.dwg", Title = "ELEVATION 1", Box = new double[] { 100, 0, 20000, 20000 }, Columns = new List<double> { 2000, 5000, 9500, 15000 } };
+        var res = ElevationIndex.Build(new[] { (d, new List<(double, double, double)>()) }, Building());
+        d.Facade = null; d.FacadeLine = null;
+        var dec = new SurveyDecisions { Elevations = { new ElevationDecision { Sheet = "ELEV", XRange = new double[] { 0, 30000 }, Facade = "F99", FacadeLine = new double[] { 0, 0, 20000, 0 } } } };
+        var outcomes = ElevationIndex.ApplyDecisions(res, dec, Building());
+        Assert.Single(outcomes, o => o.State == "applied");
+        Assert.NotNull(res.Single().Facade);
+        Assert.Contains("by decision", res.Single().Note);
+        Assert.Empty(DecisionRules.Waiting(dec).Where(o => o.Kind == "elevations"));
+    }
+
     [Fact]
     public void A_drawing_whose_windows_match_no_facade_is_left_unmatched()
     {

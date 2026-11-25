@@ -661,6 +661,13 @@ _Write your entries here, newest first. Use the "Revit run results" template for
 
 <!-- First entry goes here. -->
 
+### 2026-11-25: Survey to Revit 0.33.64, elevations read more of the sheet, and survey-decisions.json obeys elevations
+- **What went wrong.** On a fresh Swallow Place demo build S2R read 3 of the 9 elevations on the sheet (Elevation 1 twice, 8, 9 not found). The hub's `elevation_index`, matching the built walls' windows, then matched 7 (3, 4, 5, 6, 7, 8 and a weak 1). Cause: a classical front's windows don't stack like the plan's, so only 35-52% of window columns line up while 9-64 columns match on the right facade; the 70% rule dropped them.
+- **What changed.** (1) `ElevationIndex.Build` has a looser second pass for drawings still unmatched: at least 30% and 6 columns lined up, best facade's count at most 75% of the next one's; the note says "a looser match" so a person checks it. (2) `survey-decisions.json` `elevations` entries with a `facadeLine` (model mm) are now applied (`ElevationIndex.ApplyDecisions`): the drawing is refitted to that line's columns and assigned; one that doesn't line up is reported stale, not forced. Facade ids stay the MCP side's; the line is what is obeyed. (3) 3 tests (252 pass). Not yet run through SurveyLab on MR and SP: please run it before releasing.
+- **For Swallow Place.** `docs/examples/swallow-place-survey-decisions.json` holds the six elevation calls (3, 4, 5, 6, 7, 8); a copy sits beside the survey DWGs as `survey-decisions.json`. Elevations 1, 2, 9 are left out (too weak).
+- **Classical detail.** S2R still builds walls, piers and plain windows only; the hub's `facade_detail_pass` (1.38.0) adds the classical detail after the build. See `docs/LESSONS.md`.
+- **Files:** `ElevationIndex.cs`, `SurveyDecisions.cs`, `SurveyAnalyzer.cs`, `ElevationIndexTests.cs`, `docs/LESSONS.md`, `docs/examples/`, `SurveyToRevit.Revit.csproj` (0.33.64), this file.
+
 ### 2026-11-24 (later): Survey to Revit 0.33.44-0.33.51, office template, BG sheets, elevation overlays, slab and stair fixes
 For the Thursday demo, Mihai asked for one thing: give S2R the DWGs, and it does the rest with no assistant. It loads the BG template, makes the existing drawings and puts them on BG sheets. Everything below runs from the ribbon's Build from Survey. The MCP tool `survey_new_project` does the same first step.
 - **New project from the office template (0.33.44, 0.33.50).**
