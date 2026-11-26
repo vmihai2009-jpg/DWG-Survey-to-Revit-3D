@@ -35,20 +35,38 @@ public sealed partial class ModelBuilder
         // a set plan scale: tighter crop (1 m round), and all plans turned 90° when only that way they fit the sheet
         int planScale = _fixedPlanScale = settings.ExistingPlanScale;
         foreach (var (_, _, view) in plans) { Existing(view, planTemplate); CropPlan(view, box, planScale > 0 ? 1000 : 2000); }
+        var planBoxes = new Dictionary<ElementId, BoundingBoxXYZ>();
         if (planScale > 0 && plans.Count > 0)
         {
-            double w = Mm(box.Max.X - box.Min.X) + 2000, h = Mm(box.Max.Y - box.Min.Y) + 2000;
             var (aw, ah) = DrawingArea();
-            bool fits = w / planScale <= aw && h / planScale <= ah, turned = h / planScale <= aw && w / planScale <= ah;
-            foreach (var (_, _, view) in plans) try { view.Scale = planScale; } catch { }
-            if (!fits && turned)
+            bool Fits(BoundingBoxXYZ b, int s) => (Mm(b.Max.X - b.Min.X) + 2000) / s <= aw && (Mm(b.Max.Y - b.Min.Y) + 2000) / s <= ah;
+            double w = Mm(box.Max.X - box.Min.X) + 2000, h = Mm(box.Max.Y - box.Min.Y) + 2000;
+            bool all = Fits(box, planScale), turned = h / planScale <= aw && w / planScale <= ah;
+            if (!all && turned)
             {
+                foreach (var (_, _, view) in plans) try { view.Scale = planScale; } catch { }
                 _doc.Regenerate();
                 var c = (box.Min + box.Max) / 2;
                 foreach (var (_, _, view) in plans) TurnCrop(view, c);
                 Log.Add($"Sheets: plans at 1:{planScale} fit the sheet only turned: turned 90°.");
             }
-            else if (!fits) Log.Add($"Sheets: plans at 1:{planScale} ({w / planScale:0} x {h / planScale:0} mm) do not fit the sheet's {aw:0} x {ah:0} mm either way: check the sheet size or scale.");
+            else if (!all)
+            {
+                // the whole building does not fit at that scale: each floor cropped to its own walls, at the set scale
+                // where that fits, else the next usual scale down (a deep ground floor at 1:100, the floors above at 1:50)
+                var scales = new List<string>();
+                foreach (var (sl, _, view) in plans)
+                {
+                    var own = OurExtent(sl.Code) ?? box;
+                    CropPlan(view, own, 1000);
+                    int s = new[] { planScale, 100, 200, 500 }.Where(x => x >= planScale).FirstOrDefault(x => Fits(own, x));
+                    try { view.Scale = s == 0 ? 500 : s; } catch { }
+                    planBoxes[view.Id] = own;
+                    scales.Add($"{view.Name} 1:{view.Scale}");
+                }
+                Log.Add($"Sheets: the whole building does not fit at 1:{planScale}; each floor cropped to its own walls: {string.Join(", ", scales)}.");
+            }
+            else foreach (var (_, _, view) in plans) try { view.Scale = planScale; } catch { }
         }
         var elevations = plans.Count > 0 ? Elevations(box, plans[0].view, office ? prefix : null) : new List<(string, View)>();
         var sections = new FilteredElementCollector(_doc).OfClass(typeof(ViewSection)).Cast<ViewSection>()
@@ -78,7 +96,9 @@ public sealed partial class ModelBuilder
             string number;
             if (mezz) number = Num(n) + "M";
             else { while (!used.Add(n)) n++; number = Num(n); }
-            if (OnSheet("Plan", Bare(level.Name), number,Group(settings.ExistingPlanGroup, settings.ExistingPlanBase), view, code, new XYZ(centre.X, centre.Y, level.Elevation)) is string s) made.Add(s);
+            // a floor cropped to its own walls is centred on them; otherwise on the building (so the floors stack)
+            var on = planBoxes.TryGetValue(view.Id, out var pb) ? new XYZ((pb.Min.X + pb.Max.X) / 2, (pb.Min.Y + pb.Max.Y) / 2, level.Elevation) : new XYZ(centre.X, centre.Y, level.Elevation);
+            if (OnSheet("Plan", Bare(level.Name), number, Group(settings.ExistingPlanGroup, settings.ExistingPlanBase), view, code, on) is string s) made.Add(s);
         }
         int k = 0;
         // the middle of the elevations' crop (1 m below the lowest floor to 2 m over the top)
@@ -194,13 +214,14 @@ public sealed partial class ModelBuilder
     static string Bare(string levelName) => OfficeLevelName.Match(levelName) is { Success: true } m ? m.Groups[2].Value : levelName;
 
     /// <summary>The box round our own walls (model feet); null when none.</summary>
-    BoundingBoxXYZ? OurExtent()
+    BoundingBoxXYZ? OurExtent(string? levelCode = null)
     {
         XYZ? min = null, max = null;
         foreach (var w in new FilteredElementCollector(_doc).OfClass(typeof(Wall)).Cast<Wall>())
         {
             var c = w.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
             if (!c.StartsWith(Tag + "|", StringComparison.Ordinal) || c.StartsWith($"{Tag}|{ContextCode}|", StringComparison.Ordinal)) continue;
+            if (levelCode != null && !c.StartsWith($"{Tag}|{levelCode}|", StringComparison.Ordinal)) continue;
             if (w.get_BoundingBox(null) is not { } b) continue;
             min = min == null ? b.Min : new XYZ(Math.Min(min.X, b.Min.X), Math.Min(min.Y, b.Min.Y), Math.Min(min.Z, b.Min.Z));
             max = max == null ? b.Max : new XYZ(Math.Max(max.X, b.Max.X), Math.Max(max.Y, b.Max.Y), Math.Max(max.Z, b.Max.Z));
