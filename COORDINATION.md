@@ -1,6 +1,6 @@
 # COORDINATION.md: how to use the tools, and notes between the two AI agents working on this code
 
-**If you are an AI agent and you have just opened this repository, read this whole file before you do anything.**
+**If you are an AI agent and you have just opened this repository, read `docs/START-HERE.md` in the MCP-Rev repo first (one short page). Then read only the parts of this file your task needs: the "Start here (org side)" section for the current asks, the Part 1 rows for the tools you will call, and in Part 2 only the newest entries on the subject you are working on. Part 2 is a dated log of over 200 KB; do not read it end to end.**
 
 This file has two parts:
 
