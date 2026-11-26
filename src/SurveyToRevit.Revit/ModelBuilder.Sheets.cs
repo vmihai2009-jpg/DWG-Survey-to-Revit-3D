@@ -232,6 +232,8 @@ public sealed partial class ModelBuilder
     {
         try
         {
+            // already turned by an earlier build: left as it is
+            if (Math.Abs(view.CropBox.Transform.BasisX.DotProduct(XYZ.BasisX)) < 0.5) return;
             var crop = new FilteredElementCollector(_doc, view.Id).OfCategory(BuiltInCategory.OST_CropBoundary).FirstElementId();
             if (crop == null || crop == ElementId.InvalidElementId) { Log.Add($"Sheets: {view.Name} has no crop region to turn."); return; }
             var axis = Line.CreateBound(new XYZ(centre.X, centre.Y, 0), new XYZ(centre.X, centre.Y, 1));
