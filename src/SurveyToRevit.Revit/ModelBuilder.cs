@@ -1195,7 +1195,9 @@ public sealed partial class ModelBuilder
             if (e is Wall) try { e.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING)?.Set(0); } catch { }
         }
         var ground = levels.OrderBy(l => Math.Abs(l.Elevation)).First();
-        var wallType = WallTypeFor(200);
+        // the neighbours in their own types and materials (brick walls, stone bands): never this building's concept types
+        var wallType = ContextWallType("Context Wall 200mm", 200, "Context - Brick", new Color(168, 92, 72)) ?? WallTypeFor(200);
+        var bandType = ContextWallType("Context Band 100mm", 100, "Context - Stone", new Color(232, 228, 216));
         int made = 0;
         // the plan (blocks from the elevations' fronts, roof-plan blocks, no walls along this building's own outline);
         // without one, the roof-plan blocks as they are
@@ -1229,7 +1231,7 @@ public sealed partial class ModelBuilder
             catch (Exception ex) { Log.Add($"Context roof not made ({ex.Message})."); }
         }
         // the neighbours' fronts the elevations draw: a wall per skyline step, the drawn windows in it
-        int fronts = 0, windows = 0;
+        int fronts = 0, windows = 0, bands = 0;
         var frontList = _model.ContextPlan?.Fronts ?? _model.ContextFronts.ToList();
         var family = frontList.Any(f => f.Windows.Count > 0) ? HostedFamily(BuiltInCategory.OST_Windows, "Window") : null;
         var symbols = new Dictionary<(double, double), FamilySymbol>();
@@ -1243,6 +1245,22 @@ public sealed partial class ModelBuilder
                 var wall = Wall.Create(_doc, line, wallType.Id, ground.Id, height, bottom - ground.Elevation, false, false);
                 Put(wall, "Context front: " + f.Note);
                 fronts++;
+                // the front's stone bands and string courses (from the elevation), 100 mm proud of its face
+                if (bandType != null)
+                {
+                    var outward = new XYZ(-f.Inward.X, -f.Inward.Y, 0);
+                    var off = outward * Ft(wallType.Width / UnitConversion.MmToFeet(1) / 2 + 50);
+                    var bandLine = Line.CreateBound(line.GetEndPoint(0) + off, line.GetEndPoint(1) + off);
+                    foreach (var (b0, b1) in f.Bands)
+                        try
+                        {
+                            var band = Wall.Create(_doc, bandLine, bandType.Id, ground.Id, Z(b1) - Z(b0), Z(b0) - ground.Elevation, false, false);
+                            band.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING)?.Set(0);
+                            Put(band, "Context band: " + f.Note);
+                            bands++;
+                        }
+                        catch { /* a band Revit will not take */ }
+                }
                 _doc.Regenerate();
                 foreach (var cw in f.Windows)
                 {
@@ -1252,7 +1270,7 @@ public sealed partial class ModelBuilder
                         if (family != null)
                         {
                             double ww = Math.Round(cw.WidthMm / 50) * 50, hh = Math.Round((cw.HeadZ - cw.SillZ) / 50) * 50;
-                            if (!symbols.TryGetValue((ww, hh), out var symbol)) symbols[(ww, hh)] = symbol = HostedType(family, "Window", ww, hh);
+                            if (!symbols.TryGetValue((ww, hh), out var symbol)) symbols[(ww, hh)] = symbol = HostedType(family, "Context Window", ww, hh);
                             var inst = _doc.Create.NewFamilyInstance(at, symbol, wall, ground, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
                             inst.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM)?.Set(Z(cw.SillZ) - ground.Elevation);
                             Put(inst, "Context window");
@@ -1270,7 +1288,7 @@ public sealed partial class ModelBuilder
             }
             catch (Exception ex) { Log.Add($"Context front not made ({ex.Message})."); }
         }
-        if (fronts > 0) Log.Add($"Context: {fronts} front walls of the buildings next door from the elevations (their skylines), {windows} windows in them.");
+        if (fronts > 0) Log.Add($"Context: {fronts} front walls of the buildings next door from the elevations (their skylines), {windows} windows in them, {bands} stone bands across them.");
         t.Commit();
         Log.Add($"Context: {made} blocks for the buildings next door (roof-plan areas over them, up to their surveyed roof heights)" +
                 (ws != null ? $", on workset '{ContextWorksetName}'." : "; the model is not workshared, so they are on the active workset (tagged CONTEXT)."));
@@ -1410,6 +1428,32 @@ public sealed partial class ModelBuilder
                     + (edge > 0 ? $"; {edge} walls on a roof's edge left as drawn (outer wall or upstand: check)" : "")
                     + (crossing > 0 ? $"; {crossing} walls cross a roof's edge (listed in the built-model checks)" : "")
                     + (refused > 0 ? $"; Revit refused {refused} attachments ({why})" : "") + ".");
+    }
+
+    /// <summary>A wall type of its own for the neighbours (one material through, coloured for shaded and realistic views),
+    /// made from the project's basic wall when missing; an existing one is used as the office left it.</summary>
+    WallType? ContextWallType(string name, double thicknessMm, string materialName, Color colour)
+    {
+        try
+        {
+            var all = new FilteredElementCollector(_doc).OfClass(typeof(WallType)).Cast<WallType>().ToList();
+            if (all.FirstOrDefault(t => t.Name == name) is WallType existing) return existing;
+            var basic = all.FirstOrDefault(t => t.Kind == WallKind.Basic && t.GetCompoundStructure() != null);
+            if (basic == null) return null;
+            var material = new FilteredElementCollector(_doc).OfClass(typeof(Material)).Cast<Material>().FirstOrDefault(m => m.Name == materialName);
+            if (material == null)
+            {
+                material = (Material)_doc.GetElement(Material.Create(_doc, materialName));
+                material.Color = colour;
+                material.SurfaceForegroundPatternColor = colour;
+            }
+            var type = (WallType)basic.Duplicate(name);
+            var cs = CompoundStructure.CreateSingleLayerCompoundStructure(MaterialFunctionAssignment.Structure, Ft(thicknessMm), material.Id);
+            type.SetCompoundStructure(cs);
+            Log.Add($"Wall type created: {name} ({materialName}).");
+            return type;
+        }
+        catch (Exception ex) { Log.Add($"Context: wall type {name} not made ({ex.Message})."); return null; }
     }
 
     RoofType? RoofTypeFor(double thicknessMm)

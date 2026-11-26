@@ -7,6 +7,8 @@ public sealed record ContextFront(string Facade, Segment2 Line, double BaseZ, do
     public Vec2 Inward { get; init; }
     /// <summary>The steps of one neighbour's front on one drawing share it (facade id and side).</summary>
     public string Group { get; init; } = "";
+    /// <summary>Horizontal bands across the front (string courses, stone bands, cornices): bottom and top, model heights.</summary>
+    public List<(double Bottom, double Top)> Bands { get; init; } = new();
 }
 
 /// <summary>A plain context wall (a block's side or back), from BaseZ (NaN: the ground floor) up to TopZ, model mm.</summary>
@@ -109,13 +111,65 @@ public static class ElevationContext
                     var ws = windows.Where(w => w.Centre > st.T0 && w.Centre < st.T1 && w.SillZ >= baseZ - 50 && w.HeadZ <= st.Top - 100)
                         .Select(w => new ContextWindow(At(w.Centre), Math.Round(Math.Min(w.Width, st.T1 - st.T0 - 200)), Math.Round(w.SillZ), Math.Round(w.HeadZ)))
                         .Where(w => w.WidthMm >= ElevationWindows.MinWidthMm).ToList();
+                    var bands = Bands(d, rules, T, Z, st.T0, st.T1, baseZ, st.Top);
                     res.Add(new ContextFront(d.Facade ?? "", new Segment2(At(st.T0), At(st.T1)), Math.Round(baseZ), Math.Round(st.Top), ws,
-                        $"{d.Title.Replace(" ", "")} {(side < 0 ? "left" : "right")} of {d.Facade}, {(st.T1 - st.T0) / 1000:0.0} m wide, top {st.Top / 1000:0.00} m, {ws.Count} windows")
-                    { Inward = inward, Group = $"{d.Facade}{(side < 0 ? "<" : ">")}" });
+                        $"{d.Title.Replace(" ", "")} {(side < 0 ? "left" : "right")} of {d.Facade}, {(st.T1 - st.T0) / 1000:0.0} m wide, top {st.Top / 1000:0.00} m, {ws.Count} windows" + (bands.Count > 0 ? $", {bands.Count} bands" : ""))
+                    { Inward = inward, Group = $"{d.Facade}{(side < 0 ? "<" : ">")}", Bands = bands });
                 }
             }
         }
         return res;
+    }
+
+    public const double BandCover = 0.6, BandMinMm = 100, BandMaxMm = 700, BandLevelTolMm = 30;
+
+    /// <summary>
+    /// A neighbour front's horizontal bands, as an elevation draws a stone band, string course or cornice: two level lines
+    /// 100-700 mm apart, each running across at least 60 % of the front (not on a window or door layer: a window's sill
+    /// and head are not a band), clear of the foot and the top.
+    /// </summary>
+    static List<(double Bottom, double Top)> Bands(ElevationDrawing d, LayerRules rules, Func<double, double> T, Func<double, double, double> Z,
+        double t0, double t1, double baseZ, double top)
+    {
+        double width = t1 - t0;
+        // level lines across this front: height and the stretch of the front they cover
+        var levels = new List<(double Z, double A, double B)>();
+        foreach (var s in d.Lines)
+        {
+            var role = rules.Classify(s.Layer);
+            if (role is LayerRole.Window or LayerRole.Door or LayerRole.Annotation or LayerRole.LevelText or LayerRole.HeightText or LayerRole.RoomName) continue;
+            double za = Z(s.A.X, s.A.Y), zb = Z(s.B.X, s.B.Y);
+            if (Math.Abs(za - zb) > BandLevelTolMm) continue;
+            double a = Math.Max(t0, Math.Min(T(s.A.X), T(s.B.X))), b = Math.Min(t1, Math.Max(T(s.A.X), T(s.B.X)));
+            if (b - a <= 0) continue;
+            levels.Add(((za + zb) / 2, a, b));
+        }
+        // lines at one height (within 30 mm) together; a row's cover is its longest continuous run (pieces meeting within
+        // 50 mm): a row of window sills adds up across the front but is not one band
+        var rows = new List<(double Z, double Cover)>();
+        var byRow = new List<List<(double Z, double A, double B)>>();
+        foreach (var l in levels.OrderBy(l => l.Z))
+            if (byRow.Count > 0 && l.Z - byRow[^1][0].Z <= BandLevelTolMm) byRow[^1].Add(l); else byRow.Add(new() { l });
+        foreach (var row in byRow)
+        {
+            double best = 0, ra = double.NaN, rb = double.NaN;
+            foreach (var p in row.OrderBy(p => p.A))
+            {
+                if (double.IsNaN(ra) || p.A > rb + 50) { ra = p.A; rb = p.B; } else rb = Math.Max(rb, p.B);
+                best = Math.Max(best, rb - ra);
+            }
+            rows.Add((row.Average(p => p.Z), best));
+        }
+        var full = rows.Where(r => r.Cover >= BandCover * width && r.Z > baseZ + 300 && r.Z < top - 300).ToList();
+        var bands = new List<(double, double)>();
+        for (int i = 0; i + 1 < full.Count; i++)
+        {
+            double gap = full[i + 1].Z - full[i].Z;
+            if (gap < BandMinMm || gap > BandMaxMm) continue;
+            bands.Add((Math.Round(full[i].Z), Math.Round(full[i + 1].Z)));
+            i++; // a line is one band's edge only
+        }
+        return bands;
     }
 
     /// <summary>
