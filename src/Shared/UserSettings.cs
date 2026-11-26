@@ -38,6 +38,9 @@ internal sealed class UserSettings
     public string SheetGroupParameter { get; set; } = "View Type";
     /// <summary>Draw the survey's elevations (their own lines, as detail lines) in the elevation views, on the model.</summary>
     public bool OverlayElevations { get; set; } = true;
+    /// <summary>The existing plans' scale (e.g. 50); 0 lets S2R pick the largest that fits (1:100 or smaller). A plan that
+    /// does not fit its sheet at this scale but fits turned is turned 90° (all plans alike, so the sheets stack).</summary>
+    public int ExistingPlanScale { get; set; } = 0;
     /// <summary>The office's shared learning folder (corrections, surveyor profiles, wall ranking, tuning); empty switches learning off.</summary>
     public string? LearningFolder { get; set; } = @"I:\BG Technical Library\S2R\learning";
     public string ExistingPlanGroup { get; set; } = "{0} Existing Plans";

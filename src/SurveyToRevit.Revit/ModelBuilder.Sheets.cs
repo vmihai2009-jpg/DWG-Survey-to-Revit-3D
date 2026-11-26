@@ -32,7 +32,24 @@ public sealed partial class ModelBuilder
         // the office's existing-drawing view templates (BG: *BGA_01_FP_Existing, *BGA_01_SE_Existing), on our views
         var planTemplate = ExistingTemplate(ViewType.FloorPlan);
         var sectionTemplate = ExistingTemplate(ViewType.Section) ?? ExistingTemplate(ViewType.Elevation);
-        foreach (var (_, _, view) in plans) { Existing(view, planTemplate); CropPlan(view, box); }
+        // a set plan scale: tighter crop (1 m round), and all plans turned 90° when only that way they fit the sheet
+        int planScale = _fixedPlanScale = settings.ExistingPlanScale;
+        foreach (var (_, _, view) in plans) { Existing(view, planTemplate); CropPlan(view, box, planScale > 0 ? 1000 : 2000); }
+        if (planScale > 0 && plans.Count > 0)
+        {
+            double w = Mm(box.Max.X - box.Min.X) + 2000, h = Mm(box.Max.Y - box.Min.Y) + 2000;
+            var (aw, ah) = DrawingArea();
+            bool fits = w / planScale <= aw && h / planScale <= ah, turned = h / planScale <= aw && w / planScale <= ah;
+            foreach (var (_, _, view) in plans) try { view.Scale = planScale; } catch { }
+            if (!fits && turned)
+            {
+                _doc.Regenerate();
+                var c = (box.Min + box.Max) / 2;
+                foreach (var (_, _, view) in plans) TurnCrop(view, c);
+                Log.Add($"Sheets: plans at 1:{planScale} fit the sheet only turned: turned 90°.");
+            }
+            else if (!fits) Log.Add($"Sheets: plans at 1:{planScale} ({w / planScale:0} x {h / planScale:0} mm) do not fit the sheet's {aw:0} x {ah:0} mm either way: check the sheet size or scale.");
+        }
         var elevations = plans.Count > 0 ? Elevations(box, plans[0].view, office ? prefix : null) : new List<(string, View)>();
         var sections = new FilteredElementCollector(_doc).OfClass(typeof(ViewSection)).Cast<ViewSection>()
             .Where(v => !v.IsTemplate && v.ViewType == ViewType.Section && v.Name.StartsWith("Survey Section ", StringComparison.Ordinal)).OrderBy(v => v.Name).ToList();
@@ -96,6 +113,7 @@ public sealed partial class ModelBuilder
     }
 
     bool _linkDrawings;
+    int _fixedPlanScale;
     readonly List<(View View, ElementId Id)> _overlays = new();
 
     /// <summary>
@@ -194,14 +212,42 @@ public sealed partial class ModelBuilder
         return min == null || max == null ? null : new BoundingBoxXYZ { Min = min, Max = max };
     }
 
-    /// <summary>The plan cropped to the building with 2 m round it.</summary>
-    void CropPlan(ViewPlan view, BoundingBoxXYZ box)
+    /// <summary>The free drawing area of a sheet with the project's title block, mm (as OnSheet uses it): A1 when unknown.</summary>
+    (double W, double H) DrawingArea()
+    {
+        double w = 841, h = 594;
+        try
+        {
+            var tb = ProjectTitleBlock();
+            var sym = tb != null ? _doc.GetElement(tb) : null;
+            var sw = sym?.LookupParameter("Sheet Width")?.AsDouble(); var sh = sym?.LookupParameter("Sheet Height")?.AsDouble();
+            if (sw is > 0 && sh is > 0) { w = Mm(sw.Value); h = Mm(sh.Value); }
+        }
+        catch { }
+        return (w - 50 - (w - 50 > 700 ? 130 : 25), h - 50);
+    }
+
+    /// <summary>The plan's view turned 90° about the building's centre (its crop region turned: Revit turns the view with it).</summary>
+    void TurnCrop(ViewPlan view, XYZ centre)
+    {
+        try
+        {
+            var crop = new FilteredElementCollector(_doc, view.Id).OfCategory(BuiltInCategory.OST_CropBoundary).FirstElementId();
+            if (crop == null || crop == ElementId.InvalidElementId) { Log.Add($"Sheets: {view.Name} has no crop region to turn."); return; }
+            var axis = Line.CreateBound(new XYZ(centre.X, centre.Y, 0), new XYZ(centre.X, centre.Y, 1));
+            ElementTransformUtils.RotateElement(_doc, crop, axis, Math.PI / 2);
+        }
+        catch (Exception ex) { Log.Add($"Sheets: {view.Name} not turned ({ex.Message})."); }
+    }
+
+    /// <summary>The plan cropped to the building with a margin round it (2 m; 1 m at a set scale).</summary>
+    void CropPlan(ViewPlan view, BoundingBoxXYZ box, double marginMm = 2000)
     {
         try
         {
             var crop = view.CropBox;
             var inv = crop.Transform.Inverse;
-            var pts = Corners(box, Ft(2000)).Select(inv.OfPoint).ToList();
+            var pts = Corners(box, Ft(marginMm)).Select(inv.OfPoint).ToList();
             crop.Min = new XYZ(pts.Min(p => p.X), pts.Min(p => p.Y), crop.Min.Z);
             crop.Max = new XYZ(pts.Max(p => p.X), pts.Max(p => p.Y), crop.Max.Z);
             view.CropBox = crop;
@@ -331,7 +377,7 @@ public sealed partial class ModelBuilder
             if (TitleBlockOn(sheet)?.get_BoundingBox(sheet) is { } bb) { x0 = bb.Min.X; y0 = bb.Min.Y; x1 = bb.Max.X; y1 = bb.Max.Y; }
             x0 += Ft(25); y0 += Ft(25); y1 -= Ft(25);
             x1 -= (x1 - x0) > Ft(700) ? Ft(130) : Ft(25); // the title strip down the right (BG A1: about 110 mm)
-            FitScale(view, Mm(x1 - x0), Mm(y1 - y0));
+            if (!(kind == "Plan" && _fixedPlanScale > 0)) FitScale(view, Mm(x1 - x0), Mm(y1 - y0));
             var middle = new XYZ((x0 + x1) / 2, (y0 + y1) / 2, 0);
             var vp = Viewport.Create(_doc, sheet.Id, view.Id, middle);
             // the building's centre in the middle of the drawing area, whatever annotation (level heads, elevation marks)
